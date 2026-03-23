@@ -71,15 +71,15 @@ const { office, waypoints } = createOfficeScene();
 scene.add(office);
 
 const agents = new Map();
-const agentLookup = {};
+const deskAssignments = new Map();
 
 agentsConfig.forEach((agentConfig, index) => {
-  const desk = waypoints.desks[agentConfig.id];
+  const desk = waypoints.deskSlots[index] ?? null;
   const initialPosition = desk?.sit ?? waypoints.bullpen[index % waypoints.bullpen.length];
   const controller = new AgentController(agentConfig, initialPosition.clone(), desk?.facing ?? 0);
   scene.add(controller.mesh);
   agents.set(agentConfig.id, controller);
-  agentLookup[agentConfig.id] = controller;
+  deskAssignments.set(agentConfig.id, desk);
 
   if (desk) {
     controller.setTarget(desk.sit, {
@@ -97,7 +97,8 @@ const hud = createHud({
 const labelRenderer = new LabelRenderer(hud.labelLayer);
 
 const demo = new DemoDirector({
-  agents: agentLookup,
+  agents,
+  deskAssignments,
   waypoints,
 });
 
@@ -115,7 +116,7 @@ function toggleDemo() {
 
 function resetAgentsToDesks() {
   agents.forEach((controller, id) => {
-    const desk = waypoints.desks[id];
+    const desk = deskAssignments.get(id);
     if (!desk) {
       return;
     }

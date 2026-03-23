@@ -1,15 +1,6 @@
 import * as THREE from "three";
 import { makeMaterial } from "../scene/materials.js";
-
-function enableShadows(object) {
-  object.traverse((child) => {
-    if (child.isMesh) {
-      child.castShadow = true;
-      child.receiveShadow = true;
-    }
-  });
-  return object;
-}
+import { enableShadows } from "../utils.js";
 
 function addMesh(parent, geometry, material, position) {
   const mesh = new THREE.Mesh(geometry, material);
@@ -19,13 +10,18 @@ function addMesh(parent, geometry, material, position) {
 }
 
 function createHead(shape, color) {
+  let geometry;
+
   if (shape === "round") {
-    return new THREE.SphereGeometry(0.33, 14, 12);
+    geometry = new THREE.SphereGeometry(0.33, 14, 12);
+  } else if (shape === "oval") {
+    geometry = new THREE.SphereGeometry(0.3, 14, 12);
+    geometry.applyMatrix4(new THREE.Matrix4().makeScale(1, 1.2, 0.92));
+  } else {
+    geometry = new THREE.BoxGeometry(0.62, 0.62, 0.62);
   }
-  if (shape === "oval") {
-    return new THREE.SphereGeometry(0.3, 14, 12).scale(1, 1.2, 0.92);
-  }
-  return new THREE.BoxGeometry(0.62, 0.62, 0.62);
+
+  return new THREE.Mesh(geometry, makeMaterial(color));
 }
 
 function createHair(style, color) {
@@ -118,7 +114,7 @@ export function createAgent(agentConfig) {
   headPivot.position.y = 0.78;
   torso.add(headPivot);
 
-  const head = new THREE.Mesh(createHead(appearance.headShape, appearance.skinColor), makeMaterial(appearance.skinColor));
+  const head = createHead(appearance.headShape, appearance.skinColor);
   headPivot.add(head);
   headPivot.add(createHair(appearance.hairStyle, appearance.hairColor));
   headPivot.add(createAccessories(appearance.accessories ?? [], appearance));

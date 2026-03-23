@@ -1,15 +1,6 @@
 import * as THREE from "three";
 import { makeGlass, makeMaterial } from "./materials.js";
-
-function enableShadows(object) {
-  object.traverse((child) => {
-    if (child.isMesh) {
-      child.castShadow = true;
-      child.receiveShadow = true;
-    }
-  });
-  return object;
-}
+import { enableShadows } from "../utils.js";
 
 export function createDesk({ x, z, chairSide = 1, accent = "#7e5b43" }) {
   const group = new THREE.Group();

@@ -1,88 +1,101 @@
 import { STATUS } from "./characters/agentController.js";
 
+function getOrderedAgents(agents) {
+  return Array.from(agents.values());
+}
+
+function getDesk(context, agent, index) {
+  return context.deskAssignments.get(agent.id) ?? context.waypoints.deskSlots[index] ?? null;
+}
+
+function getMeetingSeat(waypoints, index) {
+  if (!waypoints.meetingSeats.length) {
+    return null;
+  }
+  return waypoints.meetingSeats[index % waypoints.meetingSeats.length];
+}
+
+function seatAtDesk(context, agent, index) {
+  const desk = getDesk(context, agent, index);
+  if (!desk) {
+    return;
+  }
+
+  agent.setTarget(desk.sit, {
+    facing: desk.facing,
+    status: STATUS.working,
+    seated: true,
+  });
+}
+
+function moveToMeeting(context, agent, index) {
+  const seat = getMeetingSeat(context.waypoints, index);
+  if (!seat) {
+    return;
+  }
+
+  agent.setTarget(seat.position, {
+    facing: seat.facing,
+    status: STATUS.meeting,
+    seated: false,
+  });
+}
+
+function applyToAllDesks(context) {
+  getOrderedAgents(context.agents).forEach((agent, index) => {
+    seatAtDesk(context, agent, index);
+  });
+}
+
 const STEPS = [
   {
     duration: 4,
-    apply({ agents, waypoints }) {
-      agents.pickle.setTarget(waypoints.entrance, { facing: Math.PI, status: STATUS.idle, seated: false });
-      agents.zoe.setTarget(waypoints.desks.zoe.sit, {
-        facing: waypoints.desks.zoe.facing,
-        status: STATUS.working,
-        seated: true,
-      });
-      agents.ink.setTarget(waypoints.kitchen, { facing: Math.PI / 2, status: STATUS.idle, seated: false });
-      agents.cio.setTarget(waypoints.desks.cio.sit, {
-        facing: waypoints.desks.cio.facing,
-        status: STATUS.working,
-        seated: true,
+    apply(context) {
+      const agents = getOrderedAgents(context.agents);
+      applyToAllDesks(context);
+
+      if (agents[0]) {
+        agents[0].setTarget(context.waypoints.entrance, { facing: Math.PI, status: STATUS.idle, seated: false });
+      }
+
+      if (agents[2]) {
+        agents[2].setTarget(context.waypoints.kitchen, { facing: Math.PI / 2, status: STATUS.idle, seated: false });
+      }
+    },
+  },
+  {
+    duration: 6,
+    apply(context) {
+      const agents = getOrderedAgents(context.agents);
+      applyToAllDesks(context);
+
+      agents.slice(1, 3).forEach((agent, index) => {
+        moveToMeeting(context, agent, index + 1);
       });
     },
   },
   {
     duration: 6,
-    apply({ agents, waypoints }) {
-      agents.pickle.setTarget(waypoints.desks.pickle.sit, {
-        facing: waypoints.desks.pickle.facing,
-        status: STATUS.working,
-        seated: true,
-      });
-      agents.zoe.setTarget(waypoints.meeting[1].position, {
-        facing: waypoints.meeting[1].facing,
-        status: STATUS.meeting,
-        seated: false,
-      });
-      agents.ink.setTarget(waypoints.desks.ink.sit, {
-        facing: waypoints.desks.ink.facing,
-        status: STATUS.working,
-        seated: true,
-      });
-      agents.cio.setTarget(waypoints.meeting[3].position, {
-        facing: waypoints.meeting[3].facing,
-        status: STATUS.meeting,
-        seated: false,
-      });
-    },
-  },
-  {
-    duration: 6,
-    apply({ agents, waypoints }) {
-      agents.pickle.setTarget(waypoints.meeting[0].position, {
-        facing: waypoints.meeting[0].facing,
-        status: STATUS.meeting,
-        seated: false,
-      });
-      agents.zoe.setTarget(waypoints.meeting[1].position, {
-        facing: waypoints.meeting[1].facing,
-        status: STATUS.meeting,
-        seated: false,
-      });
-      agents.ink.setTarget(waypoints.meeting[2].position, {
-        facing: waypoints.meeting[2].facing,
-        status: STATUS.meeting,
-        seated: false,
-      });
-      agents.cio.setTarget(waypoints.meeting[3].position, {
-        facing: waypoints.meeting[3].facing,
-        status: STATUS.meeting,
-        seated: false,
+    apply(context) {
+      getOrderedAgents(context.agents).forEach((agent, index) => {
+        moveToMeeting(context, agent, index);
       });
     },
   },
   {
     duration: 5,
-    apply({ agents, waypoints }) {
-      agents.pickle.setTarget(waypoints.kitchen, { facing: 0, status: STATUS.idle, seated: false });
-      agents.zoe.setTarget(waypoints.desks.zoe.sit, {
-        facing: waypoints.desks.zoe.facing,
-        status: STATUS.working,
-        seated: true,
-      });
-      agents.ink.setTarget(waypoints.entrance, { facing: Math.PI, status: STATUS.idle, seated: false });
-      agents.cio.setTarget(waypoints.desks.cio.sit, {
-        facing: waypoints.desks.cio.facing,
-        status: STATUS.working,
-        seated: true,
-      });
+    apply(context) {
+      const agents = getOrderedAgents(context.agents);
+      applyToAllDesks(context);
+
+      if (agents[0]) {
+        agents[0].setTarget(context.waypoints.kitchen, { facing: 0, status: STATUS.idle, seated: false });
+      }
+
+      const lastAgent = agents.at(-1);
+      if (lastAgent && lastAgent !== agents[0]) {
+        lastAgent.setTarget(context.waypoints.entrance, { facing: Math.PI, status: STATUS.idle, seated: false });
+      }
     },
   },
 ];

@@ -52,9 +52,9 @@ export class LabelRenderer {
 
     labels.forEach((label) => {
       seen.add(label.id);
-      let node = this.nodes.get(label.id);
-      if (!node) {
-        node = document.createElement("div");
+      let refs = this.nodes.get(label.id);
+      if (!refs) {
+        const node = document.createElement("div");
         node.className = "agent-label";
         node.innerHTML = `
           <span class="agent-name"></span>
@@ -62,28 +62,33 @@ export class LabelRenderer {
           <span class="agent-status"></span>
         `;
         this.container.append(node);
-        this.nodes.set(label.id, node);
+        refs = {
+          node,
+          name: node.querySelector(".agent-name"),
+          role: node.querySelector(".agent-role"),
+          status: node.querySelector(".agent-status"),
+        };
+        this.nodes.set(label.id, refs);
       }
 
       this.screenPosition.copy(label.worldPosition).project(camera);
       const visible = this.screenPosition.z > -1 && this.screenPosition.z < 1;
-      node.style.display = visible ? "block" : "none";
+      refs.node.style.display = visible ? "block" : "none";
 
       if (visible) {
         const x = (this.screenPosition.x * 0.5 + 0.5) * viewport.width;
         const y = (-this.screenPosition.y * 0.5 + 0.5) * viewport.height;
-        node.style.left = `${x}px`;
-        node.style.top = `${y}px`;
+        refs.node.style.left = `${x}px`;
+        refs.node.style.top = `${y}px`;
       }
 
-      node.querySelector(".agent-name").textContent = label.name;
-      node.querySelector(".agent-role").textContent = label.role;
-      const status = node.querySelector(".agent-status");
-      status.dataset.status = label.status;
-      status.textContent = label.status;
+      refs.name.textContent = label.name;
+      refs.role.textContent = label.role;
+      refs.status.dataset.status = label.status;
+      refs.status.textContent = label.status;
     });
 
-    this.nodes.forEach((node, id) => {
+    this.nodes.forEach(({ node }, id) => {
       if (!seen.has(id)) {
         node.remove();
         this.nodes.delete(id);

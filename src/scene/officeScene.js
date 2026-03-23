@@ -11,6 +11,22 @@ function addBox(parent, size, position, color, options = {}) {
   return mesh;
 }
 
+function rotateYOffset(vector, rotation) {
+  return vector.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rotation);
+}
+
+function createDeskWaypoint({ x, z, rotation = 0 }) {
+  const origin = new THREE.Vector3(x, 0, z);
+  const sitOffset = rotateYOffset(new THREE.Vector3(0, 0, 1.1), rotation);
+  const standOffset = rotateYOffset(new THREE.Vector3(0, 0, 0.95), rotation);
+
+  return {
+    stand: origin.clone().add(standOffset),
+    sit: origin.clone().add(sitOffset),
+    facing: rotation + Math.PI,
+  };
+}
+
 export function createOfficeScene() {
   const office = new THREE.Group();
   office.name = "office";
@@ -46,10 +62,8 @@ export function createOfficeScene() {
   addBox(walls, [4.8, 3.2, 0.35], [-8.8, 1.6, -1.7], palette.wall);
   addBox(walls, [0.35, 3.2, 5], [-6.4, 1.6, -4.1], palette.wall);
 
-  const doorFrameLeft = addBox(walls, [2.2, 3.2, 0.35], [-11.9, 1.6, 9], palette.wall);
-  const doorFrameRight = addBox(walls, [2.2, 3.2, 0.35], [-7.2, 1.6, 9], palette.wall);
-  doorFrameLeft.material = makeMaterial(palette.wall);
-  doorFrameRight.material = makeMaterial(palette.wall);
+  addBox(walls, [2.2, 3.2, 0.35], [-11.9, 1.6, 9], palette.wall);
+  addBox(walls, [2.2, 3.2, 0.35], [-7.2, 1.6, 9], palette.wall);
 
   const door = addBox(office, [2.2, 2.8, 0.12], [-9.55, 1.4, 8.84], "#7d5b41");
   door.rotation.y = Math.PI * 0.02;
@@ -72,13 +86,13 @@ export function createOfficeScene() {
     { x: -3.8, z: 3.1, chairSide: 1, accent: "#855f46" },
     { x: 0, z: 3.1, chairSide: 1, accent: "#91694e" },
     { x: 3.8, z: 3.1, chairSide: 1, accent: "#855f46" },
-    { x: -3.8, z: -0.7, chairSide: -1, accent: "#91694e" },
-    { x: 0, z: -0.7, chairSide: -1, accent: "#855f46" },
-    { x: 3.8, z: -0.7, chairSide: -1, accent: "#91694e" },
+    { x: -3.8, z: -0.7, chairSide: 1, accent: "#91694e" },
+    { x: 0, z: -0.7, chairSide: 1, accent: "#855f46" },
+    { x: 3.8, z: -0.7, chairSide: 1, accent: "#91694e" },
   ];
   desks.forEach((desk) => office.add(createDesk(desk)));
 
-  const managerDesk = createDesk({ x: 8.2, z: 4.2, chairSide: -1, accent: "#70533d" });
+  const managerDesk = createDesk({ x: 8.2, z: 4.2, chairSide: 1, accent: "#70533d" });
   managerDesk.rotation.y = -Math.PI / 2;
   office.add(managerDesk);
 
@@ -145,39 +159,21 @@ export function createOfficeScene() {
   addBox(trims, [0.26, 0.22, 18.1], [-12.9, 0.14, 0], palette.trim);
   addBox(trims, [0.26, 0.22, 18.1], [12.9, 0.14, 0], palette.trim);
 
+  const deskSlots = [
+    createDeskWaypoint({ x: -3.8, z: 3.1 }),
+    createDeskWaypoint({ x: 0, z: 3.1 }),
+    createDeskWaypoint({ x: 3.8, z: 3.1 }),
+    createDeskWaypoint({ x: 8.2, z: 4.2, rotation: -Math.PI / 2 }),
+    createDeskWaypoint({ x: -3.8, z: -0.7 }),
+    createDeskWaypoint({ x: 0, z: -0.7 }),
+    createDeskWaypoint({ x: 3.8, z: -0.7 }),
+  ];
+
   const waypoints = {
     entrance: new THREE.Vector3(-9.55, 0, 7.4),
-    bullpen: [
-      new THREE.Vector3(-3.8, 0, 4.2),
-      new THREE.Vector3(0, 0, 4.2),
-      new THREE.Vector3(3.8, 0, 4.2),
-      new THREE.Vector3(-3.8, 0, -1.8),
-      new THREE.Vector3(0, 0, -1.8),
-      new THREE.Vector3(3.8, 0, -1.8),
-    ],
-    desks: {
-      pickle: {
-        stand: new THREE.Vector3(-3.8, 0, 4.05),
-        sit: new THREE.Vector3(-3.8, 0, 4.2),
-        facing: 0,
-      },
-      zoe: {
-        stand: new THREE.Vector3(0, 0, 4.05),
-        sit: new THREE.Vector3(0, 0, 4.2),
-        facing: 0,
-      },
-      ink: {
-        stand: new THREE.Vector3(3.8, 0, 4.05),
-        sit: new THREE.Vector3(3.8, 0, 4.2),
-        facing: 0,
-      },
-      cio: {
-        stand: new THREE.Vector3(8.25, 0, 5.15),
-        sit: new THREE.Vector3(8.25, 0, 5.4),
-        facing: -Math.PI / 2,
-      },
-    },
-    meeting: [
+    bullpen: deskSlots.slice(0, 6).map((desk) => desk.sit.clone()),
+    deskSlots,
+    meetingSeats: [
       { position: new THREE.Vector3(7, 0, -2.7), facing: Math.PI },
       { position: new THREE.Vector3(8.6, 0, -2.7), facing: Math.PI },
       { position: new THREE.Vector3(10.2, 0, -2.7), facing: Math.PI },

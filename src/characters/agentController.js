@@ -99,7 +99,7 @@ export class AgentController {
       id: this.id,
       name: `${this.emoji} ${this.name}`,
       role: this.role,
-      status: this.walking ? STATUS.idle : this.status,
+      status: this.status,
       worldPosition: this.labelWorldPosition,
     };
   }
