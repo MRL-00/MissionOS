@@ -1,0 +1,187 @@
+:root {
+  color-scheme: light;
+  --bg-top: #f5e7cf;
+  --bg-bottom: #e2cba4;
+  --panel: rgba(255, 249, 238, 0.86);
+  --panel-border: rgba(97, 71, 46, 0.18);
+  --ink: #34291d;
+  --accent: #9c5f2a;
+  --status-idle: #7f8c8d;
+  --status-working: #2e8b57;
+  --status-meeting: #c97f21;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Trebuchet MS", "Avenir Next", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.6), transparent 34%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+}
+
+canvas {
+  display: block;
+}
+
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hud-panel {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  width: min(320px, calc(100vw - 36px));
+  padding: 14px 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 20px 40px rgba(106, 77, 40, 0.16);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+}
+
+.hud h1 {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hud p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.button {
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #b7672e, #8f431e);
+  color: #fffaf1;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 12px 24px rgba(143, 67, 30, 0.25);
+}
+
+.button.secondary {
+  background: rgba(255, 250, 241, 0.92);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px rgba(97, 71, 46, 0.14);
+}
+
+.legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.label-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.agent-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 92px;
+  padding: 6px 10px;
+  border-radius: 14px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 30px rgba(54, 41, 29, 0.18);
+  border: 1px solid rgba(97, 71, 46, 0.14);
+  pointer-events: none;
+}
+
+.agent-name {
+  display: block;
+  font-size: 0.83rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.agent-role {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.69rem;
+  opacity: 0.7;
+}
+
+.agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  font-size: 0.67rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--status-idle);
+}
+
+.agent-status[data-status="working"]::before {
+  background: var(--status-working);
+}
+
+.agent-status[data-status="in-meeting"]::before {
+  background: var(--status-meeting);
+}
+
+.agent-status[data-status="idle"]::before {
+  background: var(--status-idle);
+}
+
+@media (max-width: 720px) {
+  .hud-panel {
+    top: 12px;
+    left: 12px;
+    width: calc(100vw - 24px);
+  }
+
+  .agent-label {
+    min-width: 80px;
+    padding: 5px 8px;
+  }
+}
