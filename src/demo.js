@@ -16,7 +16,13 @@ function getMeetingSeat(waypoints, index) {
 }
 
 function getPathDistance(left, right) {
-  return left.position.distanceTo(right.position);
+  const leftPosition = left.position ?? left.approach ?? left.sit;
+  const rightPosition = right.position ?? right.approach ?? right.sit;
+  return leftPosition.distanceTo(rightPosition);
+}
+
+function getDestinationPosition(destination) {
+  return destination.position ?? destination.sit ?? destination.approach;
 }
 
 function buildNodePath(navigation, startId, endId) {
@@ -54,11 +60,13 @@ function buildNodePath(navigation, startId, endId) {
 }
 
 function moveAgent(context, agent, destination, options) {
-  const startNodeId = agent.navNodeId ?? destination.nodeId;
-  const nodePath = buildNodePath(context.waypoints.navigation, startNodeId, destination.nodeId);
+  const destinationNodeId = destination.nodeId;
+  const destinationPosition = getDestinationPosition(destination);
+  const startNodeId = agent.navNodeId ?? destinationNodeId;
+  const nodePath = buildNodePath(context.waypoints.navigation, startNodeId, destinationNodeId);
   const path = [];
 
-  if (startNodeId && startNodeId !== destination.nodeId) {
+  if (startNodeId && startNodeId !== destinationNodeId) {
     const startNode = context.waypoints.navigation[startNodeId];
     if (startNode && agent.mesh.position.distanceTo(startNode.position) > 0.12) {
       path.push(startNode.position);
@@ -69,8 +77,8 @@ function moveAgent(context, agent, destination, options) {
     path.push(context.waypoints.navigation[nodeId].position);
   });
 
-  agent.navNodeId = destination.nodeId;
-  agent.setTarget(destination.position, {
+  agent.navNodeId = destinationNodeId;
+  agent.setTarget(destinationPosition, {
     ...options,
     path,
   });
