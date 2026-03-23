@@ -1,16 +1,22 @@
 import * as THREE from "three";
-import { makeMaterial } from "../scene/materials.js";
-import { enableShadows } from "../utils.js";
+import type { Accessory, AgentAppearance, AgentConfig, BuiltAgent } from "../types";
+import { makeMaterial } from "../scene/materials";
+import { enableShadows } from "../utils";
 
-function addMesh(parent, geometry, material, position) {
+function addMesh(
+  parent: THREE.Object3D,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  position: THREE.Vector3,
+): THREE.Mesh {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.copy(position);
   parent.add(mesh);
   return mesh;
 }
 
-function createHead(shape, color) {
-  let geometry;
+function createHead(shape: AgentAppearance["headShape"], color: string): THREE.Mesh {
+  let geometry: THREE.BufferGeometry;
 
   if (shape === "round") {
     geometry = new THREE.SphereGeometry(0.33, 14, 12);
@@ -24,7 +30,7 @@ function createHead(shape, color) {
   return new THREE.Mesh(geometry, makeMaterial(color));
 }
 
-function createHair(style, color) {
+function createHair(style: AgentAppearance["hairStyle"], color: string): THREE.Group {
   const group = new THREE.Group();
   const material = makeMaterial(color);
 
@@ -55,10 +61,10 @@ function createHair(style, color) {
   return group;
 }
 
-function createAccessories(accessories, colors) {
+function createAccessories(accessories: Accessory[], appearance: AgentAppearance): THREE.Group {
   const group = new THREE.Group();
   const dark = makeMaterial("#20242c");
-  const accent = makeMaterial(colors.bodyColor);
+  const accent = makeMaterial(appearance.bodyColor);
 
   if (accessories.includes("glasses")) {
     [-0.14, 0.14].forEach((x) => {
@@ -86,7 +92,7 @@ function createAccessories(accessories, colors) {
   return group;
 }
 
-export function createAgent(agentConfig) {
+export function createAgent(agentConfig: AgentConfig): BuiltAgent {
   const { id, name, role, emoji, appearance } = agentConfig;
   const height = appearance.height ?? 1;
 
@@ -106,9 +112,24 @@ export function createAgent(agentConfig) {
   torso.position.y = 0.9;
   bodyPivot.add(torso);
 
-  const body = addMesh(torso, new THREE.BoxGeometry(0.74, 0.86, 0.42), makeMaterial(appearance.bodyColor), new THREE.Vector3(0, 0, 0));
-  const leftArm = addMesh(torso, new THREE.BoxGeometry(0.18, 0.68, 0.18), makeMaterial(appearance.bodyColor), new THREE.Vector3(-0.48, -0.05, 0));
-  const rightArm = addMesh(torso, new THREE.BoxGeometry(0.18, 0.68, 0.18), makeMaterial(appearance.bodyColor), new THREE.Vector3(0.48, -0.05, 0));
+  const body = addMesh(
+    torso,
+    new THREE.BoxGeometry(0.74, 0.86, 0.42),
+    makeMaterial(appearance.bodyColor),
+    new THREE.Vector3(0, 0, 0),
+  );
+  const leftArm = addMesh(
+    torso,
+    new THREE.BoxGeometry(0.18, 0.68, 0.18),
+    makeMaterial(appearance.bodyColor),
+    new THREE.Vector3(-0.48, -0.05, 0),
+  );
+  const rightArm = addMesh(
+    torso,
+    new THREE.BoxGeometry(0.18, 0.68, 0.18),
+    makeMaterial(appearance.bodyColor),
+    new THREE.Vector3(0.48, -0.05, 0),
+  );
 
   const headPivot = new THREE.Group();
   headPivot.position.y = 0.78;

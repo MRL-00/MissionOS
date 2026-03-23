@@ -1,6 +1,24 @@
 import * as THREE from "three";
+import type { LabelState } from "../types";
 
-export function createHud({ onToggleDemo, onResetCamera }) {
+interface HudOptions {
+  onToggleDemo(): void;
+  onResetCamera(): void;
+}
+
+interface HudApi {
+  setDemoRunning(running: boolean): void;
+  labelLayer: HTMLDivElement;
+}
+
+interface LabelRefs {
+  node: HTMLDivElement;
+  name: HTMLSpanElement;
+  role: HTMLSpanElement;
+  status: HTMLSpanElement;
+}
+
+export function createHud({ onToggleDemo, onResetCamera }: HudOptions): HudApi {
   const hud = document.createElement("div");
   hud.className = "hud";
 
@@ -25,30 +43,37 @@ export function createHud({ onToggleDemo, onResetCamera }) {
   labelLayer.className = "label-layer";
   hud.append(labelLayer);
 
-  const demoButton = panel.querySelector('[data-action="demo"]');
-  demoButton.addEventListener("click", () => onToggleDemo());
+  const demoButton = panel.querySelector<HTMLButtonElement>('[data-action="demo"]');
+  const resetButton = panel.querySelector<HTMLButtonElement>('[data-action="reset"]');
 
-  panel.querySelector('[data-action="reset"]').addEventListener("click", () => onResetCamera());
+  demoButton?.addEventListener("click", () => onToggleDemo());
+  resetButton?.addEventListener("click", () => onResetCamera());
 
   document.body.append(hud);
 
   return {
     setDemoRunning(running) {
-      demoButton.textContent = running ? "Stop Demo Mode" : "Start Demo Mode";
+      if (demoButton) {
+        demoButton.textContent = running ? "Stop Demo Mode" : "Start Demo Mode";
+      }
     },
     labelLayer,
   };
 }
 
 export class LabelRenderer {
-  constructor(container) {
+  container: HTMLDivElement;
+  nodes: Map<string, LabelRefs>;
+  screenPosition: THREE.Vector3;
+
+  constructor(container: HTMLDivElement) {
     this.container = container;
     this.nodes = new Map();
     this.screenPosition = new THREE.Vector3();
   }
 
-  sync(labels, camera, viewport) {
-    const seen = new Set();
+  sync(labels: LabelState[], camera: THREE.Camera, viewport: { width: number; height: number }): void {
+    const seen = new Set<string>();
 
     labels.forEach((label) => {
       seen.add(label.id);
@@ -62,12 +87,14 @@ export class LabelRenderer {
           <span class="agent-status"></span>
         `;
         this.container.append(node);
-        refs = {
-          node,
-          name: node.querySelector(".agent-name"),
-          role: node.querySelector(".agent-role"),
-          status: node.querySelector(".agent-status"),
-        };
+        const name = node.querySelector<HTMLSpanElement>(".agent-name");
+        const role = node.querySelector<HTMLSpanElement>(".agent-role");
+        const status = node.querySelector<HTMLSpanElement>(".agent-status");
+        if (!name || !role || !status) {
+          node.remove();
+          return;
+        }
+        refs = { node, name, role, status };
         this.nodes.set(label.id, refs);
       }
 
