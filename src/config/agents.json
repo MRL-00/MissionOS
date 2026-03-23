@@ -1,0 +1,66 @@
+[
+  {
+    "id": "pickle",
+    "name": "Pickle",
+    "role": "Automation Android",
+    "emoji": "🥒",
+    "appearance": {
+      "height": 1,
+      "headShape": "square",
+      "skinColor": "#A8D5A2",
+      "hairStyle": "none",
+      "hairColor": "#6C8C68",
+      "bodyColor": "#4A90D9",
+      "pantsColor": "#31536B",
+      "accessories": []
+    }
+  },
+  {
+    "id": "zoe",
+    "name": "Zoe",
+    "role": "Creative Ops",
+    "emoji": "🟣",
+    "appearance": {
+      "height": 1,
+      "headShape": "oval",
+      "skinColor": "#D6AA9A",
+      "hairStyle": "short",
+      "hairColor": "#6C2A82",
+      "bodyColor": "#7B2D8E",
+      "pantsColor": "#372045",
+      "accessories": ["tie"]
+    }
+  },
+  {
+    "id": "ink",
+    "name": "Ink",
+    "role": "Research Analyst",
+    "emoji": "🖋️",
+    "appearance": {
+      "height": 0.9,
+      "headShape": "round",
+      "skinColor": "#D7A88B",
+      "hairStyle": "short",
+      "hairColor": "#7D4F2A",
+      "bodyColor": "#D4956A",
+      "pantsColor": "#70533E",
+      "accessories": ["glasses"]
+    }
+  },
+  {
+    "id": "cio",
+    "name": "CIO",
+    "role": "Chief Office Instigator",
+    "emoji": "🕴️",
+    "appearance": {
+      "height": 1.15,
+      "headShape": "square",
+      "skinColor": "#D1B29A",
+      "hairStyle": "none",
+      "hairColor": "#3C312A",
+      "bodyColor": "#2C3E50",
+      "pantsColor": "#1B2633",
+      "accessories": ["tie"]
+    }
+  }
+]
