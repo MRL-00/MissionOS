@@ -13,6 +13,7 @@ interface SpeechBubbleRefs {
 }
 
 export class SpeechBubbleRenderer {
+  static readonly BUBBLE_OFFSET = new THREE.Vector3(0, 0.95, 0);
   container: HTMLDivElement;
   bubbles: Map<string, SpeechBubble>;
   refs: Map<string, SpeechBubbleRefs>;
@@ -62,7 +63,7 @@ export class SpeechBubbleRenderer {
       }
 
       refs.body.textContent = bubble.message;
-      this.screenPosition.copy(label.worldPosition).add(new THREE.Vector3(0, 0.95, 0)).project(camera);
+      this.screenPosition.copy(label.worldPosition).add(SpeechBubbleRenderer.BUBBLE_OFFSET).project(camera);
       const visible = this.screenPosition.z > -1 && this.screenPosition.z < 1;
       refs.node.style.display = visible ? "block" : "none";
 
@@ -71,7 +72,7 @@ export class SpeechBubbleRenderer {
         const y = (-this.screenPosition.y * 0.5 + 0.5) * viewport.height;
         refs.node.style.left = `${x}px`;
         refs.node.style.top = `${y}px`;
-        refs.node.style.opacity = `${Math.max(0, (bubble.expiresAt - now) / 1000)}`;
+        refs.node.style.opacity = `${Math.min(1, Math.max(0, (bubble.expiresAt - now) / 1000))}`;
       }
     });
   }

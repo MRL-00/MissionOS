@@ -4,9 +4,11 @@ import { WebSocketServer } from "ws";
 import agentsConfig from "../src/config/agents.json";
 import type {
   AgentEvent,
+  AgentEventLocation,
   AgentRegistration,
   AgentRuntimeState,
   MeetingRequest,
+  RealtimeAgentStatus,
   ServerMessage,
 } from "../src/types";
 
@@ -20,6 +22,19 @@ const DEFAULT_HEADERS = {
 
 const builtInAgentIds = new Set<string>();
 const agentStates = new Map<string, AgentRuntimeState>();
+const MAX_BODY_BYTES = 64 * 1024;
+const VALID_STATUSES = new Set<RealtimeAgentStatus>(["idle", "working", "meeting", "entering", "leaving"]);
+const VALID_LOCATIONS = new Set<AgentEventLocation>(["desk", "meeting-room", "door", "cio-office"]);
+
+class RequestBodyError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode = 400) {
+    super(message);
+    this.name = "RequestBodyError";
+    this.statusCode = statusCode;
+  }
+}
 
 function seedBuiltInAgents(): void {
   agentsConfig.forEach((agent) => {
@@ -43,9 +58,15 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown): 
 
 async function readJson<T>(request: IncomingMessage): Promise<T | null> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
 
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > MAX_BODY_BYTES) {
+      throw new RequestBodyError("Request body too large");
+    }
+    chunks.push(buffer);
   }
 
   if (!chunks.length) {
@@ -53,7 +74,11 @@ async function readJson<T>(request: IncomingMessage): Promise<T | null> {
   }
 
   const raw = Buffer.concat(chunks).toString("utf8");
-  return JSON.parse(raw) as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new RequestBodyError("Invalid JSON payload");
+  }
 }
 
 function isAgentEvent(value: unknown): value is AgentEvent {
@@ -64,7 +89,8 @@ function isAgentEvent(value: unknown): value is AgentEvent {
   const event = value as Partial<AgentEvent>;
   return (
     typeof event.agentId === "string" &&
-    typeof event.status === "string" &&
+    VALID_STATUSES.has(event.status as RealtimeAgentStatus) &&
+    (event.location === undefined || VALID_LOCATIONS.has(event.location as AgentEventLocation)) &&
     typeof event.timestamp === "number"
   );
 }
@@ -153,7 +179,6 @@ function applyEvent(event: AgentEvent): AgentRuntimeState {
     type: "agent-event",
     event,
   });
-  broadcastSnapshot();
   return next;
 }
 
@@ -189,8 +214,7 @@ const httpServer = createServer(async (request, response) => {
     if (method === "POST" && url.pathname === "/api/agent/register") {
       const body = await readJson<unknown>(request);
       if (!isRegistration(body)) {
-        sendJson(response, 400, { error: "Invalid registration payload" });
-        return;
+        throw new RequestBodyError("Invalid registration payload");
       }
 
       const next: AgentRuntimeState = {
@@ -210,8 +234,7 @@ const httpServer = createServer(async (request, response) => {
     if (method === "POST" && url.pathname === "/api/agent/status") {
       const body = await readJson<unknown>(request);
       if (!isAgentEvent(body)) {
-        sendJson(response, 400, { error: "Invalid agent event payload" });
-        return;
+        throw new RequestBodyError("Invalid agent event payload");
       }
 
       const next = applyEvent(body);
@@ -245,13 +268,17 @@ const httpServer = createServer(async (request, response) => {
     if (method === "POST" && url.pathname === "/api/meeting/start") {
       const body = await readJson<unknown>(request);
       if (!isMeetingRequest(body)) {
-        sendJson(response, 400, { error: "Invalid meeting payload" });
-        return;
+        throw new RequestBodyError("Invalid meeting payload");
+      }
+      const unknownAgentId = body.agentIds.find((agentId) => !agentStates.has(agentId));
+      if (unknownAgentId) {
+        throw new RequestBodyError(`Unknown agent id: ${unknownAgentId}`);
       }
 
       const updated = body.agentIds.map((agentId) =>
         applyEvent(makeMeetingEvent(agentId, "meeting", "Heading to the meeting room.", "Team sync")),
       );
+      broadcastSnapshot();
       sendJson(response, 200, { agents: updated });
       return;
     }
@@ -261,12 +288,17 @@ const httpServer = createServer(async (request, response) => {
       const updated = meetingAgents.map((agent) =>
         applyEvent(makeMeetingEvent(agent.id, "working", "Meeting wrapped. Back to the desk.", "Follow-up work")),
       );
+      broadcastSnapshot();
       sendJson(response, 200, { agents: updated });
       return;
     }
 
     sendJson(response, 404, { error: "Not found" });
   } catch (error) {
+    if (error instanceof RequestBodyError) {
+      sendJson(response, error.statusCode, { error: error.message });
+      return;
+    }
     const message = error instanceof Error ? error.message : "Unknown server error";
     sendJson(response, 500, { error: message });
   }

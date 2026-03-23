@@ -13,6 +13,7 @@ export class OfficeWebSocketClient {
   url: string;
   socket?: WebSocket | undefined;
   reconnectTimer?: number | undefined;
+  shouldReconnect: boolean;
   onOpen?: (() => void) | undefined;
   onClose?: (() => void) | undefined;
   onEvent: (event: AgentEvent) => void;
@@ -33,12 +34,14 @@ export class OfficeWebSocketClient {
     this.onEvent = onEvent;
     this.onSnapshot = onSnapshot;
     this.onAgentRemoved = onAgentRemoved;
+    this.shouldReconnect = true;
   }
 
   connect(): void {
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) {
       return;
     }
+    this.shouldReconnect = true;
 
     const socket = new WebSocket(this.url);
     this.socket = socket;
@@ -54,11 +57,6 @@ export class OfficeWebSocketClient {
     socket.addEventListener("message", (message) => {
       const parsed = this.parseMessage(message.data);
       if (!parsed) {
-        return;
-      }
-
-      if ("agentId" in parsed && "status" in parsed) {
-        this.onEvent(parsed);
         return;
       }
 
@@ -80,6 +78,9 @@ export class OfficeWebSocketClient {
     socket.addEventListener("close", () => {
       this.socket = undefined;
       this.onClose?.();
+      if (!this.shouldReconnect) {
+        return;
+      }
       this.reconnectTimer = window.setTimeout(() => {
         this.connect();
       }, 2000);
@@ -91,17 +92,18 @@ export class OfficeWebSocketClient {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
+    this.shouldReconnect = false;
     this.socket?.close();
     this.socket = undefined;
   }
 
-  private parseMessage(raw: unknown): ServerMessage | AgentEvent | null {
+  private parseMessage(raw: unknown): ServerMessage | null {
     if (typeof raw !== "string") {
       return null;
     }
 
     try {
-      return JSON.parse(raw) as ServerMessage | AgentEvent;
+      return JSON.parse(raw) as ServerMessage;
     } catch {
       return null;
     }

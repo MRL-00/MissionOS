@@ -271,6 +271,15 @@ function handleSnapshot(message: Extract<ServerMessage, { type: "agents-snapshot
   agentStates.clear();
   message.agents.forEach((state) => {
     applyAgentState(state);
+    const controller = agents.get(state.id);
+    if (controller) {
+      moveControllerForEvent(controller, {
+        agentId: state.id,
+        status: state.status,
+        location: state.location,
+        timestamp: state.timestamp,
+      });
+    }
   });
   syncHudState();
 }
