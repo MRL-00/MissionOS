@@ -1,10 +1,9 @@
 import * as THREE from "three";
 import {
   CHAIR_OFFSET,
-  createChair,
+  CHAIR_SIT_INSET,
   createDesk,
   createGlassWall,
-  createKitchenCounter,
   createMeetingTable,
   createPlant,
 } from "./furniture";
@@ -74,8 +73,9 @@ function createDeskWaypoint({
   assignedTo,
 }: DeskWaypointOptions): DeskSlot {
   const origin = new THREE.Vector3(x, 0, z);
-  const chairOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * CHAIR_OFFSET), rotation);
-  const approachOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * (CHAIR_OFFSET + 1.05)), rotation);
+  const sitDistance = CHAIR_OFFSET - CHAIR_SIT_INSET;
+  const chairOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * sitDistance), rotation);
+  const approachOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * (CHAIR_OFFSET + 1.02)), rotation);
   const waypoint: DeskSlot = {
     nodeId: `desk-${x}-${z}`,
     approach: origin.clone().add(approachOffset),
@@ -162,42 +162,45 @@ function createBungyDeck(): { group: THREE.Group; updaters: SceneUpdater[] } {
   const updaters: SceneUpdater[] = [];
 
   addBox(group, [1.9, 0.16, 1.55], [0, 0, 0], "#7f6857");
-  [-0.68, 0.68].forEach((x) => {
-    [-0.52, 0.52].forEach((z) => {
-      addBox(group, [0.12, 1.18, 0.12], [x, -0.67, z], "#4b3b2f");
-    });
-  });
 
   addBox(group, [0.1, 0.96, 1.55], [-0.94, 0.4, 0], "#524439");
   addBox(group, [0.1, 0.96, 1.55], [0.94, 0.4, 0], "#524439");
   addBox(group, [1.9, 0.1, 0.1], [0, 0.84, 0.72], "#524439");
   addBox(group, [1.9, 0.1, 0.1], [0, 0.84, -0.72], "#524439");
 
-  addBox(group, [0.14, 2.5, 0.14], [0.46, 1.1, 0], "#3f352d");
-  addBox(group, [0.85, 0.12, 0.12], [0.05, 2.27, 0], "#3f352d");
+  addBox(group, [0.14, 2.5, 0.14], [0.68, 1.1, 0], "#3f352d");
+  addBox(group, [1.38, 0.12, 0.12], [0.62, 2.27, 0], "#3f352d");
 
   const cordPivot = new THREE.Group();
-  cordPivot.position.set(-0.34, 2.27, 0);
+  cordPivot.position.set(1.2, 2.27, 0);
   group.add(cordPivot);
 
-  const cord = addCylinder(cordPivot, 0.022, 0.035, 2.9, [0, -1.45, 0], "#f1be47", 10);
+  const cordLength = 4.1;
+  const cord = addCylinder(cordPivot, 0.02, 0.032, cordLength, [0, -cordLength / 2, 0], "#f1be47", 10);
+  const jumperAnchor = new THREE.Group();
+  jumperAnchor.position.y = -cordLength;
+  cordPivot.add(jumperAnchor);
+
   const jumper = new THREE.Group();
-  addBox(jumper, [0.2, 0.42, 0.16], [0, 0, 0], "#2a2f39");
-  addBox(jumper, [0.12, 0.3, 0.12], [-0.08, -0.28, 0], "#2a2f39");
-  addBox(jumper, [0.12, 0.3, 0.12], [0.08, -0.28, 0], "#2a2f39");
-  addBox(jumper, [0.11, 0.24, 0.11], [-0.15, 0.05, 0], "#da8b60");
-  addBox(jumper, [0.11, 0.24, 0.11], [0.15, 0.05, 0], "#da8b60");
-  addCylinder(jumper, 0.1, 0.1, 0.18, [0, 0.33, 0], "#f1c39b", 10);
-  jumper.position.set(0, -2.85, 0);
-  cordPivot.add(jumper);
+  addBox(jumper, [0.12, 0.34, 0.12], [-0.08, -0.18, 0], "#2a2f39");
+  addBox(jumper, [0.12, 0.34, 0.12], [0.08, -0.18, 0], "#2a2f39");
+  addBox(jumper, [0.2, 0.42, 0.16], [0, -0.62, 0], "#2a2f39");
+  addBox(jumper, [0.11, 0.24, 0.11], [-0.15, -0.58, 0], "#da8b60");
+  addBox(jumper, [0.11, 0.24, 0.11], [0.15, -0.58, 0], "#da8b60");
+  addCylinder(jumper, 0.1, 0.1, 0.18, [0, -0.94, 0], "#f1c39b", 10);
+  jumperAnchor.add(jumper);
 
   updaters.push((_, elapsed) => {
-    const bounce = Math.sin(elapsed * 2.6) * 0.28;
-    const swing = Math.sin(elapsed * 1.3) * 0.18;
-    cordPivot.rotation.z = -0.24 + swing * 0.24;
-    cord.scale.y = 1 + bounce * 0.08;
-    jumper.position.y = -2.85 + bounce;
-    jumper.rotation.z = -Math.PI / 3 + swing * 0.4;
+    const stretch = 1.08 + Math.sin(elapsed * 2.1) * 0.12;
+    const sway = Math.sin(elapsed * 1.05) * 0.2;
+
+    cordPivot.rotation.z = 0.08 + sway * 0.14;
+    cord.scale.y = stretch;
+    cord.position.y = -(cordLength * stretch) / 2;
+    jumperAnchor.position.y = -cordLength * stretch;
+    jumperAnchor.rotation.z = Math.PI / 14 + sway * 0.32;
+    jumper.position.y = Math.sin(elapsed * 3.2) * 0.08;
+    jumper.rotation.z = Math.PI / 20 + sway * 0.12;
   });
 
   return { group, updaters };
@@ -225,7 +228,6 @@ export function createOfficeScene(): OfficeSceneResult {
 
   addBox(office, [10.2, 0.05, 6.8], [0, 0.13, 1.15], palette.carpet);
   addBox(office, [7.1, 0.05, 5.5], [8.7, 0.13, -4.4], palette.meeting);
-  addBox(office, [4.8, 0.05, 4.8], [-9.35, 0.13, -4.1], palette.kitchen);
   addBox(office, [4.8, 0.05, 5.3], [9.55, 0.13, 5.9], "#d4c7b4");
 
   const walls = new THREE.Group();
@@ -235,14 +237,6 @@ export function createOfficeScene(): OfficeSceneResult {
   addBox(walls, [14.8, 3.2, 0.35], [5.6, 1.6, 9], palette.wall);
   addBox(walls, [0.35, 3.2, 9.5], [13, 1.6, -4.25], palette.wall);
   addBox(walls, [0.35, 3.2, 6.7], [13, 1.6, 5.65], palette.wall);
-  addBox(walls, [5.2, 3.2, 0.35], [-10.4, 1.6, 9], palette.wall);
-  addBox(walls, [4.8, 3.2, 0.35], [-8.8, 1.6, -1.7], palette.wall);
-  addBox(walls, [0.35, 3.2, 5], [-6.4, 1.6, -4.1], palette.wall);
-  addBox(walls, [2.2, 3.2, 0.35], [-11.9, 1.6, 9], palette.wall);
-  addBox(walls, [2.2, 3.2, 0.35], [-7.2, 1.6, 9], palette.wall);
-
-  const frontDoor = addBox(office, [2.2, 2.8, 0.12], [-9.55, 1.4, 8.84], "#7d5b41", { rotationY: Math.PI * 0.02 });
-  frontDoor.userData.type = "door";
 
   const cioGlassWestNorth = createGlassWall(2.4, 2.38);
   cioGlassWestNorth.position.set(6.45, 1.48, 4.05);
@@ -306,57 +300,15 @@ export function createOfficeScene(): OfficeSceneResult {
   table.position.set(8.6, 0, -4.3);
   office.add(table);
 
-  [
-    { x: 7, z: -2.55, rotation: 0 },
-    { x: 8.6, z: -2.55, rotation: 0 },
-    { x: 10.2, z: -2.55, rotation: 0 },
-    { x: 7, z: -6.05, rotation: Math.PI },
-    { x: 8.6, z: -6.05, rotation: Math.PI },
-    { x: 10.2, z: -6.05, rotation: Math.PI },
-    { x: 5.75, z: -3.62, rotation: -Math.PI / 2 },
-    { x: 5.75, z: -4.98, rotation: -Math.PI / 2 },
-    { x: 11.45, z: -3.62, rotation: Math.PI / 2 },
-    { x: 11.45, z: -4.98, rotation: Math.PI / 2 },
-  ].forEach(({ x, z, rotation }) => {
-    const chair = createChair({ color: "#556476", rotation });
-    chair.position.set(x, 0, z);
-    office.add(chair);
-  });
-
-  const receptionDesk = createDesk({ x: -8.65, z: 6.55, chairSide: -1, accent: "#7b5a44", rotation: Math.PI / 2 });
-  office.add(receptionDesk);
-
-  const kitchen = createKitchenCounter();
-  kitchen.position.set(-10.1, 0, -4.3);
-  office.add(kitchen);
-
   const whiteboard = createWhiteboard();
   whiteboard.position.set(11.78, 0, -4.4);
   whiteboard.rotation.y = -Math.PI / 2;
   office.add(whiteboard);
 
-  const receptionSign = createPoster("EpicShot Reception", "#cf8d5d");
-  receptionSign.position.set(-7.25, 2.05, 7.9);
-  receptionSign.rotation.y = -Math.PI / 4;
-  receptionSign.scale.setScalar(0.92);
-  office.add(receptionSign);
-
-  const bungyPoster = createPoster("AJ Hackett Bungy", "#d15e43");
-  bungyPoster.position.set(-2.25, 2.15, 8.75);
-  office.add(bungyPoster);
-
   const cioArt = createAbstractArt("#bccb96", "#d37b53");
   cioArt.position.set(12.15, 2.15, 5.85);
   cioArt.rotation.y = -Math.PI / 2;
   office.add(cioArt);
-
-  const loungeArt = createAbstractArt("#698daa", "#cf9f5b");
-  loungeArt.position.set(-8.55, 2.05, -1.92);
-  loungeArt.rotation.y = 0.02;
-  office.add(loungeArt);
-
-  const noticeBoard = addBox(office, [1.7, 1.1, 0.08], [-8.7, 1.75, -1.95], "#d7b469", { rotationY: 0.02 });
-  noticeBoard.userData.type = "notice";
 
   const waterCooler = createWaterCooler();
   waterCooler.position.set(-6.9, 0, 7.15);
@@ -384,7 +336,7 @@ export function createOfficeScene(): OfficeSceneResult {
   office.add(cioPlant);
 
   const { group: deck, updaters: deckUpdaters } = createBungyDeck();
-  deck.position.set(14.45, 2.55, 1.05);
+  deck.position.set(14.45, 0.1, 1.05);
   office.add(deck);
   updaters.push(...deckUpdaters);
 
@@ -528,12 +480,12 @@ export function createOfficeScene(): OfficeSceneResult {
     bullpen: deskSlots.slice(0, 6).map((desk) => desk.sit.clone()),
     deskSlots,
     meetingSeats: [
-      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(7, 0, -2.55), facing: Math.PI, seated: true },
-      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(8.6, 0, -2.55), facing: Math.PI, seated: true },
-      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(10.2, 0, -2.55), facing: Math.PI, seated: true },
-      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(7, 0, -6.05), facing: 0, seated: true },
-      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(8.6, 0, -6.05), facing: 0, seated: true },
-      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(10.2, 0, -6.05), facing: 0, seated: true },
+      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(7, 0, -2.55), facing: Math.PI, seated: false },
+      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(8.6, 0, -2.55), facing: Math.PI, seated: false },
+      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(10.2, 0, -2.55), facing: Math.PI, seated: false },
+      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(7, 0, -6.05), facing: 0, seated: false },
+      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(8.6, 0, -6.05), facing: 0, seated: false },
+      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(10.2, 0, -6.05), facing: 0, seated: false },
     ],
     navigation,
   };

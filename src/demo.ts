@@ -112,7 +112,7 @@ function moveAgent(
   });
 }
 
-function seatAtDesk(context: DemoContext, agent: AgentController, index: number): void {
+function moveToDesk(context: DemoContext, agent: AgentController, index: number): void {
   const desk = getDesk(context, agent, index);
   if (!desk) {
     return;
@@ -121,7 +121,7 @@ function seatAtDesk(context: DemoContext, agent: AgentController, index: number)
   moveAgent(context, agent, desk, {
     facing: desk.facing,
     status: STATUS.working,
-    seated: true,
+    seated: false,
   });
 }
 
@@ -134,7 +134,7 @@ function moveToMeeting(context: DemoContext, agent: AgentController, index: numb
   moveAgent(context, agent, seat, {
     facing: seat.facing,
     status: STATUS.meeting,
-    seated: true,
+    seated: false,
   });
 }
 
@@ -148,7 +148,7 @@ function moveToWaypoint(context: DemoContext, agent: AgentController, waypoint: 
 
 function applyToAllDesks(context: DemoContext): void {
   getOrderedAgents(context.agents).forEach((agent, index) => {
-    seatAtDesk(context, agent, index);
+    moveToDesk(context, agent, index);
   });
 }
 

@@ -25,7 +25,7 @@ export function createHud({ onToggleDemo, onResetCamera }: HudOptions): HudApi {
   const panel = document.createElement("div");
   panel.className = "hud-panel";
   panel.innerHTML = `
-    <h1>Dunder Mifflin AI Annex</h1>
+    <h1>EpicShot Office</h1>
     <p>Low-poly office diorama with configurable agents, glass offices, and a lightweight demo choreography.</p>
     <div class="controls">
       <button class="button" type="button" data-action="demo">Start Demo Mode</button>

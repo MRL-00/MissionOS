@@ -18,6 +18,7 @@ export interface ChairOptions {
 
 export const CHAIR_SEAT_HEIGHT = 0.66;
 export const CHAIR_OFFSET = 1.1;
+export const CHAIR_SIT_INSET = 0.24;
 
 export function createDesk({
   x,
@@ -82,11 +83,6 @@ export function createDesk({
   const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.22, 10), makeMaterial("#f7efe4"));
   mug.position.set(-0.2, 1.28, -0.2);
   group.add(mug);
-
-  const chair = createChair();
-  chair.position.set(0, 0, chairSide * CHAIR_OFFSET);
-  chair.rotation.y = chairSide > 0 ? Math.PI : 0;
-  group.add(chair);
 
   group.position.set(x, 0, z);
   group.rotation.y = rotation;

@@ -87,7 +87,7 @@ typedAgentsConfig.forEach((agentConfig, index) => {
     moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, assignedDesk, {
       facing: assignedDesk.facing,
       status: STATUS.working,
-      seated: true,
+      seated: false,
     });
     controller.mesh.position.copy(assignedDesk.sit);
   }
@@ -126,7 +126,7 @@ function resetAgentsToDesks(): void {
     moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, desk, {
       facing: desk.facing,
       status: STATUS.working,
-      seated: true,
+      seated: false,
     });
   });
 }
