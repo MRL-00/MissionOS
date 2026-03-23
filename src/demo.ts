@@ -1,48 +1,68 @@
-import { STATUS } from "./characters/agentController.js";
+import * as THREE from "three";
+import { STATUS } from "./characters/agentController";
+import type { AgentController } from "./characters/agentController";
+import type { AgentTargetOptions, DemoContext, DestinationWaypoint, NavigationNode } from "./types";
 
-function getOrderedAgents(agents) {
-  return Array.from(agents.values());
+type MoveableDestination = DestinationWaypoint & {
+  position?: THREE.Vector3;
+  approach?: THREE.Vector3;
+  sit?: THREE.Vector3;
+};
+
+function getOrderedAgents(agents: DemoContext["agents"]): AgentController[] {
+  return Array.from(agents.values()) as AgentController[];
 }
 
-function getDesk(context, agent, index) {
+function getDesk(context: DemoContext, agent: AgentController, index: number) {
   return context.deskAssignments.get(agent.id) ?? context.waypoints.deskSlots[index] ?? null;
 }
 
-function getMeetingSeat(waypoints, index) {
-  if (!waypoints.meetingSeats.length) {
+function getMeetingSeat(context: DemoContext["waypoints"], index: number) {
+  if (!context.meetingSeats.length) {
     return null;
   }
-  return waypoints.meetingSeats[index % waypoints.meetingSeats.length];
+  return context.meetingSeats[index % context.meetingSeats.length] ?? null;
 }
 
-function getPathDistance(left, right) {
-  const leftPosition = left.position ?? left.approach ?? left.sit;
-  const rightPosition = right.position ?? right.approach ?? right.sit;
-  return leftPosition.distanceTo(rightPosition);
+function getPathDistance(left: NavigationNode, right: NavigationNode): number {
+  return left.position.distanceTo(right.position);
 }
 
-function getDestinationPosition(destination) {
-  return destination.position ?? destination.sit ?? destination.approach;
+function getDestinationPosition(destination: MoveableDestination): THREE.Vector3 {
+  return destination.position ?? destination.sit ?? destination.approach ?? new THREE.Vector3();
 }
 
-function buildNodePath(navigation, startId, endId) {
-  if (!startId || !endId || startId === endId) {
+function buildNodePath(navigation: DemoContext["waypoints"]["navigation"], startId: string, endId: string): string[] {
+  if (startId === endId) {
     return [];
   }
 
-  const queue = [{ id: startId, cost: 0, path: [startId] }];
-  const seen = new Map([[startId, 0]]);
+  const queue: Array<{ id: string; cost: number; path: string[] }> = [{ id: startId, cost: 0, path: [startId] }];
+  const seen = new Map<string, number>([[startId, 0]]);
 
-  while (queue.length) {
+  while (queue.length > 0) {
     queue.sort((left, right) => left.cost - right.cost);
     const current = queue.shift();
+    if (!current) {
+      break;
+    }
 
     if (current.id === endId) {
       return current.path.slice(1);
     }
 
-    navigation[current.id].links.forEach((nextId) => {
-      const nextCost = current.cost + getPathDistance(navigation[current.id], navigation[nextId]);
+    const node = navigation[current.id];
+    if (!node) {
+      continue;
+    }
+
+    node.links.forEach((nextId) => {
+      const nextNode = navigation[nextId];
+      if (!nextNode) {
+        return;
+      }
+
+      const nextCost = current.cost + getPathDistance(node, nextNode);
       const best = seen.get(nextId);
 
       if (best === undefined || nextCost < best) {
@@ -59,22 +79,30 @@ function buildNodePath(navigation, startId, endId) {
   return [];
 }
 
-function moveAgent(context, agent, destination, options) {
+function moveAgent(
+  context: DemoContext,
+  agent: AgentController,
+  destination: MoveableDestination,
+  options: AgentTargetOptions,
+): void {
   const destinationNodeId = destination.nodeId;
   const destinationPosition = getDestinationPosition(destination);
   const startNodeId = agent.navNodeId ?? destinationNodeId;
   const nodePath = buildNodePath(context.waypoints.navigation, startNodeId, destinationNodeId);
-  const path = [];
+  const path: THREE.Vector3[] = [];
 
-  if (startNodeId && startNodeId !== destinationNodeId) {
+  if (startNodeId !== destinationNodeId) {
     const startNode = context.waypoints.navigation[startNodeId];
     if (startNode && agent.mesh.position.distanceTo(startNode.position) > 0.12) {
-      path.push(startNode.position);
+      path.push(startNode.position.clone());
     }
   }
 
   nodePath.forEach((nodeId) => {
-    path.push(context.waypoints.navigation[nodeId].position);
+    const node = context.waypoints.navigation[nodeId];
+    if (node) {
+      path.push(node.position.clone());
+    }
   });
 
   agent.navNodeId = destinationNodeId;
@@ -84,7 +112,7 @@ function moveAgent(context, agent, destination, options) {
   });
 }
 
-function seatAtDesk(context, agent, index) {
+function seatAtDesk(context: DemoContext, agent: AgentController, index: number): void {
   const desk = getDesk(context, agent, index);
   if (!desk) {
     return;
@@ -97,7 +125,7 @@ function seatAtDesk(context, agent, index) {
   });
 }
 
-function moveToMeeting(context, agent, index) {
+function moveToMeeting(context: DemoContext, agent: AgentController, index: number): void {
   const seat = getMeetingSeat(context.waypoints, index);
   if (!seat) {
     return;
@@ -106,11 +134,11 @@ function moveToMeeting(context, agent, index) {
   moveAgent(context, agent, seat, {
     facing: seat.facing,
     status: STATUS.meeting,
-    seated: false,
+    seated: true,
   });
 }
 
-function moveToWaypoint(context, agent, waypoint, status = STATUS.idle) {
+function moveToWaypoint(context: DemoContext, agent: AgentController, waypoint: MoveableDestination, status = STATUS.idle): void {
   moveAgent(context, agent, waypoint, {
     facing: waypoint.facing,
     status,
@@ -118,13 +146,13 @@ function moveToWaypoint(context, agent, waypoint, status = STATUS.idle) {
   });
 }
 
-function applyToAllDesks(context) {
+function applyToAllDesks(context: DemoContext): void {
   getOrderedAgents(context.agents).forEach((agent, index) => {
     seatAtDesk(context, agent, index);
   });
 }
 
-const STEPS = [
+const STEPS: Array<{ duration: number; apply(context: DemoContext): void }> = [
   {
     duration: 4,
     apply(context) {
@@ -166,41 +194,51 @@ const STEPS = [
       applyToAllDesks(context);
 
       if (agents[0]) {
-        moveToWaypoint(context, agents[0], context.waypoints.kitchen);
+        moveToWaypoint(context, agents[0], context.waypoints.reception);
       }
 
       const lastAgent = agents.at(-1);
       if (lastAgent && lastAgent !== agents[0]) {
-        moveToWaypoint(context, lastAgent, context.waypoints.entrance);
+        moveToWaypoint(context, lastAgent, context.waypoints.kitchen);
       }
     },
   },
 ];
 
-export function moveAgentToDestination(context, agent, destination, options) {
+export function moveAgentToDestination(
+  context: DemoContext,
+  agent: AgentController,
+  destination: MoveableDestination,
+  options: AgentTargetOptions,
+): void {
   moveAgent(context, agent, destination, options);
 }
 
 export class DemoDirector {
-  constructor(context) {
+  context: DemoContext;
+  running: boolean;
+  stepIndex: number;
+  stepElapsed: number;
+
+  constructor(context: DemoContext) {
     this.context = context;
     this.running = false;
     this.stepIndex = 0;
     this.stepElapsed = 0;
   }
 
-  start() {
+  start(): void {
     this.running = true;
     this.stepIndex = 0;
     this.stepElapsed = 0;
-    STEPS[0].apply(this.context);
+    STEPS[0]?.apply(this.context);
   }
 
-  stop() {
+  stop(): void {
     this.running = false;
   }
 
-  update(delta) {
+  update(delta: number): void {
     if (!this.running) {
       return;
     }
@@ -208,10 +246,10 @@ export class DemoDirector {
     this.stepElapsed += delta;
     const current = STEPS[this.stepIndex];
 
-    if (this.stepElapsed >= current.duration) {
+    if (current && this.stepElapsed >= current.duration) {
       this.stepElapsed = 0;
       this.stepIndex = (this.stepIndex + 1) % STEPS.length;
-      STEPS[this.stepIndex].apply(this.context);
+      STEPS[this.stepIndex]?.apply(this.context);
     }
   }
 }

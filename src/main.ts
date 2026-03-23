@@ -2,12 +2,18 @@ import "./styles.css";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import agentsConfig from "./config/agents.json";
-import { AgentController, STATUS } from "./characters/agentController.js";
-import { DemoDirector, moveAgentToDestination } from "./demo.js";
-import { createOfficeScene } from "./scene/officeScene.js";
-import { createHud, LabelRenderer } from "./ui/overlay.js";
+import { AgentController, STATUS } from "./characters/agentController";
+import { DemoDirector, moveAgentToDestination } from "./demo";
+import { createOfficeScene } from "./scene/officeScene";
+import { createHud, LabelRenderer } from "./ui/overlay";
+import type { AgentConfig, DeskSlot } from "./types";
 
-const app = document.querySelector("#app");
+const typedAgentsConfig = agentsConfig as AgentConfig[];
+const app = document.querySelector<HTMLElement>("#app");
+
+if (!app) {
+  throw new Error("Missing #app root element");
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -22,7 +28,6 @@ scene.background = new THREE.Color("#e9d5b4");
 scene.fog = new THREE.Fog("#ead7b7", 28, 52);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 120);
-
 const defaultCameraPosition = new THREE.Vector3(-17, 14, 17);
 const defaultTarget = new THREE.Vector3(0, 1.6, 0);
 camera.position.copy(defaultCameraPosition);
@@ -59,29 +64,32 @@ const roomGlow = new THREE.PointLight("#fff0d0", 0.8, 24);
 roomGlow.position.set(0, 7, 0);
 scene.add(roomGlow);
 
-const { office, waypoints } = createOfficeScene();
+const { office, waypoints, updaters } = createOfficeScene();
 scene.add(office);
 
-const agents = new Map();
-const deskAssignments = new Map();
+const agents = new Map<string, AgentController>();
+const deskAssignments = new Map<string, DeskSlot>();
+const unassignedDesks = waypoints.deskSlots.filter((desk) => !desk.assignedTo);
 
-agentsConfig.forEach((agentConfig, index) => {
-  const desk = waypoints.deskSlots[index] ?? null;
-  const initialPosition = desk?.sit ?? waypoints.bullpen[index % waypoints.bullpen.length];
-  const controller = new AgentController(agentConfig, initialPosition.clone(), desk?.facing ?? 0);
-  controller.navNodeId = desk?.nodeId ?? waypoints.entrance.nodeId;
+typedAgentsConfig.forEach((agentConfig, index) => {
+  const assignedDesk =
+    waypoints.deskSlots.find((desk) => desk.assignedTo === agentConfig.id) ??
+    unassignedDesks.shift() ??
+    null;
+  const initialPosition = assignedDesk?.sit ?? waypoints.bullpen[index % waypoints.bullpen.length] ?? new THREE.Vector3();
+  const controller = new AgentController(agentConfig, initialPosition.clone(), assignedDesk?.facing ?? 0);
+  controller.navNodeId = assignedDesk?.nodeId ?? waypoints.entrance.nodeId;
   scene.add(controller.mesh);
   agents.set(agentConfig.id, controller);
-  deskAssignments.set(agentConfig.id, desk);
 
-  if (desk) {
-    moveAgentToDestination({ waypoints }, controller, desk, {
-      facing: desk.facing,
+  if (assignedDesk) {
+    deskAssignments.set(agentConfig.id, assignedDesk);
+    moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, assignedDesk, {
+      facing: assignedDesk.facing,
       status: STATUS.working,
       seated: true,
     });
-    controller.mesh.position.copy(desk.sit);
-    controller.mesh.position.y = desk.sit.y;
+    controller.mesh.position.copy(assignedDesk.sit);
   }
 });
 
@@ -97,7 +105,7 @@ const demo = new DemoDirector({
   waypoints,
 });
 
-function toggleDemo() {
+function toggleDemo(): void {
   if (demo.running) {
     demo.stop();
     hud.setDemoRunning(false);
@@ -109,13 +117,13 @@ function toggleDemo() {
   hud.setDemoRunning(true);
 }
 
-function resetAgentsToDesks() {
+function resetAgentsToDesks(): void {
   agents.forEach((controller, id) => {
     const desk = deskAssignments.get(id);
     if (!desk) {
       return;
     }
-    moveAgentToDestination({ waypoints }, controller, desk, {
+    moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, desk, {
       facing: desk.facing,
       status: STATUS.working,
       seated: true,
@@ -123,13 +131,13 @@ function resetAgentsToDesks() {
   });
 }
 
-function resetCamera() {
+function resetCamera(): void {
   camera.position.copy(defaultCameraPosition);
   controls.target.copy(defaultTarget);
   controls.update();
 }
 
-function resize() {
+function resize(): void {
   const width = window.innerWidth;
   const height = window.innerHeight;
   camera.aspect = width / height;
@@ -147,11 +155,11 @@ renderer.setAnimationLoop(() => {
 
   demo.update(delta);
   controls.update();
+  updaters.forEach((updater) => updater(delta, elapsed));
 
-  const labels = [];
-  agents.forEach((controller) => {
+  const labels = Array.from(agents.values(), (controller) => {
     controller.update(delta, elapsed);
-    labels.push(controller.getLabelState());
+    return controller.getLabelState();
   });
 
   labelRenderer.sync(labels, camera, { width: window.innerWidth, height: window.innerHeight });

@@ -1,19 +1,40 @@
 import * as THREE from "three";
-import { createAgent } from "./agentFactory.js";
+import type { AgentConfig, AgentStatus, AgentTargetOptions, LabelState } from "../types";
+import { createAgent } from "./agentFactory";
 
-const STATUS = {
+export const STATUS = {
   idle: "idle",
   working: "working",
   meeting: "in-meeting",
-};
+} as const satisfies Record<string, AgentStatus>;
 
-function interpolateAngle(current, target, alpha) {
+function interpolateAngle(current: number, target: number, alpha: number): number {
   const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
   return current + delta * alpha;
 }
 
 export class AgentController {
-  constructor(agentConfig, initialPosition, initialFacing = 0) {
+  id: string;
+  name: string;
+  role: string;
+  emoji: string;
+  mesh: THREE.Group;
+  parts: ReturnType<typeof createAgent>["parts"];
+  velocity: THREE.Vector3;
+  targetPosition: THREE.Vector3;
+  path: THREE.Vector3[];
+  targetFacing: number;
+  moveSpeed: number;
+  turnSpeed: number;
+  status: AgentStatus;
+  phase: number;
+  seated: boolean;
+  walking: boolean;
+  seatAmount: number;
+  navNodeId: string | null;
+  labelWorldPosition: THREE.Vector3;
+
+  constructor(agentConfig: AgentConfig, initialPosition: THREE.Vector3, initialFacing = 0) {
     const built = createAgent(agentConfig);
     this.id = built.id;
     this.name = built.name;
@@ -36,10 +57,11 @@ export class AgentController {
     this.seated = false;
     this.walking = false;
     this.seatAmount = 0;
+    this.navNodeId = null;
     this.labelWorldPosition = new THREE.Vector3();
   }
 
-  setTarget(position, options = {}) {
+  setTarget(position: THREE.Vector3, options: AgentTargetOptions = {}): void {
     const route = [...(options.path ?? []), position].map((point) => point.clone());
     this.path = route;
     this.targetPosition.copy(this.path.shift() ?? position);
@@ -54,14 +76,17 @@ export class AgentController {
     }
   }
 
-  update(delta, elapsed) {
+  update(delta: number, elapsed: number): void {
     const toTarget = this.targetPosition.clone().sub(this.mesh.position);
     toTarget.y = 0;
     let distance = toTarget.length();
     let reachedCurrentTarget = distance <= 0.04;
 
     if (reachedCurrentTarget && this.path.length) {
-      this.targetPosition.copy(this.path.shift());
+      const next = this.path.shift();
+      if (next) {
+        this.targetPosition.copy(next);
+      }
       toTarget.copy(this.targetPosition).sub(this.mesh.position);
       toTarget.y = 0;
       distance = toTarget.length();
@@ -70,7 +95,7 @@ export class AgentController {
 
     this.walking = !reachedCurrentTarget || this.path.length > 0;
 
-    if (this.walking) {
+    if (this.walking && distance > 0) {
       toTarget.normalize();
       const step = Math.min(distance, this.moveSpeed * delta);
       this.mesh.position.addScaledVector(toTarget, step);
@@ -107,10 +132,10 @@ export class AgentController {
     }
 
     this.labelWorldPosition.copy(this.mesh.position);
-    this.labelWorldPosition.y += this.mesh.userData.labelOffset ?? 2.5;
+    this.labelWorldPosition.y += typeof this.mesh.userData.labelOffset === "number" ? this.mesh.userData.labelOffset : 2.5;
   }
 
-  getLabelState() {
+  getLabelState(): LabelState {
     return {
       id: this.id,
       name: `${this.emoji} ${this.name}`,
@@ -120,5 +145,3 @@ export class AgentController {
     };
   }
 }
-
-export { STATUS };
