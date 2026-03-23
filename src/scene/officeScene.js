@@ -399,21 +399,21 @@ export function createOfficeScene() {
     cioDoor: { position: new THREE.Vector3(6.05, 0, 5.2), links: [] },
     cioHall: { position: new THREE.Vector3(7.7, 0, 5.2), links: [] },
     cioNorth: { position: new THREE.Vector3(9.4, 0, 6.9), links: [] },
-    bullpenWest: { position: new THREE.Vector3(-5.2, 0, 4.45), links: [] },
-    bullpenMid: { position: new THREE.Vector3(-1.2, 0, 4.45), links: [] },
-    bullpenEast: { position: new THREE.Vector3(2.8, 0, 4.45), links: [] },
-    centerWest: { position: new THREE.Vector3(-5.2, 0, 1.55), links: [] },
-    centerMid: { position: new THREE.Vector3(-1.2, 0, 1.55), links: [] },
-    centerEast: { position: new THREE.Vector3(2.8, 0, 1.55), links: [] },
+    bullpenWest: { position: new THREE.Vector3(-6.45, 0, 4.45), links: [] },
+    bullpenMid: { position: new THREE.Vector3(-2.9, 0, 4.45), links: [] },
+    bullpenEast: { position: new THREE.Vector3(0.7, 0, 4.45), links: [] },
+    centerWest: { position: new THREE.Vector3(-6.45, 0, 1.55), links: [] },
+    centerMid: { position: new THREE.Vector3(-2.9, 0, 1.55), links: [] },
+    centerEast: { position: new THREE.Vector3(0.7, 0, 1.55), links: [] },
     kitchenDoor: { position: new THREE.Vector3(-6.15, 0, -2.55), links: [] },
     kitchenHall: { position: new THREE.Vector3(-8.3, 0, -2.55), links: [] },
     kitchenInside: { position: new THREE.Vector3(-8.9, 0, -4.85), links: [] },
     southMid: { position: new THREE.Vector3(-1.2, 0, -2.55), links: [] },
     southEast: { position: new THREE.Vector3(2.8, 0, -2.55), links: [] },
     meetingDoor: { position: new THREE.Vector3(5.05, 0, -4.4), links: [] },
-    meetingNorth: { position: new THREE.Vector3(8.7, 0, -2.7), links: [] },
-    meetingCenter: { position: new THREE.Vector3(8.7, 0, -4.4), links: [] },
-    meetingSouth: { position: new THREE.Vector3(8.7, 0, -6.05), links: [] },
+    meetingNorth: { position: new THREE.Vector3(6.05, 0, -2.7), links: [] },
+    meetingCenter: { position: new THREE.Vector3(6.05, 0, -4.4), links: [] },
+    meetingSouth: { position: new THREE.Vector3(6.05, 0, -6.05), links: [] },
   };
 
   deskSlots.forEach((desk) => {
@@ -503,7 +503,6 @@ export function createOfficeScene() {
       cord,
       cordGroup,
       baseY: jumper.position.y,
-      baseCordLength: cord.scale.y,
     },
   };
 }

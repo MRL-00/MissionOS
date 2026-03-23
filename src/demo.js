@@ -147,6 +147,15 @@ function moveAgent(context, agent, destination, options) {
   const nodePath = buildNodePath(context.waypoints.navigation, context.waypoints.colliders, startNodeId, destinationNodeId);
   const path = [];
 
+  if (
+    startNodeId &&
+    destinationNodeId &&
+    startNodeId !== destinationNodeId &&
+    !nodePath.length
+  ) {
+    console.warn(`moveAgent(): no node path from "${startNodeId}" to "${destinationNodeId}", falling back to straight-line movement.`);
+  }
+
   if (startNodeId && startNodeId !== destinationNodeId) {
     const startNode = context.waypoints.navigation[startNodeId];
     if (
