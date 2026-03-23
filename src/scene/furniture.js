@@ -105,9 +105,19 @@ export function createPlant(height = 1.5) {
   stem.position.y = 0.55 + height * 0.27;
   group.add(stem);
 
-  const leaves = new THREE.Mesh(new THREE.BoxGeometry(0.9, height * 0.5, 0.9), makeMaterial("#6a9456"));
-  leaves.position.y = height * 0.75;
-  group.add(leaves);
+  const leafMaterial = makeMaterial("#6a9456");
+  [
+    { x: -0.18, y: height * 0.68, z: 0.02, rotationZ: Math.PI / 5, scale: 0.9 },
+    { x: 0.18, y: height * 0.74, z: -0.08, rotationZ: -Math.PI / 4.5, scale: 1 },
+    { x: -0.04, y: height * 0.9, z: 0.16, rotationX: Math.PI / 8, scale: 0.82 },
+    { x: 0.08, y: height * 0.84, z: -0.2, rotationX: -Math.PI / 7, scale: 0.78 },
+  ].forEach(({ x, y, z, rotationX = 0, rotationZ = 0, scale }) => {
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.26 * scale, height * 0.5 * scale, 0.18 * scale), leafMaterial);
+    leaf.position.set(x, y, z);
+    leaf.rotation.x = rotationX;
+    leaf.rotation.z = rotationZ;
+    group.add(leaf);
+  });
 
   return enableShadows(group);
 }

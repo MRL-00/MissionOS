@@ -15,13 +15,74 @@ function getMeetingSeat(waypoints, index) {
   return waypoints.meetingSeats[index % waypoints.meetingSeats.length];
 }
 
+function getPathDistance(left, right) {
+  return left.position.distanceTo(right.position);
+}
+
+function buildNodePath(navigation, startId, endId) {
+  if (!startId || !endId || startId === endId) {
+    return [];
+  }
+
+  const queue = [{ id: startId, cost: 0, path: [startId] }];
+  const seen = new Map([[startId, 0]]);
+
+  while (queue.length) {
+    queue.sort((left, right) => left.cost - right.cost);
+    const current = queue.shift();
+
+    if (current.id === endId) {
+      return current.path.slice(1);
+    }
+
+    navigation[current.id].links.forEach((nextId) => {
+      const nextCost = current.cost + getPathDistance(navigation[current.id], navigation[nextId]);
+      const best = seen.get(nextId);
+
+      if (best === undefined || nextCost < best) {
+        seen.set(nextId, nextCost);
+        queue.push({
+          id: nextId,
+          cost: nextCost,
+          path: [...current.path, nextId],
+        });
+      }
+    });
+  }
+
+  return [];
+}
+
+function moveAgent(context, agent, destination, options) {
+  const startNodeId = agent.navNodeId ?? destination.nodeId;
+  const nodePath = buildNodePath(context.waypoints.navigation, startNodeId, destination.nodeId);
+  const path = [];
+
+  if (startNodeId && startNodeId !== destination.nodeId) {
+    const startNode = context.waypoints.navigation[startNodeId];
+    if (startNode && agent.mesh.position.distanceTo(startNode.position) > 0.12) {
+      path.push(startNode.position);
+    }
+  }
+
+  nodePath.forEach((nodeId) => {
+    path.push(context.waypoints.navigation[nodeId].position);
+  });
+
+  agent.navNodeId = destination.nodeId;
+  agent.setTarget(destination.position, {
+    ...options,
+    path,
+  });
+}
+
 function seatAtDesk(context, agent, index) {
   const desk = getDesk(context, agent, index);
   if (!desk) {
     return;
   }
 
-  agent.setTarget(desk.sit, {
+  moveAgent(context, agent, desk, {
     facing: desk.facing,
     status: STATUS.working,
     seated: true,
@@ -34,9 +95,17 @@ function moveToMeeting(context, agent, index) {
     return;
   }
 
-  agent.setTarget(seat.position, {
+  moveAgent(context, agent, seat, {
     facing: seat.facing,
     status: STATUS.meeting,
+    seated: false,
+  });
+}
+
+function moveToWaypoint(context, agent, waypoint, status = STATUS.idle) {
+  moveAgent(context, agent, waypoint, {
+    facing: waypoint.facing,
+    status,
     seated: false,
   });
 }
@@ -55,11 +124,11 @@ const STEPS = [
       applyToAllDesks(context);
 
       if (agents[0]) {
-        agents[0].setTarget(context.waypoints.entrance, { facing: Math.PI, status: STATUS.idle, seated: false });
+        moveToWaypoint(context, agents[0], context.waypoints.entrance);
       }
 
       if (agents[2]) {
-        agents[2].setTarget(context.waypoints.kitchen, { facing: Math.PI / 2, status: STATUS.idle, seated: false });
+        moveToWaypoint(context, agents[2], context.waypoints.kitchen);
       }
     },
   },
@@ -89,16 +158,20 @@ const STEPS = [
       applyToAllDesks(context);
 
       if (agents[0]) {
-        agents[0].setTarget(context.waypoints.kitchen, { facing: 0, status: STATUS.idle, seated: false });
+        moveToWaypoint(context, agents[0], context.waypoints.kitchen);
       }
 
       const lastAgent = agents.at(-1);
       if (lastAgent && lastAgent !== agents[0]) {
-        lastAgent.setTarget(context.waypoints.entrance, { facing: Math.PI, status: STATUS.idle, seated: false });
+        moveToWaypoint(context, lastAgent, context.waypoints.entrance);
       }
     },
   },
 ];
+
+export function moveAgentToDestination(context, agent, destination, options) {
+  moveAgent(context, agent, destination, options);
+}
 
 export class DemoDirector {
   constructor(context) {

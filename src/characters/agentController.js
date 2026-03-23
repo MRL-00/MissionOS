@@ -27,6 +27,7 @@ export class AgentController {
 
     this.velocity = new THREE.Vector3();
     this.targetPosition = initialPosition.clone();
+    this.path = [];
     this.targetFacing = initialFacing;
     this.moveSpeed = 2.2;
     this.turnSpeed = 6;
@@ -39,7 +40,9 @@ export class AgentController {
   }
 
   setTarget(position, options = {}) {
-    this.targetPosition.copy(position);
+    const route = [...(options.path ?? []), position].map((point) => point.clone());
+    this.path = route;
+    this.targetPosition.copy(this.path.shift() ?? position);
     if (typeof options.facing === "number") {
       this.targetFacing = options.facing;
     }
@@ -54,8 +57,18 @@ export class AgentController {
   update(delta, elapsed) {
     const toTarget = this.targetPosition.clone().sub(this.mesh.position);
     toTarget.y = 0;
-    const distance = toTarget.length();
-    this.walking = distance > 0.04;
+    let distance = toTarget.length();
+    let reachedCurrentTarget = distance <= 0.04;
+
+    if (reachedCurrentTarget && this.path.length) {
+      this.targetPosition.copy(this.path.shift());
+      toTarget.copy(this.targetPosition).sub(this.mesh.position);
+      toTarget.y = 0;
+      distance = toTarget.length();
+      reachedCurrentTarget = distance <= 0.04;
+    }
+
+    this.walking = !reachedCurrentTarget || this.path.length > 0;
 
     if (this.walking) {
       toTarget.normalize();
@@ -71,9 +84,12 @@ export class AgentController {
       );
     }
 
+    this.mesh.position.y = THREE.MathUtils.damp(this.mesh.position.y, this.targetPosition.y, 8, delta);
+
     const bob = this.walking ? Math.sin(elapsed * 8 + this.phase) * 0.05 : Math.sin(elapsed * 1.8 + this.phase) * 0.03;
     const sway = this.walking ? Math.sin(elapsed * 8 + this.phase) * 0.65 : 0;
-    this.seatAmount = THREE.MathUtils.damp(this.seatAmount, this.seated ? 1 : 0, 6, delta);
+    const visuallySeated = this.seated && !this.walking;
+    this.seatAmount = THREE.MathUtils.damp(this.seatAmount, visuallySeated ? 1 : 0, 6, delta);
 
     this.parts.bodyPivot.position.y = 0.08 + bob - this.seatAmount * 0.24;
     this.parts.bodyPivot.rotation.x = -this.seatAmount * 0.4;
@@ -83,7 +99,7 @@ export class AgentController {
     this.parts.legs.leftLeg.rotation.x = -sway;
     this.parts.legs.rightLeg.rotation.x = sway;
 
-    if (this.seated) {
+    if (visuallySeated) {
       this.parts.arms.leftArm.rotation.x = -0.7;
       this.parts.arms.rightArm.rotation.x = -0.9;
       this.parts.legs.leftLeg.rotation.x = 1.3;

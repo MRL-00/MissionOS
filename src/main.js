@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import agentsConfig from "./config/agents.json";
 import { AgentController, STATUS } from "./characters/agentController.js";
-import { DemoDirector } from "./demo.js";
+import { DemoDirector, moveAgentToDestination } from "./demo.js";
 import { createOfficeScene } from "./scene/officeScene.js";
 import { createHud, LabelRenderer } from "./ui/overlay.js";
 
@@ -21,31 +21,19 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color("#e9d5b4");
 scene.fog = new THREE.Fog("#ead7b7", 28, 52);
 
-const aspect = window.innerWidth / window.innerHeight;
-const frustum = 13;
-const camera = new THREE.OrthographicCamera(
-  (-frustum * aspect) / 2,
-  (frustum * aspect) / 2,
-  frustum / 2,
-  -frustum / 2,
-  0.1,
-  100,
-);
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 120);
 
-const defaultCameraPosition = new THREE.Vector3(-15, 15, 15);
-const defaultTarget = new THREE.Vector3(0, 0.8, 0);
+const defaultCameraPosition = new THREE.Vector3(-17, 14, 17);
+const defaultTarget = new THREE.Vector3(0, 1.6, 0);
 camera.position.copy(defaultCameraPosition);
 camera.lookAt(defaultTarget);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.enablePan = false;
-controls.minZoom = 0.85;
-controls.maxZoom = 1.8;
-controls.minPolarAngle = Math.PI / 5;
-controls.maxPolarAngle = Math.PI / 2.2;
-controls.minAzimuthAngle = -Math.PI / 8;
-controls.maxAzimuthAngle = Math.PI / 3;
+controls.enablePan = true;
+controls.screenSpacePanning = true;
+controls.minDistance = 7;
+controls.maxDistance = 42;
 controls.target.copy(defaultTarget);
 
 const ambient = new THREE.HemisphereLight("#fff5de", "#b98f60", 1.9);
@@ -67,6 +55,10 @@ const fill = new THREE.DirectionalLight("#c0e1ff", 0.9);
 fill.position.set(-10, 12, -6);
 scene.add(fill);
 
+const roomGlow = new THREE.PointLight("#fff0d0", 0.8, 24);
+roomGlow.position.set(0, 7, 0);
+scene.add(roomGlow);
+
 const { office, waypoints } = createOfficeScene();
 scene.add(office);
 
@@ -77,16 +69,19 @@ agentsConfig.forEach((agentConfig, index) => {
   const desk = waypoints.deskSlots[index] ?? null;
   const initialPosition = desk?.sit ?? waypoints.bullpen[index % waypoints.bullpen.length];
   const controller = new AgentController(agentConfig, initialPosition.clone(), desk?.facing ?? 0);
+  controller.navNodeId = desk?.nodeId ?? waypoints.entrance.nodeId;
   scene.add(controller.mesh);
   agents.set(agentConfig.id, controller);
   deskAssignments.set(agentConfig.id, desk);
 
   if (desk) {
-    controller.setTarget(desk.sit, {
+    moveAgentToDestination({ waypoints }, controller, desk, {
       facing: desk.facing,
       status: STATUS.working,
       seated: true,
     });
+    controller.mesh.position.copy(desk.sit);
+    controller.mesh.position.y = desk.sit.y;
   }
 });
 
@@ -120,7 +115,7 @@ function resetAgentsToDesks() {
     if (!desk) {
       return;
     }
-    controller.setTarget(desk.sit, {
+    moveAgentToDestination({ waypoints }, controller, desk, {
       facing: desk.facing,
       status: STATUS.working,
       seated: true,
@@ -131,19 +126,13 @@ function resetAgentsToDesks() {
 function resetCamera() {
   camera.position.copy(defaultCameraPosition);
   controls.target.copy(defaultTarget);
-  camera.zoom = 1;
-  camera.updateProjectionMatrix();
   controls.update();
 }
 
 function resize() {
   const width = window.innerWidth;
   const height = window.innerHeight;
-  const nextAspect = width / height;
-  camera.left = (-frustum * nextAspect) / 2;
-  camera.right = (frustum * nextAspect) / 2;
-  camera.top = frustum / 2;
-  camera.bottom = -frustum / 2;
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height);
 }
