@@ -59,7 +59,7 @@ const roomGlow = new THREE.PointLight("#fff0d0", 0.8, 24);
 roomGlow.position.set(0, 7, 0);
 scene.add(roomGlow);
 
-const { office, waypoints } = createOfficeScene();
+const { office, waypoints, bungyJumper } = createOfficeScene();
 scene.add(office);
 
 const agents = new Map();
@@ -153,6 +153,14 @@ renderer.setAnimationLoop(() => {
     controller.update(delta, elapsed);
     labels.push(controller.getLabelState());
   });
+
+  if (bungyJumper) {
+    const bounce = Math.sin(elapsed * 2.6) * 0.42;
+    bungyJumper.group.position.y = bungyJumper.baseY + bounce;
+    bungyJumper.group.rotation.z = -Math.PI / 3.2 + Math.sin(elapsed * 2.6) * 0.12;
+    bungyJumper.cord.scale.y = 1 + Math.max(0, -bounce) * 0.42;
+    bungyJumper.cord.position.y = -0.95 - Math.max(0, -bounce) * 0.38;
+  }
 
   labelRenderer.sync(labels, camera, { width: window.innerWidth, height: window.innerHeight });
   renderer.render(scene, camera);

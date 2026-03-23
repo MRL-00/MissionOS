@@ -25,8 +25,81 @@ function getDestinationPosition(destination) {
   return destination.position ?? destination.sit ?? destination.approach;
 }
 
-function buildNodePath(navigation, startId, endId) {
+function pointInRect(point, collider) {
+  return (
+    point.x >= collider.minX &&
+    point.x <= collider.maxX &&
+    point.z >= collider.minZ &&
+    point.z <= collider.maxZ
+  );
+}
+
+function segmentsIntersect2D(a, b, c, d) {
+  const getOrientation = (p, q, r) => {
+    const value = (q.z - p.z) * (r.x - q.x) - (q.x - p.x) * (r.z - q.z);
+    if (Math.abs(value) < 1e-6) {
+      return 0;
+    }
+    return value > 0 ? 1 : 2;
+  };
+
+  const onSegment = (p, q, r) =>
+    q.x <= Math.max(p.x, r.x) + 1e-6 &&
+    q.x + 1e-6 >= Math.min(p.x, r.x) &&
+    q.z <= Math.max(p.z, r.z) + 1e-6 &&
+    q.z + 1e-6 >= Math.min(p.z, r.z);
+
+  const o1 = getOrientation(a, b, c);
+  const o2 = getOrientation(a, b, d);
+  const o3 = getOrientation(c, d, a);
+  const o4 = getOrientation(c, d, b);
+
+  if (o1 !== o2 && o3 !== o4) {
+    return true;
+  }
+
+  if (o1 === 0 && onSegment(a, c, b)) {
+    return true;
+  }
+  if (o2 === 0 && onSegment(a, d, b)) {
+    return true;
+  }
+  if (o3 === 0 && onSegment(c, a, d)) {
+    return true;
+  }
+  if (o4 === 0 && onSegment(c, b, d)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isSegmentClear(start, end, colliders = []) {
+  return colliders.every((collider) => {
+    if (pointInRect(start, collider) || pointInRect(end, collider)) {
+      return false;
+    }
+
+    const corners = [
+      { x: collider.minX, z: collider.minZ },
+      { x: collider.maxX, z: collider.minZ },
+      { x: collider.maxX, z: collider.maxZ },
+      { x: collider.minX, z: collider.maxZ },
+    ];
+
+    return !segmentsIntersect2D(start, end, corners[0], corners[1]) &&
+      !segmentsIntersect2D(start, end, corners[1], corners[2]) &&
+      !segmentsIntersect2D(start, end, corners[2], corners[3]) &&
+      !segmentsIntersect2D(start, end, corners[3], corners[0]);
+  });
+}
+
+function buildNodePath(navigation, colliders, startId, endId) {
   if (!startId || !endId || startId === endId) {
+    return [];
+  }
+
+  if (!navigation[startId] || !navigation[endId]) {
     return [];
   }
 
@@ -42,6 +115,14 @@ function buildNodePath(navigation, startId, endId) {
     }
 
     navigation[current.id].links.forEach((nextId) => {
+      if (!navigation[nextId]) {
+        return;
+      }
+
+      if (!isSegmentClear(navigation[current.id].position, navigation[nextId].position, colliders)) {
+        return;
+      }
+
       const nextCost = current.cost + getPathDistance(navigation[current.id], navigation[nextId]);
       const best = seen.get(nextId);
 
@@ -63,12 +144,16 @@ function moveAgent(context, agent, destination, options) {
   const destinationNodeId = destination.nodeId;
   const destinationPosition = getDestinationPosition(destination);
   const startNodeId = agent.navNodeId ?? destinationNodeId;
-  const nodePath = buildNodePath(context.waypoints.navigation, startNodeId, destinationNodeId);
+  const nodePath = buildNodePath(context.waypoints.navigation, context.waypoints.colliders, startNodeId, destinationNodeId);
   const path = [];
 
   if (startNodeId && startNodeId !== destinationNodeId) {
     const startNode = context.waypoints.navigation[startNodeId];
-    if (startNode && agent.mesh.position.distanceTo(startNode.position) > 0.12) {
+    if (
+      startNode &&
+      agent.mesh.position.distanceTo(startNode.position) > 0.12 &&
+      isSegmentClear(agent.mesh.position, startNode.position, context.waypoints.colliders)
+    ) {
       path.push(startNode.position);
     }
   }

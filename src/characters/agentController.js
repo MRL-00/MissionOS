@@ -84,11 +84,11 @@ export class AgentController {
       );
     }
 
-    this.mesh.position.y = THREE.MathUtils.damp(this.mesh.position.y, this.targetPosition.y, 8, delta);
-
     const bob = this.walking ? Math.sin(elapsed * 8 + this.phase) * 0.05 : Math.sin(elapsed * 1.8 + this.phase) * 0.03;
     const sway = this.walking ? Math.sin(elapsed * 8 + this.phase) * 0.65 : 0;
     const visuallySeated = this.seated && !this.walking;
+    const targetY = this.targetPosition.y + (visuallySeated ? -0.02 : 0);
+    this.mesh.position.y = THREE.MathUtils.damp(this.mesh.position.y, targetY, visuallySeated ? 10 : 8, delta);
     this.seatAmount = THREE.MathUtils.damp(this.seatAmount, visuallySeated ? 1 : 0, 6, delta);
 
     this.parts.bodyPivot.position.y = 0.08 + bob - this.seatAmount * 0.24;
@@ -98,6 +98,8 @@ export class AgentController {
     this.parts.arms.rightArm.rotation.x = -sway;
     this.parts.legs.leftLeg.rotation.x = -sway;
     this.parts.legs.rightLeg.rotation.x = sway;
+    this.parts.legs.leftLeg.position.set(-0.14, 0.36 - this.seatAmount * 0.08, this.seatAmount * 0.12);
+    this.parts.legs.rightLeg.position.set(0.14, 0.36 - this.seatAmount * 0.08, this.seatAmount * 0.12);
 
     if (visuallySeated) {
       this.parts.arms.leftArm.rotation.x = -0.7;

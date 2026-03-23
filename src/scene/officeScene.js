@@ -27,22 +27,31 @@ function rotateYOffset(vector, rotation) {
   return vector.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rotation);
 }
 
-function createDeskWaypoint({ x, z, rotation = 0 }) {
+function createDeskWaypoint({ x, z, rotation = 0, chairSide = 1, id }) {
   const origin = new THREE.Vector3(x, 0, z);
-  const sitOffset = rotateYOffset(new THREE.Vector3(0, 0.06, 1.02), rotation);
-  const approachOffset = rotateYOffset(new THREE.Vector3(0, 0, 1.85), rotation);
+  const sitOffset = rotateYOffset(new THREE.Vector3(0, 0.06, chairSide * 1.02), rotation);
+  const approachOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * 1.88), rotation);
 
   return {
-    nodeId: `desk-${x}-${z}`,
+    nodeId: id ?? `desk-${x}-${z}`,
     approach: origin.clone().add(approachOffset),
     sit: origin.clone().add(sitOffset),
-    facing: rotation + Math.PI,
+    facing: rotation + (chairSide > 0 ? Math.PI : 0),
   };
 }
 
 function connect(graph, left, right) {
   graph[left].links.push(right);
   graph[right].links.push(left);
+}
+
+function addCollider(colliders, x, z, width, depth, padding = 0.12) {
+  colliders.push({
+    minX: x - width / 2 - padding,
+    maxX: x + width / 2 + padding,
+    minZ: z - depth / 2 - padding,
+    maxZ: z + depth / 2 + padding,
+  });
 }
 
 function createWhiteboard() {
@@ -95,44 +104,77 @@ function createPoster(label, accent = "#d7b469") {
   return poster;
 }
 
+function createExecutiveDesk() {
+  const desk = new THREE.Group();
+  addBox(desk, [3.1, 0.18, 1.7], [0, 1.18, 0], "#6c4f38");
+  addBox(desk, [1.2, 0.9, 0.8], [-1.05, 0.72, 0.2], "#4d3728");
+  addBox(desk, [1.2, 0.9, 0.8], [1.05, 0.72, 0.2], "#4d3728");
+  addBox(desk, [1.4, 0.1, 0.56], [0, 0.72, -0.46], "#543c2b");
+  addBox(desk, [0.9, 0.56, 0.1], [0.62, 1.68, -0.45], "#27303b");
+  addBox(desk, [0.8, 0.44, 0.02], [0.62, 1.68, -0.38], "#7fcbe6", { emissive: "#4d8ca7", emissiveIntensity: 0.35 });
+  addBox(desk, [0.44, 0.05, 0.24], [0.62, 1.24, 0.05], "#d9d0c4");
+
+  const chair = createChair("#4c5668");
+  chair.position.set(0, 0, 1.16);
+  chair.rotation.y = Math.PI;
+  chair.scale.set(1.14, 1.08, 1.14);
+  desk.add(chair);
+
+  return desk;
+}
+
 function createBungyDeck() {
   const group = new THREE.Group();
-  addBox(group, [2.8, 0.2, 2.3], [0, 0, 0], "#7f6857");
-  [-1.1, 1.1].forEach((x) => {
-    [-0.85, 0.85].forEach((z) => {
-      addBox(group, [0.14, 1.25, 0.14], [x, -0.72, z], "#4b3b2f");
+
+  addBox(group, [1.95, 0.14, 1.45], [0, 0, 0], "#8b715c");
+  addBox(group, [1.95, 0.05, 1.45], [0, 0.095, 0], "#c3a282");
+
+  [-0.78, 0.78].forEach((x) => {
+    [-0.46, 0.46].forEach((z) => {
+      addBox(group, [0.12, 1.05, 0.12], [x, -0.6, z], "#4d3a2e");
     });
   });
 
-  addBox(group, [0.12, 1.1, 2.3], [-1.34, 0.46, 0], "#524439");
-  addBox(group, [0.12, 1.1, 2.3], [1.34, 0.46, 0], "#524439");
-  addBox(group, [2.8, 0.12, 0.12], [0, 0.98, 1.09], "#524439");
-  addBox(group, [2.8, 0.12, 0.12], [0, 0.98, -1.09], "#524439");
+  const railMaterial = "#55453a";
+  const railPosts = [
+    [-0.9, 0.46],
+    [-0.9, -0.46],
+    [0.9, 0.46],
+    [0.9, -0.46],
+    [-0.15, 0.46],
+    [0.15, 0.46],
+    [0.9, 0],
+  ];
+  railPosts.forEach(([x, z]) => addBox(group, [0.07, 0.68, 0.07], [x, 0.42, z], railMaterial));
+  addBox(group, [1.78, 0.07, 0.07], [0, 0.72, 0.46], railMaterial);
+  addBox(group, [1.78, 0.07, 0.07], [0, 0.72, -0.46], railMaterial);
+  addBox(group, [0.07, 0.07, 0.92], [0.9, 0.72, 0], railMaterial);
 
-  addBox(group, [0.18, 3.2, 0.18], [0.9, 1.5, 0], "#3f352d");
-  addBox(group, [1.2, 0.14, 0.14], [0.3, 3, 0], "#3f352d");
+  addBox(group, [0.14, 2.35, 0.14], [0.52, 1.16, 0], "#40332b");
+  addBox(group, [0.92, 0.1, 0.1], [0.12, 2.28, 0], "#40332b");
 
-  const cord = addCylinder(group, 0.03, 0.05, 4.6, [0.88, 0.7, 0], "#f1be47", 10);
-  cord.rotation.z = Math.PI / 18;
+  const cordGroup = new THREE.Group();
+  cordGroup.position.set(-0.26, 2.04, 0);
+  group.add(cordGroup);
 
+  const cord = addCylinder(cordGroup, 0.022, 0.03, 1.9, [0, -0.95, 0], "#f2bf4a", 12);
   const jumper = new THREE.Group();
-  addBox(jumper, [0.22, 0.5, 0.18], [0, 0, 0], "#2a2f39");
-  addBox(jumper, [0.14, 0.34, 0.14], [-0.08, -0.36, 0], "#2a2f39");
-  addBox(jumper, [0.14, 0.34, 0.14], [0.08, -0.36, 0], "#2a2f39");
-  addBox(jumper, [0.12, 0.32, 0.12], [-0.17, 0.06, 0], "#da8b60");
-  addBox(jumper, [0.12, 0.32, 0.12], [0.17, 0.06, 0], "#da8b60");
-  addCylinder(jumper, 0.12, 0.12, 0.22, [0, 0.4, 0], "#f1c39b", 10);
-  jumper.position.set(0.5, -1.35, -0.28);
-  jumper.rotation.z = -Math.PI / 3;
-  group.add(jumper);
+  addBox(jumper, [0.12, 0.26, 0.1], [0, 0, 0], "#2f3640");
+  addBox(jumper, [0.08, 0.18, 0.08], [-0.05, -0.2, 0], "#2f3640");
+  addBox(jumper, [0.08, 0.18, 0.08], [0.05, -0.2, 0], "#2f3640");
+  addBox(jumper, [0.06, 0.16, 0.06], [-0.1, 0.02, 0], "#d2a07f");
+  addBox(jumper, [0.06, 0.16, 0.06], [0.1, 0.02, 0], "#d2a07f");
+  addCylinder(jumper, 0.07, 0.07, 0.12, [0, 0.18, 0], "#f0c29e", 10);
+  jumper.position.set(0, -1.92, 0);
+  jumper.rotation.z = -Math.PI / 3.2;
+  cordGroup.add(jumper);
 
-  const sign = createPoster("EpicShot x AJ Hackett", "#d15e43");
-  sign.position.set(-0.1, 1.1, -0.92);
-  sign.rotation.y = Math.PI;
-  sign.scale.setScalar(0.72);
-  group.add(sign);
-
-  return group;
+  return {
+    group,
+    jumper,
+    cord,
+    cordGroup,
+  };
 }
 
 export function createOfficeScene() {
@@ -146,7 +188,10 @@ export function createOfficeScene() {
     carpet: "#95acb0",
     meeting: "#b89b72",
     kitchen: "#d8d0c5",
+    lobby: "#d4c3ae",
   };
+
+  const colliders = [];
 
   const base = addBox(office, [28, 1, 20], [0, -0.5, 0], "#baa27f");
   base.receiveShadow = true;
@@ -154,9 +199,11 @@ export function createOfficeScene() {
   const floor = addBox(office, [26, 0.18, 18], [0, 0.09, 0], palette.floor);
   floor.receiveShadow = true;
 
-  addBox(office, [10, 0.05, 7], [0, 0.13, 1], palette.carpet);
+  addBox(office, [12.4, 0.05, 7.6], [-1.2, 0.13, 1.6], palette.carpet);
   addBox(office, [7, 0.05, 5.5], [8.7, 0.13, -4.4], palette.meeting);
   addBox(office, [4.7, 0.05, 4.6], [-9.4, 0.13, -4.2], palette.kitchen);
+  addBox(office, [4.8, 0.05, 2.9], [-9.3, 0.13, 6.4], palette.lobby);
+  addBox(office, [6.1, 0.05, 6.1], [9.45, 0.13, 5.5], "#c7d9de");
 
   const walls = new THREE.Group();
   office.add(walls);
@@ -173,17 +220,22 @@ export function createOfficeScene() {
   addBox(walls, [2.2, 3.2, 0.35], [-11.9, 1.6, 9], palette.wall);
   addBox(walls, [2.2, 3.2, 0.35], [-7.2, 1.6, 9], palette.wall);
 
-  const door = addBox(office, [2.2, 2.8, 0.12], [-9.55, 1.4, 8.84], "#7d5b41");
-  door.rotation.y = Math.PI * 0.02;
+  const frontDoor = addBox(office, [2.2, 2.8, 0.12], [-9.55, 1.4, 8.84], "#7d5b41");
+  frontDoor.rotation.y = Math.PI * 0.02;
 
-  const managerGlass1 = createGlassWall(6.3, 2.4);
-  managerGlass1.position.set(6.45, 1.48, -0.8);
-  managerGlass1.rotation.y = Math.PI / 2;
-  office.add(managerGlass1);
+  const cioGlassWestNorth = createGlassWall(2.7, 2.4);
+  cioGlassWestNorth.position.set(6.2, 1.48, 7.0);
+  cioGlassWestNorth.rotation.y = Math.PI / 2;
+  office.add(cioGlassWestNorth);
 
-  const managerGlass2 = createGlassWall(8.5, 2.4);
-  managerGlass2.position.set(8.9, 1.48, 3.45);
-  office.add(managerGlass2);
+  const cioGlassWestSouth = createGlassWall(2.2, 2.4);
+  cioGlassWestSouth.position.set(6.2, 1.48, 3.5);
+  cioGlassWestSouth.rotation.y = Math.PI / 2;
+  office.add(cioGlassWestSouth);
+
+  const cioGlassSouth = createGlassWall(6.8, 2.4);
+  cioGlassSouth.position.set(9.6, 1.48, 2.45);
+  office.add(cioGlassSouth);
 
   const meetingWallWestNorth = createGlassWall(2.1, 2.35);
   meetingWallWestNorth.position.set(5.2, 1.48, -2.55);
@@ -194,11 +246,6 @@ export function createOfficeScene() {
   meetingWallWestSouth.position.set(5.2, 1.48, -6.15);
   meetingWallWestSouth.rotation.y = Math.PI / 2;
   office.add(meetingWallWestSouth);
-
-  const meetingDoorGlass = createGlassWall(1.05, 2.35);
-  meetingDoorGlass.position.set(5.2, 1.48, -4.35);
-  meetingDoorGlass.rotation.y = Math.PI / 2;
-  office.add(meetingDoorGlass);
 
   const meetingWallNorth = createGlassWall(7, 2.35);
   meetingWallNorth.position.set(8.7, 1.48, -1.68);
@@ -213,74 +260,90 @@ export function createOfficeScene() {
   meetingWallEast.rotation.y = Math.PI / 2;
   office.add(meetingWallEast);
 
-  const desks = [
-    { x: -3.8, z: 3.1, chairSide: 1, accent: "#855f46" },
-    { x: 0, z: 3.1, chairSide: 1, accent: "#91694e" },
-    { x: 3.8, z: 3.1, chairSide: 1, accent: "#855f46" },
-    { x: -3.8, z: -0.7, chairSide: 1, accent: "#91694e" },
-    { x: 0, z: -0.7, chairSide: 1, accent: "#855f46" },
-    { x: 3.8, z: -0.7, chairSide: 1, accent: "#91694e" },
+  const bullpenDesks = [
+    { x: -4.8, z: 3.0, chairSide: 1, accent: "#855f46" },
+    { x: -1.0, z: 3.0, chairSide: 1, accent: "#91694e" },
+    { x: 2.8, z: 3.0, chairSide: 1, accent: "#855f46" },
   ];
-  desks.forEach((desk) => office.add(createDesk(desk)));
+  bullpenDesks.forEach((desk) => office.add(createDesk(desk)));
+  bullpenDesks.forEach(({ x, z }) => addCollider(colliders, x, z, 2.9, 1.6));
 
-  const managerDesk = createDesk({ x: 8.2, z: 4.2, chairSide: 1, accent: "#70533d" });
-  managerDesk.rotation.y = -Math.PI / 2;
-  office.add(managerDesk);
-
-  const table = createMeetingTable();
-  table.position.set(8.6, 0, -4.3);
-  office.add(table);
-
-  [-1.6, 0, 1.6].forEach((x) => {
-    const chairTop = createChair("#556476");
-    chairTop.position.set(8.6 + x, 0, -2.55);
-    office.add(chairTop);
-
-    const chairBottom = createChair("#556476");
-    chairBottom.position.set(8.6 + x, 0, -6.05);
-    chairBottom.rotation.y = Math.PI;
-    office.add(chairBottom);
-  });
-
-  [-0.65, 0.65].forEach((z) => {
-    const chairLeft = createChair("#556476");
-    chairLeft.position.set(5.75, 0, -4.3 + z);
-    chairLeft.rotation.y = -Math.PI / 2;
-    office.add(chairLeft);
-
-    const chairRight = createChair("#556476");
-    chairRight.position.set(11.45, 0, -4.3 + z);
-    chairRight.rotation.y = Math.PI / 2;
-    office.add(chairRight);
-  });
-
-  const receptionDesk = createDesk({ x: -9.25, z: 5.25, chairSide: -1, accent: "#7b5a44" });
-  receptionDesk.rotation.y = Math.PI / 2;
+  const receptionDesk = createDesk({ x: -9.05, z: 6.25, chairSide: -1, accent: "#7b5a44" });
+  receptionDesk.rotation.y = Math.PI;
   office.add(receptionDesk);
+  addCollider(colliders, -9.05, 6.25, 2.9, 1.6);
+
+  const executiveDesk = createExecutiveDesk();
+  executiveDesk.position.set(10.05, 0, 5.2);
+  executiveDesk.rotation.y = -Math.PI / 2;
+  office.add(executiveDesk);
+  addCollider(colliders, 10.05, 5.2, 1.8, 3.3, 0.16);
 
   const kitchen = createKitchenCounter();
   kitchen.position.set(-10.1, 0, -4.3);
   office.add(kitchen);
+  addCollider(colliders, -10.1, -4.3, 3.2, 1.7);
+
+  const table = createMeetingTable();
+  table.position.set(8.7, 0, -4.4);
+  office.add(table);
+  addCollider(colliders, 8.7, -4.4, 5.3, 2.7, 0.16);
+
+  [-1.6, 0, 1.6].forEach((x) => {
+    const chairNorth = createChair("#556476");
+    chairNorth.position.set(8.7 + x, 0, -2.55);
+    office.add(chairNorth);
+
+    const chairSouth = createChair("#556476");
+    chairSouth.position.set(8.7 + x, 0, -6.25);
+    chairSouth.rotation.y = Math.PI;
+    office.add(chairSouth);
+  });
+
+  [-0.72, 0.72].forEach((z) => {
+    const chairWest = createChair("#556476");
+    chairWest.position.set(5.95, 0, -4.4 + z);
+    chairWest.rotation.y = -Math.PI / 2;
+    office.add(chairWest);
+
+    const chairEast = createChair("#556476");
+    chairEast.position.set(11.45, 0, -4.4 + z);
+    chairEast.rotation.y = Math.PI / 2;
+    office.add(chairEast);
+  });
+
+  const cioPlant = createPlant(1.18);
+  cioPlant.position.set(12.1, 0, 7.35);
+  office.add(cioPlant);
 
   const whiteboard = createWhiteboard();
   whiteboard.position.set(11.78, 0, -4.4);
   whiteboard.rotation.y = -Math.PI / 2;
   office.add(whiteboard);
 
-  const receptionArt = createPoster("EpicShot Reception", "#cf8d5d");
-  receptionArt.position.set(-2.8, 2.2, 8.78);
-  office.add(receptionArt);
+  const receptionSign = createPoster("EpicShot Reception", "#cf8d5d");
+  receptionSign.position.set(-9.15, 2.25, 8.78);
+  office.add(receptionSign);
 
-  const meetingPoster = createPoster("AJ Hackett Bungy", "#d15e43");
-  meetingPoster.position.set(4.25, 2.1, -0.45);
-  meetingPoster.rotation.y = Math.PI / 2;
-  office.add(meetingPoster);
+  const bungyPoster = createPoster("AJ Hackett Bungy", "#d15e43");
+  bungyPoster.position.set(4.25, 2.1, -0.45);
+  bungyPoster.rotation.y = Math.PI / 2;
+  office.add(bungyPoster);
+
+  const focusPoster = createPoster("Stay Curious", "#88a96f");
+  focusPoster.position.set(-4.7, 2.1, 8.78);
+  office.add(focusPoster);
+
+  const velocityPoster = createPoster("Ship Clean x Fast", "#6d92b0");
+  velocityPoster.position.set(-12.78, 2.15, 1.4);
+  velocityPoster.rotation.y = Math.PI / 2;
+  office.add(velocityPoster);
 
   const noticeBoard = addBox(office, [1.7, 1.1, 0.08], [-8.6, 1.75, -1.95], "#d7b469");
   noticeBoard.rotation.y = 0.02;
 
   const waterCooler = createWaterCooler();
-  waterCooler.position.set(-6.8, 0, 7.1);
+  waterCooler.position.set(-6.9, 0, 6.35);
   office.add(waterCooler);
 
   const plants = [
@@ -288,10 +351,13 @@ export function createOfficeScene() {
     { x: 11.4, z: 7.3, scale: 1.38 },
     { x: 11.7, z: -7.6, scale: 1.42 },
     { x: -11.4, z: -7.4, scale: 1.24 },
-    { x: -1.4, z: 7.25, scale: 1.02 },
-    { x: 4.9, z: 7.1, scale: 0.92 },
-    { x: -3.8, z: 2.25, scale: 0.7 },
-    { x: 3.8, z: -1.55, scale: 0.7 },
+    { x: -1.8, z: 7.2, scale: 1.02 },
+    { x: 4.7, z: 7.15, scale: 0.96 },
+    { x: -5.9, z: 1.1, scale: 0.86 },
+    { x: 4.25, z: 0.65, scale: 0.82 },
+    { x: -5.6, z: -0.6, scale: 0.92 },
+    { x: 0.9, z: -0.95, scale: 0.82 },
+    { x: 6.2, z: -7.4, scale: 0.98 },
   ];
   plants.forEach(({ x, z, scale }) => {
     const plant = createPlant(scale);
@@ -299,8 +365,8 @@ export function createOfficeScene() {
     office.add(plant);
   });
 
-  const deck = createBungyDeck();
-  deck.position.set(14.7, 2.4, 1.6);
+  const { group: deck, jumper, cord, cordGroup } = createBungyDeck();
+  deck.position.set(14.25, 2.45, 1.4);
   office.add(deck);
 
   const trims = new THREE.Group();
@@ -310,35 +376,44 @@ export function createOfficeScene() {
   addBox(trims, [0.26, 0.22, 18.1], [-12.9, 0.14, 0], palette.trim);
   addBox(trims, [0.26, 0.22, 18.1], [12.9, 0.14, 0], palette.trim);
 
-  const deckWindow = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.6, 0.12), makeGlass("#d2e6eb"));
-  deckWindow.position.set(13.05, 2.1, 1.6);
+  const deckWindow = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.45, 0.12), makeGlass("#d2e6eb"));
+  deckWindow.position.set(13.02, 2.15, 1.4);
   deckWindow.rotation.y = Math.PI / 2;
   office.add(deckWindow);
 
   const deskSlots = [
-    createDeskWaypoint({ x: -3.8, z: 3.1 }),
-    createDeskWaypoint({ x: 0, z: 3.1 }),
-    createDeskWaypoint({ x: 3.8, z: 3.1 }),
-    createDeskWaypoint({ x: 8.2, z: 4.2, rotation: -Math.PI / 2 }),
-    createDeskWaypoint({ x: -3.8, z: -0.7 }),
-    createDeskWaypoint({ x: 0, z: -0.7 }),
-    createDeskWaypoint({ x: 3.8, z: -0.7 }),
+    createDeskWaypoint({ x: -4.8, z: 3.0, chairSide: 1, id: "desk-pickle" }),
+    createDeskWaypoint({ x: -1.0, z: 3.0, chairSide: 1, id: "desk-zoe" }),
+    createDeskWaypoint({ x: 2.8, z: 3.0, chairSide: 1, id: "desk-ink" }),
+    createDeskWaypoint({ x: 10.05, z: 5.2, rotation: -Math.PI / 2, chairSide: 1, id: "desk-cio" }),
   ];
 
   const navigation = {
-    entrance: { position: new THREE.Vector3(-9.55, 0, 7.4), links: [] },
-    reception: { position: new THREE.Vector3(-8.2, 0, 5.2), links: [] },
-    northHall: { position: new THREE.Vector3(0, 0, 4.95), links: [] },
-    centerHall: { position: new THREE.Vector3(0, 0, 1.4), links: [] },
-    southHall: { position: new THREE.Vector3(0, 0, -2.55), links: [] },
-    kitchenHall: { position: new THREE.Vector3(-7.7, 0, -2.55), links: [] },
-    meetingDoor: { position: new THREE.Vector3(4.65, 0, -2.55), links: [] },
-    meetingHubNorth: { position: new THREE.Vector3(8.6, 0, -1.45), links: [] },
-    meetingHubSouth: { position: new THREE.Vector3(8.6, 0, -7.0), links: [] },
-    meetingHubWest: { position: new THREE.Vector3(5.3, 0, -4.3), links: [] },
-    meetingHubEast: { position: new THREE.Vector3(11.9, 0, -4.3), links: [] },
-    eastNorth: { position: new THREE.Vector3(6.9, 0, 4.95), links: [] },
-    managerDoor: { position: new THREE.Vector3(6.9, 0, 3), links: [] },
+    entranceDoor: { position: new THREE.Vector3(-9.55, 0, 7.35), links: [] },
+    lobbyFront: { position: new THREE.Vector3(-9.2, 0, 6.5), links: [] },
+    lobbyDesk: { position: new THREE.Vector3(-7.9, 0, 6.15), links: [] },
+    northWest: { position: new THREE.Vector3(-5.2, 0, 5.6), links: [] },
+    northMid: { position: new THREE.Vector3(-1.2, 0, 5.6), links: [] },
+    northEast: { position: new THREE.Vector3(2.8, 0, 5.6), links: [] },
+    eastHall: { position: new THREE.Vector3(4.95, 0, 5.6), links: [] },
+    cioDoor: { position: new THREE.Vector3(6.05, 0, 5.2), links: [] },
+    cioHall: { position: new THREE.Vector3(7.7, 0, 5.2), links: [] },
+    cioNorth: { position: new THREE.Vector3(9.4, 0, 6.9), links: [] },
+    bullpenWest: { position: new THREE.Vector3(-5.2, 0, 4.45), links: [] },
+    bullpenMid: { position: new THREE.Vector3(-1.2, 0, 4.45), links: [] },
+    bullpenEast: { position: new THREE.Vector3(2.8, 0, 4.45), links: [] },
+    centerWest: { position: new THREE.Vector3(-5.2, 0, 1.55), links: [] },
+    centerMid: { position: new THREE.Vector3(-1.2, 0, 1.55), links: [] },
+    centerEast: { position: new THREE.Vector3(2.8, 0, 1.55), links: [] },
+    kitchenDoor: { position: new THREE.Vector3(-6.15, 0, -2.55), links: [] },
+    kitchenHall: { position: new THREE.Vector3(-8.3, 0, -2.55), links: [] },
+    kitchenInside: { position: new THREE.Vector3(-8.9, 0, -4.85), links: [] },
+    southMid: { position: new THREE.Vector3(-1.2, 0, -2.55), links: [] },
+    southEast: { position: new THREE.Vector3(2.8, 0, -2.55), links: [] },
+    meetingDoor: { position: new THREE.Vector3(5.05, 0, -4.4), links: [] },
+    meetingNorth: { position: new THREE.Vector3(8.7, 0, -2.7), links: [] },
+    meetingCenter: { position: new THREE.Vector3(8.7, 0, -4.4), links: [] },
+    meetingSouth: { position: new THREE.Vector3(8.7, 0, -6.05), links: [] },
   };
 
   deskSlots.forEach((desk) => {
@@ -348,57 +423,87 @@ export function createOfficeScene() {
     };
   });
 
-  connect(navigation, "entrance", "reception");
-  connect(navigation, "reception", "northHall");
-  connect(navigation, "northHall", "centerHall");
-  connect(navigation, "centerHall", "southHall");
-  connect(navigation, "southHall", "kitchenHall");
-  connect(navigation, "southHall", "meetingDoor");
-  connect(navigation, "meetingDoor", "meetingHubNorth");
-  connect(navigation, "meetingDoor", "meetingHubWest");
-  connect(navigation, "meetingHubNorth", "meetingHubSouth");
-  connect(navigation, "meetingHubNorth", "meetingHubEast");
-  connect(navigation, "meetingHubSouth", "meetingHubWest");
-  connect(navigation, "northHall", "eastNorth");
-  connect(navigation, "eastNorth", "managerDoor");
+  connect(navigation, "entranceDoor", "lobbyFront");
+  connect(navigation, "lobbyFront", "lobbyDesk");
+  connect(navigation, "lobbyDesk", "northWest");
+  connect(navigation, "northWest", "northMid");
+  connect(navigation, "northMid", "northEast");
+  connect(navigation, "northEast", "eastHall");
+  connect(navigation, "eastHall", "cioDoor");
+  connect(navigation, "cioDoor", "cioHall");
+  connect(navigation, "cioHall", "cioNorth");
 
-  connect(navigation, deskSlots[0].nodeId, "northHall");
-  connect(navigation, deskSlots[1].nodeId, "northHall");
-  connect(navigation, deskSlots[2].nodeId, "northHall");
-  connect(navigation, deskSlots[3].nodeId, "managerDoor");
-  connect(navigation, deskSlots[4].nodeId, "centerHall");
-  connect(navigation, deskSlots[5].nodeId, "centerHall");
-  connect(navigation, deskSlots[6].nodeId, "centerHall");
+  connect(navigation, "northWest", "bullpenWest");
+  connect(navigation, "northMid", "bullpenMid");
+  connect(navigation, "northEast", "bullpenEast");
+  connect(navigation, "bullpenWest", "bullpenMid");
+  connect(navigation, "bullpenMid", "bullpenEast");
+
+  connect(navigation, "bullpenWest", "centerWest");
+  connect(navigation, "bullpenMid", "centerMid");
+  connect(navigation, "bullpenEast", "centerEast");
+  connect(navigation, "centerWest", "centerMid");
+  connect(navigation, "centerMid", "centerEast");
+
+  connect(navigation, "centerWest", "kitchenDoor");
+  connect(navigation, "kitchenDoor", "kitchenHall");
+  connect(navigation, "kitchenHall", "kitchenInside");
+
+  connect(navigation, "centerMid", "southMid");
+  connect(navigation, "centerEast", "southEast");
+  connect(navigation, "southMid", "southEast");
+  connect(navigation, "southEast", "meetingDoor");
+  connect(navigation, "meetingDoor", "meetingNorth");
+  connect(navigation, "meetingDoor", "meetingCenter");
+  connect(navigation, "meetingCenter", "meetingSouth");
+  connect(navigation, "meetingNorth", "meetingCenter");
+
+  connect(navigation, deskSlots[0].nodeId, "bullpenWest");
+  connect(navigation, deskSlots[1].nodeId, "bullpenMid");
+  connect(navigation, deskSlots[2].nodeId, "bullpenEast");
+  connect(navigation, deskSlots[3].nodeId, "cioHall");
 
   const waypoints = {
-    entrance: { position: navigation.entrance.position.clone(), nodeId: "entrance", facing: Math.PI },
-    bullpen: deskSlots.slice(0, 6).map((desk) => desk.sit.clone()),
+    entrance: { position: navigation.entranceDoor.position.clone(), nodeId: "entranceDoor", facing: Math.PI },
+    bullpen: deskSlots.slice(0, 3).map((desk) => desk.sit.clone()),
     deskSlots,
     meetingSeats: [
       {
-        nodeId: "meetingHubNorth",
-        position: new THREE.Vector3(7, 0.03, -2.75),
+        nodeId: "meetingNorth",
+        position: new THREE.Vector3(7.1, 0.03, -2.78),
         facing: Math.PI,
       },
       {
-        nodeId: "meetingHubNorth",
-        position: new THREE.Vector3(8.6, 0.03, -2.75),
+        nodeId: "meetingNorth",
+        position: new THREE.Vector3(8.7, 0.03, -2.78),
         facing: Math.PI,
       },
       {
-        nodeId: "meetingHubNorth",
-        position: new THREE.Vector3(10.2, 0.03, -2.75),
+        nodeId: "meetingNorth",
+        position: new THREE.Vector3(10.3, 0.03, -2.78),
         facing: Math.PI,
       },
       {
-        nodeId: "meetingHubSouth",
-        position: new THREE.Vector3(7.8, 0.03, -5.85),
+        nodeId: "meetingSouth",
+        position: new THREE.Vector3(8.7, 0.03, -6.02),
         facing: 0,
       },
     ],
-    kitchen: { position: new THREE.Vector3(-10.4, 0, -5.5), nodeId: "kitchenHall", facing: Math.PI / 2 },
+    kitchen: { position: new THREE.Vector3(-9.7, 0, -5.35), nodeId: "kitchenInside", facing: Math.PI / 2 },
+    reception: { position: new THREE.Vector3(-8.35, 0, 6.2), nodeId: "lobbyDesk", facing: Math.PI / 2 },
     navigation,
+    colliders,
   };
 
-  return { office, waypoints };
+  return {
+    office,
+    waypoints,
+    bungyJumper: {
+      group: jumper,
+      cord,
+      cordGroup,
+      baseY: jumper.position.y,
+      baseCordLength: cord.scale.y,
+    },
+  };
 }
