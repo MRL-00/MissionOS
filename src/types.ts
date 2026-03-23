@@ -4,6 +4,8 @@ export type HeadShape = "round" | "oval" | "square";
 export type HairStyle = "none" | "short" | "long" | "mohawk";
 export type Accessory = "glasses" | "hat" | "tie";
 export type AgentStatus = "idle" | "working" | "in-meeting";
+export type RealtimeAgentStatus = "idle" | "working" | "meeting" | "entering" | "leaving";
+export type AgentEventLocation = "desk" | "meeting-room" | "door" | "cio-office";
 
 export interface AgentAppearance {
   height?: number;
@@ -52,8 +54,51 @@ export interface LabelState {
   name: string;
   role: string;
   status: AgentStatus;
+  task?: string | undefined;
   worldPosition: THREE.Vector3;
 }
+
+export interface AgentEvent {
+  agentId: string;
+  status: RealtimeAgentStatus;
+  task?: string | undefined;
+  message?: string | undefined;
+  location?: AgentEventLocation | undefined;
+  timestamp: number;
+}
+
+export interface AgentRegistration {
+  id: string;
+  name: string;
+  role: string;
+}
+
+export interface AgentRuntimeState extends AgentRegistration {
+  connected: boolean;
+  status: RealtimeAgentStatus;
+  task?: string | undefined;
+  message?: string | undefined;
+  location?: AgentEventLocation | undefined;
+  timestamp: number;
+}
+
+export interface MeetingRequest {
+  agentIds: string[];
+}
+
+export type ServerMessage =
+  | {
+      type: "agent-event";
+      event: AgentEvent;
+    }
+  | {
+      type: "agents-snapshot";
+      agents: AgentRuntimeState[];
+    }
+  | {
+      type: "agent-removed";
+      agentId: string;
+    };
 
 export interface NavigationNode {
   position: THREE.Vector3;
@@ -111,6 +156,7 @@ export interface DemoContext {
     mesh: THREE.Group;
     navNodeId: string | null;
     setTarget(position: THREE.Vector3, options?: AgentTargetOptions): void;
+    status: AgentStatus;
   }>;
   deskAssignments: Map<string, DeskSlot>;
   waypoints: OfficeWaypoints;

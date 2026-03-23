@@ -4,16 +4,23 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 5173",
+    "dev": "concurrently \"pnpm dev:client\" \"pnpm dev:server\"",
+    "dev:client": "vite --host 0.0.0.0 --port 5173",
+    "dev:server": "tsx server/server.ts",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "three": "^0.179.1"
+    "three": "^0.179.1",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@types/node": "^24.3.1",
+    "@types/ws": "^8.18.1",
     "@types/three": "^0.183.1",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.3",
     "vite": "^7.1.3"
   },

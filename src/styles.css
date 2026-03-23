@@ -110,7 +110,86 @@ canvas {
   border-radius: 999px;
 }
 
+.connection-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.connection-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #a84f3c;
+}
+
+.connection-status[data-connection="online"]::before {
+  background: var(--status-working);
+}
+
+.agent-sidebar {
+  margin-top: 14px;
+}
+
+.agent-sidebar h2 {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.agent-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.agent-list-item {
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(97, 71, 46, 0.12);
+}
+
+.agent-list-name,
+.agent-list-meta,
+.agent-list-task,
+.agent-task {
+  display: block;
+}
+
+.agent-list-name {
+  font-size: 0.77rem;
+  font-weight: 700;
+}
+
+.agent-list-meta {
+  margin-top: 2px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.72;
+}
+
+.agent-list-task {
+  margin-top: 4px;
+  font-size: 0.72rem;
+}
+
 .label-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.speech-layer {
   position: absolute;
   inset: 0;
 }
@@ -171,6 +250,44 @@ canvas {
 
 .agent-status[data-status="idle"]::before {
   background: var(--status-idle);
+}
+
+.agent-task {
+  margin-top: 4px;
+  font-size: 0.64rem;
+  opacity: 0.78;
+}
+
+.speech-bubble {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  max-width: min(220px, 42vw);
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(97, 71, 46, 0.14);
+  box-shadow: 0 16px 28px rgba(54, 41, 29, 0.18);
+  pointer-events: none;
+  transition: opacity 180ms linear;
+}
+
+.speech-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 14px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  border-right: 1px solid rgba(97, 71, 46, 0.14);
+  border-bottom: 1px solid rgba(97, 71, 46, 0.14);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.speech-bubble-body {
+  display: block;
+  font-size: 0.76rem;
+  line-height: 1.3;
 }
 
 @media (max-width: 720px) {
