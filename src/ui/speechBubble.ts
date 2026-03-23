@@ -1,0 +1,85 @@
+import * as THREE from "three";
+import type { LabelState } from "../types";
+
+interface SpeechBubble {
+  agentId: string;
+  message: string;
+  expiresAt: number;
+}
+
+interface SpeechBubbleRefs {
+  node: HTMLDivElement;
+  body: HTMLSpanElement;
+}
+
+export class SpeechBubbleRenderer {
+  container: HTMLDivElement;
+  bubbles: Map<string, SpeechBubble>;
+  refs: Map<string, SpeechBubbleRefs>;
+  screenPosition: THREE.Vector3;
+
+  constructor(container: HTMLDivElement) {
+    this.container = container;
+    this.bubbles = new Map();
+    this.refs = new Map();
+    this.screenPosition = new THREE.Vector3();
+  }
+
+  show(agentId: string, message: string): void {
+    this.bubbles.set(agentId, {
+      agentId,
+      message,
+      expiresAt: performance.now() + 5000,
+    });
+  }
+
+  sync(labels: LabelState[], camera: THREE.Camera, viewport: { width: number; height: number }): void {
+    const now = performance.now();
+    const labelsById = new Map(labels.map((label) => [label.id, label] as const));
+
+    this.bubbles.forEach((bubble, agentId) => {
+      if (bubble.expiresAt <= now) {
+        this.removeBubble(agentId);
+        return;
+      }
+
+      const label = labelsById.get(agentId);
+      if (!label) {
+        this.removeBubble(agentId);
+        return;
+      }
+
+      let refs = this.refs.get(agentId);
+      if (!refs) {
+        const node = document.createElement("div");
+        node.className = "speech-bubble";
+        const body = document.createElement("span");
+        body.className = "speech-bubble-body";
+        node.append(body);
+        this.container.append(node);
+        refs = { node, body };
+        this.refs.set(agentId, refs);
+      }
+
+      refs.body.textContent = bubble.message;
+      this.screenPosition.copy(label.worldPosition).add(new THREE.Vector3(0, 0.95, 0)).project(camera);
+      const visible = this.screenPosition.z > -1 && this.screenPosition.z < 1;
+      refs.node.style.display = visible ? "block" : "none";
+
+      if (visible) {
+        const x = (this.screenPosition.x * 0.5 + 0.5) * viewport.width;
+        const y = (-this.screenPosition.y * 0.5 + 0.5) * viewport.height;
+        refs.node.style.left = `${x}px`;
+        refs.node.style.top = `${y}px`;
+        refs.node.style.opacity = `${Math.max(0, (bubble.expiresAt - now) / 1000)}`;
+      }
+    });
+  }
+
+  private removeBubble(agentId: string): void {
+    this.bubbles.delete(agentId);
+    const refs = this.refs.get(agentId);
+    refs?.node.remove();
+    this.refs.delete(agentId);
+  }
+}

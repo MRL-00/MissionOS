@@ -1,0 +1,109 @@
+import type { AgentEvent, ServerMessage } from "../types";
+
+interface OfficeWebSocketClientOptions {
+  url?: string | undefined;
+  onOpen?(): void;
+  onClose?(): void;
+  onEvent(event: AgentEvent): void;
+  onSnapshot?(message: Extract<ServerMessage, { type: "agents-snapshot" }>): void;
+  onAgentRemoved?(agentId: string): void;
+}
+
+export class OfficeWebSocketClient {
+  url: string;
+  socket?: WebSocket | undefined;
+  reconnectTimer?: number | undefined;
+  onOpen?: (() => void) | undefined;
+  onClose?: (() => void) | undefined;
+  onEvent: (event: AgentEvent) => void;
+  onSnapshot?: ((message: Extract<ServerMessage, { type: "agents-snapshot" }>) => void) | undefined;
+  onAgentRemoved?: ((agentId: string) => void) | undefined;
+
+  constructor({
+    url = "ws://localhost:3001",
+    onOpen,
+    onClose,
+    onEvent,
+    onSnapshot,
+    onAgentRemoved,
+  }: OfficeWebSocketClientOptions) {
+    this.url = url;
+    this.onOpen = onOpen;
+    this.onClose = onClose;
+    this.onEvent = onEvent;
+    this.onSnapshot = onSnapshot;
+    this.onAgentRemoved = onAgentRemoved;
+  }
+
+  connect(): void {
+    if (this.socket && this.socket.readyState <= WebSocket.OPEN) {
+      return;
+    }
+
+    const socket = new WebSocket(this.url);
+    this.socket = socket;
+
+    socket.addEventListener("open", () => {
+      if (this.reconnectTimer !== undefined) {
+        window.clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = undefined;
+      }
+      this.onOpen?.();
+    });
+
+    socket.addEventListener("message", (message) => {
+      const parsed = this.parseMessage(message.data);
+      if (!parsed) {
+        return;
+      }
+
+      if ("agentId" in parsed && "status" in parsed) {
+        this.onEvent(parsed);
+        return;
+      }
+
+      if (parsed.type === "agent-event") {
+        this.onEvent(parsed.event);
+        return;
+      }
+
+      if (parsed.type === "agents-snapshot") {
+        this.onSnapshot?.(parsed);
+        return;
+      }
+
+      if (parsed.type === "agent-removed") {
+        this.onAgentRemoved?.(parsed.agentId);
+      }
+    });
+
+    socket.addEventListener("close", () => {
+      this.socket = undefined;
+      this.onClose?.();
+      this.reconnectTimer = window.setTimeout(() => {
+        this.connect();
+      }, 2000);
+    });
+  }
+
+  disconnect(): void {
+    if (this.reconnectTimer !== undefined) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    this.socket?.close();
+    this.socket = undefined;
+  }
+
+  private parseMessage(raw: unknown): ServerMessage | AgentEvent | null {
+    if (typeof raw !== "string") {
+      return null;
+    }
+
+    try {
+      return JSON.parse(raw) as ServerMessage | AgentEvent;
+    } catch {
+      return null;
+    }
+  }
+}

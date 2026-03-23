@@ -4,9 +4,19 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import agentsConfig from "./config/agents.json";
 import { AgentController, STATUS } from "./characters/agentController";
 import { DemoDirector, moveAgentToDestination } from "./demo";
+import { OfficeWebSocketClient } from "./network/websocket";
 import { createOfficeScene } from "./scene/officeScene";
 import { createHud, LabelRenderer } from "./ui/overlay";
-import type { AgentConfig, DeskSlot } from "./types";
+import { SpeechBubbleRenderer } from "./ui/speechBubble";
+import type {
+  AgentConfig,
+  AgentEvent,
+  AgentRuntimeState,
+  AgentStatus,
+  DeskSlot,
+  DestinationWaypoint,
+  ServerMessage,
+} from "./types";
 
 const typedAgentsConfig = agentsConfig as AgentConfig[];
 const app = document.querySelector<HTMLElement>("#app");
@@ -98,12 +108,191 @@ const hud = createHud({
   onResetCamera: resetCamera,
 });
 const labelRenderer = new LabelRenderer(hud.labelLayer);
+const speechBubbleRenderer = new SpeechBubbleRenderer(hud.speechLayer);
 
 const demo = new DemoDirector({
   agents,
   deskAssignments,
   waypoints,
 });
+const agentOrder = typedAgentsConfig.map((agent) => agent.id);
+const agentStates = new Map<string, AgentRuntimeState>(
+  typedAgentsConfig.map((agent) => [
+    agent.id,
+    {
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      connected: false,
+      status: "idle",
+      location: "desk",
+      timestamp: Date.now(),
+    },
+  ]),
+);
+
+function getControllerStatus(status: AgentEvent["status"]): AgentStatus {
+  if (status === "meeting") {
+    return STATUS.meeting;
+  }
+  if (status === "working") {
+    return STATUS.working;
+  }
+  return STATUS.idle;
+}
+
+function syncHudState(): void {
+  hud.syncAgentStates(Array.from(agentStates.values()).sort((left, right) => left.name.localeCompare(right.name)));
+}
+
+function stopDemoForRealtime(): void {
+  if (!demo.running) {
+    return;
+  }
+  demo.stop();
+  hud.setDemoRunning(false);
+}
+
+function getDeskDestination(agentId: string): DeskSlot | null {
+  const assignedDesk = deskAssignments.get(agentId);
+  if (assignedDesk) {
+    return assignedDesk;
+  }
+
+  const agentIndex = agentOrder.indexOf(agentId);
+  if (agentIndex < 0) {
+    return null;
+  }
+
+  return waypoints.deskSlots[agentIndex] ?? null;
+}
+
+function getMeetingDestination(agentId: string): DestinationWaypoint | null {
+  if (!waypoints.meetingSeats.length) {
+    return null;
+  }
+
+  const agentIndex = agentOrder.indexOf(agentId);
+  const seatIndex = agentIndex >= 0 ? agentIndex % waypoints.meetingSeats.length : 0;
+  return waypoints.meetingSeats[seatIndex] ?? null;
+}
+
+function moveControllerForEvent(controller: AgentController, event: AgentEvent): void {
+  const location = event.location ?? (event.status === "entering" || event.status === "leaving" ? "door" : undefined);
+  if (!location) {
+    return;
+  }
+
+  if (location === "desk") {
+    const desk = getDeskDestination(event.agentId);
+    if (!desk) {
+      return;
+    }
+    moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, desk, {
+      facing: desk.facing,
+      status: getControllerStatus(event.status),
+      seated: event.status === "working",
+    });
+    return;
+  }
+
+  if (location === "meeting-room") {
+    const seat = getMeetingDestination(event.agentId);
+    if (!seat) {
+      return;
+    }
+    moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, seat, {
+      facing: seat.facing,
+      status: getControllerStatus(event.status),
+      seated: seat.seated ?? false,
+    });
+    return;
+  }
+
+  if (location === "cio-office") {
+    moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, waypoints.cioOffice, {
+      facing: waypoints.cioOffice.facing,
+      status: getControllerStatus(event.status),
+      seated: false,
+    });
+    return;
+  }
+
+  moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, waypoints.entrance, {
+    facing: waypoints.entrance.facing,
+    status: getControllerStatus(event.status),
+    seated: false,
+  });
+}
+
+function applyAgentState(state: AgentRuntimeState): void {
+  agentStates.set(state.id, state);
+  const controller = agents.get(state.id);
+  if (!controller) {
+    return;
+  }
+
+  controller.status = getControllerStatus(state.status);
+  controller.task = state.task;
+}
+
+function handleAgentEvent(event: AgentEvent): void {
+  stopDemoForRealtime();
+
+  const previous = agentStates.get(event.agentId);
+  const next: AgentRuntimeState = {
+    id: event.agentId,
+    name: previous?.name ?? event.agentId,
+    role: previous?.role ?? "Temporary Agent",
+    connected: true,
+    status: event.status,
+    timestamp: event.timestamp,
+    location: event.location ?? previous?.location,
+    task: event.task ?? previous?.task,
+    message: event.message ?? previous?.message,
+  };
+  agentStates.set(event.agentId, next);
+
+  const controller = agents.get(event.agentId);
+  if (controller) {
+    controller.status = getControllerStatus(event.status);
+    controller.task = event.task ?? previous?.task;
+    moveControllerForEvent(controller, event);
+  }
+
+  if (event.message) {
+    speechBubbleRenderer.show(event.agentId, event.message);
+  }
+
+  syncHudState();
+}
+
+function handleSnapshot(message: Extract<ServerMessage, { type: "agents-snapshot" }>): void {
+  agentStates.clear();
+  message.agents.forEach((state) => {
+    applyAgentState(state);
+  });
+  syncHudState();
+}
+
+function handleAgentRemoved(agentId: string): void {
+  agentStates.delete(agentId);
+  syncHudState();
+}
+
+const websocketClient = new OfficeWebSocketClient({
+  onOpen() {
+    hud.setRealtimeConnected(true);
+  },
+  onClose() {
+    hud.setRealtimeConnected(false);
+  },
+  onEvent: handleAgentEvent,
+  onSnapshot: handleSnapshot,
+  onAgentRemoved: handleAgentRemoved,
+});
+websocketClient.connect();
+syncHudState();
 
 function toggleDemo(): void {
   if (demo.running) {
@@ -163,5 +352,6 @@ renderer.setAnimationLoop(() => {
   });
 
   labelRenderer.sync(labels, camera, { width: window.innerWidth, height: window.innerHeight });
+  speechBubbleRenderer.sync(labels, camera, { width: window.innerWidth, height: window.innerHeight });
   renderer.render(scene, camera);
 });
