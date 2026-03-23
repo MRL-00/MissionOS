@@ -6,6 +6,8 @@ export type Accessory = "glasses" | "hat" | "tie";
 export type AgentStatus = "idle" | "working" | "in-meeting";
 export type RealtimeAgentStatus = "idle" | "working" | "meeting" | "entering" | "leaving";
 export type AgentEventLocation = "desk" | "meeting-room" | "door" | "cio-office";
+export type MeetingType = "standup" | "strategy" | "review";
+export type MeetingSpeed = 1 | 2 | 3;
 
 export interface AgentAppearance {
   height?: number;
@@ -67,6 +69,18 @@ export interface AgentEvent {
   timestamp: number;
 }
 
+export interface AgentSpawnRequest {
+  agentId: string;
+  task: string;
+  message?: string | undefined;
+}
+
+export interface AgentCompleteRequest {
+  agentId: string;
+  result?: string | undefined;
+  message?: string | undefined;
+}
+
 export interface AgentRegistration {
   id: string;
   name: string;
@@ -86,6 +100,62 @@ export interface MeetingRequest {
   agentIds: string[];
 }
 
+export interface MeetingConfig {
+  type: MeetingType;
+  topic?: string | undefined;
+  participants: string[];
+  facilitatorId: string;
+  presenter?: string | undefined;
+}
+
+export interface MeetingTurn {
+  agentId: string;
+  message: string;
+  timestamp: number;
+}
+
+export interface MeetingScript {
+  config: MeetingConfig;
+  turns: MeetingTurn[];
+  summary: string;
+}
+
+export interface MeetingRunRequest {
+  script: MeetingScript;
+  speed?: MeetingSpeed | undefined;
+}
+
+export interface MeetingState {
+  active: boolean;
+  config?: MeetingConfig | undefined;
+  transcript: MeetingTurn[];
+  summary?: string | undefined;
+  currentSpeakerId?: string | undefined;
+  progress: {
+    currentTurn: number;
+    totalTurns: number;
+  };
+  startedAt?: number | undefined;
+  speed: MeetingSpeed;
+  stopped: boolean;
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  timestamp: number;
+  kind:
+    | "agent-status"
+    | "agent-spawn"
+    | "agent-complete"
+    | "meeting-start"
+    | "meeting-turn"
+    | "meeting-end"
+    | "meeting-stop"
+    | "registration";
+  message: string;
+  agentId?: string | undefined;
+}
+
 export type ServerMessage =
   | {
       type: "agent-event";
@@ -98,6 +168,37 @@ export type ServerMessage =
   | {
       type: "agent-removed";
       agentId: string;
+    }
+  | {
+      type: "meeting-start";
+      config: MeetingConfig;
+      participants: string[];
+      startedAt: number;
+      totalTurns: number;
+      speed: MeetingSpeed;
+    }
+  | {
+      type: "meeting-turn";
+      agentId: string;
+      message: string;
+      turnIndex: number;
+      totalTurns: number;
+      timestamp: number;
+      isTyping?: boolean | undefined;
+    }
+  | {
+      type: "meeting-end";
+      summary: string;
+      transcript: MeetingTurn[];
+      endedAt: number;
+    }
+  | {
+      type: "meeting-status";
+      state: MeetingState;
+    }
+  | {
+      type: "activity-log";
+      entry: ActivityLogEntry;
     };
 
 export interface NavigationNode {

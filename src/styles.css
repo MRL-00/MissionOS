@@ -9,6 +9,11 @@
   --status-idle: #7f8c8d;
   --status-working: #2e8b57;
   --status-meeting: #c97f21;
+  --admin-bg: rgba(10, 14, 22, 0.92);
+  --admin-border: rgba(129, 153, 184, 0.18);
+  --admin-ink: #ecf2ff;
+  --admin-muted: rgba(236, 242, 255, 0.62);
+  --bubble-accent: #dba46b;
 }
 
 * {
@@ -53,7 +58,8 @@ canvas {
   pointer-events: auto;
 }
 
-.hud h1 {
+.hud h1,
+.admin-panel h2 {
   margin: 0 0 6px;
   font-size: 1.15rem;
   letter-spacing: 0.04em;
@@ -66,13 +72,20 @@ canvas {
   line-height: 1.35;
 }
 
-.controls {
+.controls,
+.meeting-action.inline,
+.admin-header {
   display: flex;
   gap: 10px;
-  margin-top: 14px;
 }
 
-.button {
+.controls {
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.button,
+.mini-button {
   border: 0;
   border-radius: 999px;
   background: linear-gradient(135deg, #b7672e, #8f431e);
@@ -84,10 +97,21 @@ canvas {
   box-shadow: 0 12px 24px rgba(143, 67, 30, 0.25);
 }
 
-.button.secondary {
+.button.secondary,
+.mini-button {
   background: rgba(255, 250, 241, 0.92);
   color: var(--ink);
   box-shadow: inset 0 0 0 1px rgba(97, 71, 46, 0.14);
+}
+
+.mini-button {
+  padding: 7px 12px;
+  font-size: 0.75rem;
+}
+
+.mini-button.active {
+  background: linear-gradient(135deg, #d99752, #96501d);
+  color: #fff;
 }
 
 .legend {
@@ -98,10 +122,11 @@ canvas {
   font-size: 0.78rem;
 }
 
-.legend span {
+.legend span,
+.connection-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .dot {
@@ -111,9 +136,6 @@ canvas {
 }
 
 .connection-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
   margin-top: 14px;
   font-size: 0.78rem;
   font-weight: 700;
@@ -121,30 +143,50 @@ canvas {
   letter-spacing: 0.04em;
 }
 
-.connection-status::before {
+.connection-status::before,
+.agent-status::before {
   content: "";
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #a84f3c;
+  background: var(--status-idle);
 }
 
-.connection-status[data-connection="online"]::before {
+.connection-status[data-connection="online"]::before,
+.agent-status[data-status="working"]::before {
   background: var(--status-working);
 }
 
-.agent-sidebar {
+.agent-status[data-status="in-meeting"]::before {
+  background: var(--status-meeting);
+}
+
+.agent-status[data-status="idle"]::before {
+  background: var(--status-idle);
+}
+
+.agent-sidebar,
+.admin-section {
   margin-top: 14px;
 }
 
-.agent-sidebar h2 {
+.agent-sidebar h2,
+.admin-section h3,
+.transcript-header strong,
+.eyebrow {
   margin: 0 0 8px;
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
-.agent-list {
+.eyebrow {
+  display: block;
+  color: var(--admin-muted);
+}
+
+.agent-list,
+.admin-agent-list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -152,9 +194,15 @@ canvas {
   gap: 8px;
 }
 
+.agent-list-item,
+.admin-agent-card,
+.activity-row,
+.transcript-row {
+  border-radius: 12px;
+}
+
 .agent-list-item {
   padding: 9px 10px;
-  border-radius: 12px;
   background: rgba(255, 255, 255, 0.68);
   border: 1px solid rgba(97, 71, 46, 0.12);
 }
@@ -162,16 +210,20 @@ canvas {
 .agent-list-name,
 .agent-list-meta,
 .agent-list-task,
-.agent-task {
+.agent-task,
+.admin-agent-head span,
+.transcript-row span {
   display: block;
 }
 
-.agent-list-name {
+.agent-list-name,
+.admin-agent-head strong {
   font-size: 0.77rem;
   font-weight: 700;
 }
 
-.agent-list-meta {
+.agent-list-meta,
+.admin-agent-head span {
   margin-top: 2px;
   font-size: 0.68rem;
   text-transform: uppercase;
@@ -179,16 +231,14 @@ canvas {
   opacity: 0.72;
 }
 
-.agent-list-task {
+.agent-list-task,
+.activity-message,
+.transcript-row span {
   margin-top: 4px;
   font-size: 0.72rem;
 }
 
-.label-layer {
-  position: absolute;
-  inset: 0;
-}
-
+.label-layer,
 .speech-layer {
   position: absolute;
   inset: 0;
@@ -232,26 +282,6 @@ canvas {
   letter-spacing: 0.04em;
 }
 
-.agent-status::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--status-idle);
-}
-
-.agent-status[data-status="working"]::before {
-  background: var(--status-working);
-}
-
-.agent-status[data-status="in-meeting"]::before {
-  background: var(--status-meeting);
-}
-
-.agent-status[data-status="idle"]::before {
-  background: var(--status-idle);
-}
-
 .agent-task {
   margin-top: 4px;
   font-size: 0.64rem;
@@ -261,14 +291,20 @@ canvas {
 .speech-bubble {
   position: absolute;
   transform: translate(-50%, -100%);
-  max-width: min(220px, 42vw);
+  max-width: min(240px, 46vw);
   padding: 10px 12px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.96);
+  background: color-mix(in srgb, white 88%, var(--bubble-accent) 12%);
   border: 1px solid rgba(97, 71, 46, 0.14);
   box-shadow: 0 16px 28px rgba(54, 41, 29, 0.18);
   pointer-events: none;
-  transition: opacity 180ms linear;
+  transition: opacity 180ms linear, transform 180ms ease;
+}
+
+.speech-bubble[data-variant="meeting"] {
+  max-width: min(300px, 54vw);
+  padding: 14px 16px;
+  transform: translate(-50%, -108%);
 }
 
 .speech-bubble::after {
@@ -278,7 +314,7 @@ canvas {
   bottom: -7px;
   width: 14px;
   height: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  background: color-mix(in srgb, white 88%, var(--bubble-accent) 12%);
   border-right: 1px solid rgba(97, 71, 46, 0.14);
   border-bottom: 1px solid rgba(97, 71, 46, 0.14);
   transform: translateX(-50%) rotate(45deg);
@@ -290,11 +326,165 @@ canvas {
   line-height: 1.3;
 }
 
+.speech-bubble[data-variant="meeting"] .speech-bubble-body {
+  font-size: 0.88rem;
+}
+
+.speech-bubble-typing {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.speech-bubble-typing span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(61, 45, 30, 0.48);
+  animation: bubble-pulse 0.9s infinite ease-in-out;
+}
+
+.speech-bubble-typing span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.speech-bubble-typing span:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.admin-panel,
+.transcript-panel {
+  position: absolute;
+  right: 18px;
+  border-radius: 24px;
+  border: 1px solid var(--admin-border);
+  background:
+    radial-gradient(circle at top right, rgba(73, 129, 198, 0.18), transparent 28%),
+    linear-gradient(180deg, rgba(18, 26, 40, 0.96), rgba(8, 12, 18, 0.96));
+  color: var(--admin-ink);
+  box-shadow: 0 28px 60px rgba(2, 6, 15, 0.38);
+  backdrop-filter: blur(18px);
+  pointer-events: auto;
+}
+
+.admin-panel {
+  top: 18px;
+  width: min(420px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  padding: 18px;
+  overflow: auto;
+}
+
+.admin-header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.admin-grid,
+.meeting-action {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-input,
+.admin-select {
+  width: 100%;
+  border: 1px solid rgba(160, 185, 214, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--admin-ink);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.admin-input::placeholder {
+  color: var(--admin-muted);
+}
+
+.admin-agent-card,
+.activity-row,
+.transcript-row {
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(160, 185, 214, 0.12);
+}
+
+.admin-status-row {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+
+.activity-log,
+.transcript-log {
+  max-height: 240px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.activity-time {
+  display: block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  color: var(--admin-muted);
+}
+
+.transcript-panel {
+  right: 460px;
+  bottom: 18px;
+  width: min(360px, calc(100vw - 500px));
+  min-width: 280px;
+  max-height: 48vh;
+  padding: 16px;
+}
+
+.transcript-panel[data-active="true"] {
+  border-color: rgba(233, 180, 111, 0.42);
+}
+
+.transcript-summary {
+  margin-top: 12px;
+  font-size: 0.78rem;
+  color: var(--admin-muted);
+}
+
+@keyframes bubble-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@media (max-width: 1080px) {
+  .transcript-panel {
+    right: 18px;
+    bottom: 18px;
+    width: min(360px, calc(100vw - 36px));
+  }
+}
+
 @media (max-width: 720px) {
-  .hud-panel {
+  .hud-panel,
+  .admin-panel,
+  .transcript-panel {
     top: 12px;
     left: 12px;
-    width: calc(100vw - 24px);
+    right: 12px;
+    width: auto;
+    min-width: 0;
+  }
+
+  .transcript-panel {
+    top: auto;
+    bottom: 12px;
+    max-height: 32vh;
   }
 
   .agent-label {

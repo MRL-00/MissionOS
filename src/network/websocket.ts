@@ -1,10 +1,12 @@
-import type { AgentEvent, ServerMessage } from "../types";
+import type { AgentEvent, MeetingState, ServerMessage } from "../types";
 
 interface OfficeWebSocketClientOptions {
   url?: string | undefined;
   onOpen?(): void;
   onClose?(): void;
   onEvent(event: AgentEvent): void;
+  onServerMessage?(message: ServerMessage): void;
+  onMeetingStatus?(state: MeetingState): void;
   onSnapshot?(message: Extract<ServerMessage, { type: "agents-snapshot" }>): void;
   onAgentRemoved?(agentId: string): void;
 }
@@ -17,6 +19,8 @@ export class OfficeWebSocketClient {
   onOpen?: (() => void) | undefined;
   onClose?: (() => void) | undefined;
   onEvent: (event: AgentEvent) => void;
+  onServerMessage?: ((message: ServerMessage) => void) | undefined;
+  onMeetingStatus?: ((state: MeetingState) => void) | undefined;
   onSnapshot?: ((message: Extract<ServerMessage, { type: "agents-snapshot" }>) => void) | undefined;
   onAgentRemoved?: ((agentId: string) => void) | undefined;
 
@@ -25,6 +29,8 @@ export class OfficeWebSocketClient {
     onOpen,
     onClose,
     onEvent,
+    onServerMessage,
+    onMeetingStatus,
     onSnapshot,
     onAgentRemoved,
   }: OfficeWebSocketClientOptions) {
@@ -32,6 +38,8 @@ export class OfficeWebSocketClient {
     this.onOpen = onOpen;
     this.onClose = onClose;
     this.onEvent = onEvent;
+    this.onServerMessage = onServerMessage;
+    this.onMeetingStatus = onMeetingStatus;
     this.onSnapshot = onSnapshot;
     this.onAgentRemoved = onAgentRemoved;
     this.shouldReconnect = true;
@@ -60,6 +68,8 @@ export class OfficeWebSocketClient {
         return;
       }
 
+      this.onServerMessage?.(parsed);
+
       if (parsed.type === "agent-event") {
         this.onEvent(parsed.event);
         return;
@@ -72,6 +82,11 @@ export class OfficeWebSocketClient {
 
       if (parsed.type === "agent-removed") {
         this.onAgentRemoved?.(parsed.agentId);
+        return;
+      }
+
+      if (parsed.type === "meeting-status") {
+        this.onMeetingStatus?.(parsed.state);
       }
     });
 
