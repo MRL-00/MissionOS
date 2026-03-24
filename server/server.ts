@@ -1109,6 +1109,7 @@ async function applyOpenClawStatus(
   if (previous?.status === status && previous?.task === normalizedTask) {
     return;
   }
+  console.log(`[openclaw-sync] ${officeAgentId}: ${previous?.status ?? "new"} → ${status} (task: ${normalizedTask ?? "none"})`);
 
   cancelTransitionTimer(officeAgentId);
 
