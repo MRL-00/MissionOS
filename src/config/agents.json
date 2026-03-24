@@ -69,5 +69,105 @@
         "beard"
       ]
     }
+  },
+  {
+    "id": "harry",
+    "name": "Harry",
+    "role": "Full-stack Developer",
+    "emoji": "💻",
+    "appearance": {
+      "height": 1.1,
+      "headShape": "oval",
+      "skinColor": "#E8C4A0",
+      "hairStyle": "messy",
+      "hairColor": "#D4A843",
+      "bodyColor": "#2D5A27",
+      "pantsColor": "#4A6FA5",
+      "accessories": []
+    }
+  },
+  {
+    "id": "kevin",
+    "name": "Kevin",
+    "role": "Full-stack Developer",
+    "emoji": "💻",
+    "appearance": {
+      "height": 1,
+      "headShape": "square",
+      "skinColor": "#D9B89C",
+      "hairStyle": "short",
+      "hairColor": "#B44A2A",
+      "bodyColor": "#2C3E6B",
+      "pantsColor": "#4A4A4A",
+      "accessories": [
+        "beard"
+      ]
+    }
+  },
+  {
+    "id": "danny",
+    "name": "Danny",
+    "role": "iOS/Swift Developer",
+    "emoji": "📱",
+    "appearance": {
+      "height": 0.95,
+      "headShape": "oval",
+      "skinColor": "#D4A878",
+      "hairStyle": "slicked",
+      "hairColor": "#1A1A1A",
+      "bodyColor": "#1A1A1A",
+      "pantsColor": "#2C2C2C",
+      "accessories": [
+        "glasses"
+      ]
+    }
+  },
+  {
+    "id": "johnny",
+    "name": "Johnny",
+    "role": "QA/UAT Tester",
+    "emoji": "🧪",
+    "appearance": {
+      "height": 1,
+      "headShape": "square",
+      "skinColor": "#D9B89C",
+      "hairStyle": "buzz",
+      "hairColor": "#6B4226",
+      "bodyColor": "#FFFFFF",
+      "pantsColor": "#5C6B4E",
+      "accessories": []
+    }
+  },
+  {
+    "id": "tommy",
+    "name": "Tommy",
+    "role": "QA/UAT Tester",
+    "emoji": "🧪",
+    "appearance": {
+      "height": 0.9,
+      "headShape": "round",
+      "skinColor": "#C4956A",
+      "hairStyle": "curly",
+      "hairColor": "#2A1A0E",
+      "bodyColor": "#CC3333",
+      "pantsColor": "#3A3A3A",
+      "accessories": []
+    }
+  },
+  {
+    "id": "randall",
+    "name": "Randall",
+    "role": "Scrum Master",
+    "emoji": "📋",
+    "appearance": {
+      "height": 1.15,
+      "headShape": "oval",
+      "skinColor": "#D1B29A",
+      "hairStyle": "short",
+      "hairColor": "#A0A0A0",
+      "bodyColor": "#2A8B8B",
+      "pantsColor": "#C4B18A",
+      "accessories": []
+    }
   }
 ]
