@@ -78,7 +78,6 @@ canvas {
 .top-bar-section,
 .top-bar-actions,
 .top-bar-brand,
-.meeting-launcher,
 .agent-sidebar-header,
 .agent-sidebar-footer,
 .activity-header,
@@ -121,10 +120,6 @@ canvas {
   font-size: 0.84rem;
   font-weight: 700;
   color: #f5f8ff;
-}
-
-.meeting-select {
-  min-width: 116px;
 }
 
 .top-bar-button {
@@ -173,8 +168,8 @@ canvas {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--admin-ink);
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   display: inline-grid;
   place-items: center;
   cursor: pointer;
@@ -223,12 +218,12 @@ canvas {
 
 .agent-sidebar {
   position: fixed;
-  top: 84px;
+  top: 0;
   left: 0;
   bottom: 0;
   width: 280px;
-  padding: 12px;
-  border-radius: 0 12px 0 0;
+  padding: 18px 12px 16px;
+  border-radius: 0 18px 18px 0;
   pointer-events: auto;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -243,8 +238,8 @@ canvas {
 }
 
 .agent-sidebar[data-collapsed="true"] {
-  width: 48px;
-  padding: 10px 6px;
+  width: 64px;
+  padding: 18px 8px 16px;
 }
 
 .agent-sidebar-header {
@@ -339,10 +334,10 @@ canvas {
 }
 
 .agent-list-dot {
-  flex: 0 0 10px;
-  width: 10px;
-  height: 10px;
-  margin-top: 5px;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
   border-radius: 999px;
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.04);
 }
@@ -392,10 +387,10 @@ canvas {
 .agent-sidebar[data-collapsed="true"] .agent-list-button {
   justify-content: center;
   align-items: center;
-  width: 36px;
-  min-height: 36px;
+  width: 48px;
+  min-height: 48px;
   padding: 0;
-  border-radius: 12px;
+  border-radius: 14px;
 }
 
 .agent-sidebar[data-collapsed="true"] .agent-list-body {
@@ -404,6 +399,10 @@ canvas {
 
 .agent-sidebar[data-collapsed="true"] .agent-list-dot {
   margin-top: 0;
+  width: 14px;
+  height: 14px;
+  flex-basis: 14px;
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.05);
 }
 
 .activity-panel {
@@ -1082,10 +1081,13 @@ canvas {
     bottom: auto;
     width: auto;
     max-height: min(40vh, 320px);
+    padding: 12px;
+    border-radius: 12px;
   }
 
   .agent-sidebar[data-collapsed="true"] {
     width: 48px;
+    padding: 10px 6px;
   }
 
   .activity-panel {

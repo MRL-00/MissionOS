@@ -61,15 +61,6 @@ export function createHud({ onResetCamera, apiBase = "http://localhost:3001" }: 
     <div class="top-bar-section top-bar-actions">
       <button class="button secondary top-bar-button" type="button" data-action="toggle-activity">Activity</button>
       <button class="button top-bar-button" type="button" data-action="add-agent">Add Agent</button>
-      <div class="meeting-launcher">
-        <select class="admin-select meeting-select" name="meeting-type" aria-label="Meeting type">
-          <option value="standup">Standup</option>
-          <option value="strategy">Strategy</option>
-          <option value="review">Review</option>
-        </select>
-
-      </div>
-
     </div>
   `;
   hud.append(topBar);
@@ -181,14 +172,11 @@ export function createHud({ onResetCamera, apiBase = "http://localhost:3001" }: 
 
   const connectionStatus = topBar.querySelector<HTMLSpanElement>(".connection-pill");
   const agentCount = topBar.querySelector<HTMLSpanElement>(".agent-count");
-  const meetingTypeSelect = topBar.querySelector<HTMLSelectElement>('select[name="meeting-type"]');
   const agentList = sidebar.querySelector<HTMLUListElement>(".agent-list");
   const sidebarToggleButton = sidebar.querySelector<HTMLButtonElement>('[data-action="toggle-sidebar"]');
   const sidebarToggleIcon = sidebar.querySelector<HTMLSpanElement>(".sidebar-toggle-icon");
   const topBarActivityButton = topBar.querySelector<HTMLButtonElement>('[data-action="toggle-activity"]');
   const addAgentButton = topBar.querySelector<HTMLButtonElement>('[data-action="add-agent"]');
-  const startMeetingButton = topBar.querySelector<HTMLButtonElement>('[data-action="start-meeting"]');
-  const topBarSettingsButton = topBar.querySelector<HTMLButtonElement>('[data-action="settings"]');
   const resetButtons = hud.querySelectorAll<HTMLButtonElement>('[data-action="reset"]');
   const adminToggleButton = sidebar.querySelector<HTMLButtonElement>('[data-action="admin-toggle"]');
   const adminClose = adminPanel.querySelector<HTMLButtonElement>(".admin-close");
@@ -384,16 +372,6 @@ export function createHud({ onResetCamera, apiBase = "http://localhost:3001" }: 
   topBarActivityButton?.addEventListener("click", () => toggleActivity());
   addAgentButton?.addEventListener("click", () => {
     characterCreator.openCreate();
-  });
-  startMeetingButton?.addEventListener("click", () => {
-    const meetingType = meetingTypeSelect?.value as "standup" | "strategy" | "review" | undefined;
-    if (!meetingType) {
-      return;
-    }
-    void runMeeting(meetingType);
-  });
-  topBarSettingsButton?.addEventListener("click", () => {
-    topBarSettingsButton.blur();
   });
   resetButtons.forEach((button) => {
     button.addEventListener("click", () => onResetCamera());
