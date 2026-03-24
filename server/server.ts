@@ -362,6 +362,10 @@ function normalizeBackendLink(
 }
 
 function resolveDeskIndex(registration: AgentRegistration, existing?: AgentRuntimeState): number {
+  // If the request explicitly provides a deskIndex, use it
+  if (typeof registration.deskIndex === "number") {
+    return registration.deskIndex;
+  }
   if (typeof existing?.deskIndex === "number" && (registration.type ?? existing.type) === existing.type) {
     return existing.deskIndex;
   }

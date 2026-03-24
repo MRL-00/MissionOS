@@ -97,6 +97,7 @@ export interface AgentRegistration {
   emoji?: string | undefined;
   appearance?: AgentAppearance | undefined;
   type?: "resident" | "visitor" | undefined;
+  deskIndex?: number | undefined;
   backendLink?: AgentBackendLink | undefined;
 }
 
@@ -107,7 +108,6 @@ export interface AgentRuntimeState extends AgentRegistration {
   message?: string | undefined;
   location?: AgentEventLocation | undefined;
   timestamp: number;
-  deskIndex?: number | undefined;
 }
 
 export interface AgentSnapshotState extends AgentRuntimeState {
