@@ -45,6 +45,66 @@ function createHair(style: AgentAppearance["hairStyle"], color: string): THREE.G
     return group;
   }
 
+  if (style === "messy") {
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.16, 0.64), material);
+    base.position.set(0, 0.22, 0);
+    group.add(base);
+
+    [
+      { x: -0.2, y: 0.35, z: -0.08, rx: 0.18, rz: -0.22 },
+      { x: -0.02, y: 0.38, z: 0.14, rx: -0.12, rz: 0.14 },
+      { x: 0.18, y: 0.34, z: -0.16, rx: 0.1, rz: 0.28 },
+      { x: 0.08, y: 0.4, z: 0.02, rx: -0.2, rz: -0.08 },
+      { x: -0.22, y: 0.3, z: 0.18, rx: 0.06, rz: -0.3 },
+    ].forEach(({ x, y, z, rx, rz }) => {
+      const tuft = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), material);
+      tuft.position.set(x, y, z);
+      tuft.rotation.x = rx;
+      tuft.rotation.z = rz;
+      group.add(tuft);
+    });
+
+    return group;
+  }
+
+  if (style === "slicked") {
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.14, 0.62), material);
+    cap.position.set(0, 0.24, -0.02);
+    cap.rotation.x = -0.16;
+    group.add(cap);
+
+    const sweep = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.12, 0.42), material);
+    sweep.position.set(0, 0.3, -0.12);
+    sweep.rotation.x = -0.34;
+    group.add(sweep);
+
+    return group;
+  }
+
+  if (style === "buzz") {
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.1, 0.64), material);
+    cap.position.set(0, 0.26, 0);
+    group.add(cap);
+    return group;
+  }
+
+  if (style === "curly") {
+    const curls: Array<[number, number, number]> = [
+      [0, 0.3, 0],
+      [-0.18, 0.26, -0.12],
+      [0.18, 0.27, -0.1],
+      [-0.16, 0.24, 0.12],
+      [0.16, 0.25, 0.12],
+      [0, 0.36, -0.04],
+    ];
+    curls.forEach(([x, y, z]) => {
+      const curl = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), material);
+      curl.position.set(x, y, z);
+      group.add(curl);
+    });
+    return group;
+  }
+
   const cap = new THREE.Mesh(
     style === "long" ? new THREE.BoxGeometry(0.68, 0.34, 0.68) : new THREE.BoxGeometry(0.66, 0.24, 0.66),
     material,
@@ -87,6 +147,12 @@ function createAccessories(accessories: Accessory[], appearance: AgentAppearance
     const tie = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.3, 0.05), accent);
     tie.position.set(0, -0.12, 0.33);
     group.add(tie);
+  }
+
+  if (accessories.includes("beard")) {
+    const beard = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, 0.12), dark);
+    beard.position.set(0, -0.2, 0.26);
+    group.add(beard);
   }
 
   return group;

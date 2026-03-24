@@ -194,6 +194,18 @@ canvas {
   gap: 8px;
 }
 
+.agent-list {
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.admin-agent-list {
+  max-height: 42vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .agent-list-item,
 .admin-agent-card,
 .activity-row,

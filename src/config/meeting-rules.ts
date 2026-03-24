@@ -14,4 +14,15 @@ export const MEETING_RULES = {
   },
 } as const;
 
-export const FACILITATOR_ROTATION = ["pickle", "zoe", "ink", "cio"] as const;
+export const FACILITATOR_ROTATION = [
+  "randall",
+  "pickle",
+  "zoe",
+  "ink",
+  "harry",
+  "kevin",
+  "danny",
+  "johnny",
+  "tommy",
+  "cio",
+] as const;

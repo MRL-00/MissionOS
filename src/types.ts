@@ -1,8 +1,8 @@
 import type * as THREE from "three";
 
 export type HeadShape = "round" | "oval" | "square";
-export type HairStyle = "none" | "short" | "long" | "mohawk";
-export type Accessory = "glasses" | "hat" | "tie";
+export type HairStyle = "none" | "short" | "long" | "mohawk" | "messy" | "slicked" | "buzz" | "curly";
+export type Accessory = "glasses" | "hat" | "tie" | "beard";
 export type AgentStatus = "idle" | "working" | "in-meeting";
 export type RealtimeAgentStatus = "idle" | "working" | "meeting" | "entering" | "leaving";
 export type AgentEventLocation = "desk" | "meeting-room" | "door" | "cio-office";
