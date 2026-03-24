@@ -574,6 +574,28 @@ canvas {
   color: #f7fbff;
 }
 
+.activity-message-clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.activity-message-toggle {
+  justify-self: start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #9bd0ff;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.activity-message-toggle:hover {
+  color: #c2e3ff;
+}
+
 .admin-agent-card {
   cursor: pointer;
 }

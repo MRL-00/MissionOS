@@ -284,10 +284,67 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   let activityAgentId = "";
   let activityView: ActivityViewFilter = "all";
   let activitySearchTerm = "";
+  let activityMessageSequence = 0;
+  let activityMeasurementFrame = 0;
   const characterCreator = createCharacterCreator({
     apiBase,
     getExistingAgents: () => latestStates,
   });
+
+  function measureActivityMessages(): void {
+    activityMeasurementFrame = 0;
+    if (!activityLog) {
+      return;
+    }
+
+    const rows = activityLog.querySelectorAll<HTMLElement>(".activity-row");
+    rows.forEach((row) => {
+      const message = row.querySelector<HTMLParagraphElement>(".activity-message");
+      const toggle = row.querySelector<HTMLButtonElement>(".activity-message-toggle");
+      if (!message || !toggle) {
+        return;
+      }
+
+      const expanded = !message.classList.contains("activity-message-clamped");
+      if (expanded) {
+        message.classList.add("activity-message-clamped");
+      }
+
+      const overflowing = message.scrollHeight > message.clientHeight;
+      if (!overflowing) {
+        message.classList.remove("activity-message-clamped");
+        toggle.hidden = true;
+        toggle.textContent = "Show more";
+        toggle.setAttribute("aria-expanded", "false");
+        return;
+      }
+
+      toggle.hidden = false;
+      if (expanded) {
+        message.classList.remove("activity-message-clamped");
+      }
+      toggle.textContent = expanded ? "Show less" : "Show more";
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    });
+  }
+
+  function scheduleActivityMessageMeasurement(): void {
+    if (activityMeasurementFrame !== 0) {
+      return;
+    }
+    activityMeasurementFrame = window.requestAnimationFrame(() => {
+      measureActivityMessages();
+    });
+  }
+
+  const activityLogResizeObserver = activityLog
+    ? new ResizeObserver(() => {
+        measureActivityMessages();
+      })
+    : undefined;
+  if (activityLog) {
+    activityLogResizeObserver?.observe(activityLog);
+  }
 
   function getAgentName(agentId?: string): string | undefined {
     if (!agentId) {
@@ -312,6 +369,9 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     activityPanel.style.display = activityVisible ? "grid" : "none";
     activityPanel.setAttribute("aria-hidden", activityVisible ? "false" : "true");
     topBarActivityButton?.classList.toggle("active", activityVisible);
+    if (activityVisible) {
+      scheduleActivityMessageMeasurement();
+    }
   }
 
   function syncActivityAgentOptions(): void {
@@ -406,13 +466,35 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
         header.append(meta, kind);
 
         const message = document.createElement("p");
-        message.className = "activity-message";
+        const messageId = `activity-message-${activityMessageSequence += 1}`;
+        const agentLabel = entry.agentId ? getAgentName(entry.agentId) ?? entry.agentId : "system";
+        message.className = "activity-message activity-message-clamped";
+        message.id = messageId;
         message.textContent = entry.message;
 
-        row.append(header, message);
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "activity-message-toggle";
+        toggle.hidden = true;
+        toggle.textContent = "Show more";
+        toggle.setAttribute("aria-controls", messageId);
+        toggle.setAttribute("aria-expanded", "false");
+        toggle.setAttribute("aria-label", `Show more for message from ${agentLabel}`);
+        toggle.addEventListener("click", () => {
+          const expanded = !message.classList.toggle("activity-message-clamped");
+          toggle.textContent = expanded ? "Show less" : "Show more";
+          toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+          toggle.setAttribute(
+            "aria-label",
+            `${expanded ? "Show less" : "Show more"} for message from ${agentLabel}`,
+          );
+        });
+
+        row.append(header, message, toggle);
         return row;
       }),
     );
+    scheduleActivityMessageMeasurement();
   }
 
   function focusActivity(agentId = ""): void {
