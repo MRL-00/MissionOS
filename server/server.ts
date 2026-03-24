@@ -952,12 +952,6 @@ function startOpenClawWsConnection(): void {
         if (!pending) return;
         openClawWsPending.delete(id);
 
-        // Check if this is the connect response
-        if (res.ok && !openClawWsConnected) {
-          openClawWsConnected = true;
-          console.log("[openclaw-sync] WebSocket connected and authenticated");
-        }
-
         if (res.ok) {
           pending.resolve(res.payload);
         } else {
@@ -996,6 +990,7 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
   if (openClawWsConnectSent) return;
   openClawWsConnectSent = true;
 
+  const id = generateId();
   const connectParams: Record<string, unknown> = {
     minProtocol: 3,
     maxProtocol: 3,
@@ -1013,11 +1008,31 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
       token: OPENCLAW_TOKEN || undefined,
     },
   };
+  if (nonce) {
+    (connectParams as Record<string, unknown>).nonce = nonce;
+  }
 
-  openClawWsRequest("connect", connectParams).catch((err) => {
-    console.error("[openclaw-sync] Connect auth failed:", err.message);
+  // Send connect directly (not via openClawWsRequest which requires openClawWsConnected)
+  const timeout = setTimeout(() => {
+    openClawWsPending.delete(id);
+    console.error("[openclaw-sync] Connect timed out");
     socket.close();
+  }, 10000);
+
+  openClawWsPending.set(id, {
+    resolve: () => {
+      clearTimeout(timeout);
+      openClawWsConnected = true;
+      console.log("[openclaw-sync] WebSocket connected and authenticated");
+    },
+    reject: (err) => {
+      clearTimeout(timeout);
+      console.error("[openclaw-sync] Connect auth failed:", err.message);
+      socket.close();
+    },
   });
+
+  socket.send(JSON.stringify({ type: "req", id, method: "connect", params: connectParams }));
 }
 
 async function fetchOpenClawSessions(): Promise<OpenClawSessionInfo[]> {
