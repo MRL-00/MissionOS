@@ -265,6 +265,7 @@ export function createOfficeScene(): OfficeSceneResult {
   office.add(walls);
   addBox(walls, [26, 3.2, 0.35], [0, 1.6, -9], palette.wall);
   addBox(walls, [0.35, 3.2, 18], [-13, 1.6, 0], palette.wall);
+  addBox(walls, [5.2, 3.2, 0.35], [-10.4, 1.6, 9], palette.wall);
   addBox(walls, [14.8, 3.2, 0.35], [5.6, 1.6, 9], palette.wall);
   addBox(walls, [0.35, 3.2, 9.5], [13, 1.6, -4.25], palette.wall);
   addBox(walls, [0.35, 3.2, 6.7], [13, 1.6, 5.65], palette.wall);
@@ -351,6 +352,19 @@ export function createOfficeScene(): OfficeSceneResult {
   cioArt.position.set(12.15, 2.15, 5.85);
   cioArt.rotation.y = -Math.PI / 2;
   office.add(cioArt);
+
+  const bungyPosterNorthWest = createPoster("Queenstown x Bungy", "#d56547");
+  bungyPosterNorthWest.position.set(-10.95, 2.08, 8.82);
+  office.add(bungyPosterNorthWest);
+
+  const bungyPosterNorthCenter = createPoster("EpicShot x Operations", "#c6543f");
+  bungyPosterNorthCenter.position.set(-5.1, 2.08, 8.82);
+  office.add(bungyPosterNorthCenter);
+
+  const bungyPosterWest = createPoster("Live More x Fear Less", "#cf7f4d");
+  bungyPosterWest.position.set(-12.8, 2.05, 4.35);
+  bungyPosterWest.rotation.y = Math.PI / 2;
+  office.add(bungyPosterWest);
 
   const waterCooler = createWaterCooler();
   waterCooler.position.set(-6.9, 0, 7.15);

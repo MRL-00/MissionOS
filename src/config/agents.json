@@ -17,7 +17,7 @@
   },
   {
     "id": "zoe",
-    "name": "Zoe",
+    "name": "Matt",
     "role": "Engineer Lead",
     "emoji": "🟣",
     "appearance": {
@@ -65,7 +65,8 @@
       "bodyColor": "#2C3E50",
       "pantsColor": "#1B2633",
       "accessories": [
-        "tie"
+        "tie",
+        "beard"
       ]
     }
   },

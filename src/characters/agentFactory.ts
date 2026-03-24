@@ -30,6 +30,29 @@ function createHead(shape: AgentAppearance["headShape"], color: string): THREE.M
   return new THREE.Mesh(geometry, makeMaterial(color));
 }
 
+function createFace(shape: AgentAppearance["headShape"], accessories: Accessory[] = []): THREE.Group {
+  const group = new THREE.Group();
+  const dark = makeMaterial("#242730");
+  const mouthMaterial = makeMaterial("#5a3a30");
+  const hasBeard = accessories.includes("beard");
+  const faceZ = shape === "square" ? 0.322 : 0.282;
+  const eyeY = shape === "oval" ? 0.05 : 0.03;
+  const mouthY = hasBeard ? -0.07 : shape === "oval" ? -0.14 : -0.12;
+  const mouthZ = hasBeard ? faceZ + 0.03 : faceZ;
+
+  [-0.12, 0.12].forEach((x) => {
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.045, 0.02), dark);
+    eye.position.set(x, eyeY, faceZ);
+    group.add(eye);
+  });
+
+  const mouth = new THREE.Mesh(new THREE.BoxGeometry(hasBeard ? 0.1 : 0.11, 0.016, 0.02), mouthMaterial);
+  mouth.position.set(0, mouthY, mouthZ);
+  group.add(mouth);
+
+  return group;
+}
+
 function createHair(style: AgentAppearance["hairStyle"], color: string): THREE.Group {
   const group = new THREE.Group();
   const material = makeMaterial(color);
@@ -121,10 +144,10 @@ function createHair(style: AgentAppearance["hairStyle"], color: string): THREE.G
   return group;
 }
 
-function createAccessories(accessories: Accessory[], appearance: AgentAppearance): THREE.Group {
+function createHeadAccessories(accessories: Accessory[], appearance: AgentAppearance): THREE.Group {
   const group = new THREE.Group();
   const dark = makeMaterial("#20242c");
-  const accent = makeMaterial(appearance.bodyColor);
+  const hair = makeMaterial(appearance.hairColor);
 
   if (accessories.includes("glasses")) {
     [-0.14, 0.14].forEach((x) => {
@@ -143,9 +166,38 @@ function createAccessories(accessories: Accessory[], appearance: AgentAppearance
     group.add(hat);
   }
 
+  if (accessories.includes("beard")) {
+    const beardBase = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.05), hair);
+    beardBase.position.set(0, -0.16, 0.31);
+    group.add(beardBase);
+
+    const beardDrop = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 0.05), hair);
+    beardDrop.position.set(0, -0.28, 0.31);
+    group.add(beardDrop);
+
+    const sideLeft = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.05), hair);
+    sideLeft.position.set(-0.18, -0.08, 0.31);
+    group.add(sideLeft);
+
+    const sideRight = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.05), hair);
+    sideRight.position.set(0.18, -0.08, 0.31);
+    group.add(sideRight);
+  }
+
+  return group;
+}
+
+function createBodyAccessories(accessories: Accessory[], appearance: AgentAppearance): THREE.Group {
+  const group = new THREE.Group();
+  const accent = makeMaterial(appearance.bodyColor);
+
   if (accessories.includes("tie")) {
-    const tie = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.3, 0.05), accent);
-    tie.position.set(0, -0.12, 0.33);
+    const knot = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.04), accent);
+    knot.position.set(0, 0.25, 0.24);
+    group.add(knot);
+
+    const tie = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.28, 0.04), accent);
+    tie.position.set(0, 0.05, 0.24);
     group.add(tie);
   }
 
@@ -196,6 +248,7 @@ export function createAgent(agentConfig: AgentConfig): BuiltAgent {
     makeMaterial(appearance.bodyColor),
     new THREE.Vector3(0.48, -0.05, 0),
   );
+  torso.add(createBodyAccessories(appearance.accessories ?? [], appearance));
 
   const headPivot = new THREE.Group();
   headPivot.position.y = 0.78;
@@ -203,8 +256,9 @@ export function createAgent(agentConfig: AgentConfig): BuiltAgent {
 
   const head = createHead(appearance.headShape, appearance.skinColor);
   headPivot.add(head);
+  headPivot.add(createFace(appearance.headShape, appearance.accessories ?? []));
   headPivot.add(createHair(appearance.hairStyle, appearance.hairColor));
-  headPivot.add(createAccessories(appearance.accessories ?? [], appearance));
+  headPivot.add(createHeadAccessories(appearance.accessories ?? [], appearance));
 
   root.scale.setScalar(height);
   root.userData.labelOffset = 2.5 * height;
