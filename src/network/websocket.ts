@@ -25,7 +25,7 @@ export class OfficeWebSocketClient {
   onAgentRemoved?: ((agentId: string) => void) | undefined;
 
   constructor({
-    url = "ws://localhost:3001",
+    url = `ws://${window.location.hostname}:3001`,
     onOpen,
     onClose,
     onEvent,

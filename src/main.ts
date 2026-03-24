@@ -897,8 +897,8 @@ function updateKeyboardCamera(delta: number): void {
 async function hydrateOverlay(): Promise<void> {
   try {
     const [activityResponse, transcriptResponse] = await Promise.all([
-      fetch("http://localhost:3001/api/activity"),
-      fetch("http://localhost:3001/api/meeting/transcript"),
+      fetch(`http://${window.location.hostname}:3001/api/activity`),
+      fetch(`http://${window.location.hostname}:3001/api/meeting/transcript`),
     ]);
 
     if (activityResponse.ok) {
