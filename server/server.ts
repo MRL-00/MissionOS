@@ -918,11 +918,7 @@ function startOpenClawWsConnection(): void {
   openClawWsConnected = false;
   openClawWsConnectSent = false;
 
-  const socket = new WsWebSocket(wsUrl, {
-    headers: {
-      Origin: OPENCLAW_URL.replace(/^ws/, "http"),
-    },
-  });
+  const socket = new WsWebSocket(wsUrl);
   openClawWs = socket;
 
   socket.on("open", () => {
@@ -999,10 +995,10 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "openclaw-control-ui",
+      id: "cli",
       version: "1.0.0",
       platform: "node",
-      mode: "webchat",
+      mode: "cli",
       instanceId: generateId(),
     },
     role: "operator",
@@ -1315,6 +1311,31 @@ const httpServer = createServer(async (request, response) => {
         pushActivity("agent-status", formatStatusActivity(next, event), next.id);
       }
       sendJson(response, 200, next);
+      return;
+    }
+
+    // Endpoint for OpenClaw to push session data (called by cron or internal hook)
+    if (method === "POST" && url.pathname === "/api/openclaw/sessions") {
+      const body = await readJson<{ sessions?: OpenClawSessionListRow[] }>(request);
+      const sessions = normalizeToolSessions(body);
+      // Process just like pollOpenClawSessions would
+      const currentlyActive = new Set<string>();
+      for (const session of sessions) {
+        const openClawAgentId = extractOpenClawAgentId(session.sessionKey, session.agentId);
+        if (!openClawAgentId) continue;
+        const officeAgentId = resolveOpenClawOfficeAgentId(openClawAgentId);
+        if (!officeAgentId) continue;
+        currentlyActive.add(officeAgentId);
+        const isWorking = session.status === "running" || session.status === "active";
+        const task = session.task ?? session.label;
+        await applyOpenClawStatus(officeAgentId, openClawAgentId, isWorking ? "working" : "idle", task);
+      }
+      for (const [officeAgentId, state] of openClawStates) {
+        if (!currentlyActive.has(officeAgentId) && state.status !== "idle") {
+          await applyOpenClawStatus(officeAgentId, state.openClawAgentId, "idle");
+        }
+      }
+      sendJson(response, 200, { ok: true, processed: sessions.length });
       return;
     }
 
