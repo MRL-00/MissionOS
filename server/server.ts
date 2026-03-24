@@ -998,7 +998,7 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
       id: "gateway-client",
       version: "1.0.0",
       platform: "node",
-      mode: "backend",
+      mode: "webchat",
       instanceId: generateId(),
     },
     role: "operator",
