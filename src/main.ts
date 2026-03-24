@@ -564,9 +564,7 @@ function pushActivity(entry: ActivityLogEntry): void {
 
 function handleAgentRegistered(message: Extract<ServerMessage, { type: "agent-registered" }>): void {
   const { appearance, ...state } = message.agent;
-  if (appearance) {
-    agentAppearances.set(state.id, appearance);
-  }
+  // Don't cache appearance before ensureController — it needs to compare old vs new
   const next = upsertAgentState({
     ...state,
     appearance,
@@ -619,7 +617,7 @@ function handleSnapshot(message: Extract<ServerMessage, { type: "agents-snapshot
 
   agentStates.clear();
   message.agents.forEach((snapshotState: AgentSnapshotState) => {
-    agentAppearances.set(snapshotState.id, snapshotState.appearance);
+    // Don't cache appearance before ensureController — it needs to compare old vs new
     const next = upsertAgentState(snapshotState);
     const controller = ensureController(next, snapshotState.appearance);
     controller.status = getControllerStatus(next.status);
