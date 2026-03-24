@@ -4,7 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { buildAgentConfig, createDeterministicAppearance, getDefaultAgentConfig, getKnownDeskIndex } from "./agentDefaults";
 import { AgentController, STATUS } from "./characters/agentController";
-import { DemoDirector, moveAgentToDestination } from "./demo";
+import { moveAgentToDestination } from "./demo";
 import { OfficeWebSocketClient } from "./network/websocket";
 import { createOfficeScene } from "./scene/officeScene";
 import { createLayoutEditor, type LayoutTransformMode } from "./ui/layoutEditor";
@@ -107,7 +107,6 @@ let currentMeeting: MeetingState = {
 };
 
 const hud = createHud({
-  onToggleDemo: toggleDemo,
   onResetCamera: resetCamera,
 });
 const labelRenderer = new LabelRenderer(hud.labelLayer);
@@ -125,12 +124,6 @@ let selectedLayoutItemId: string | null = null;
 let selectionHelper: THREE.BoxHelper | null = null;
 let selectionPointerDown = false;
 let layoutDragMoved = false;
-
-const demo = new DemoDirector({
-  agents,
-  deskAssignments,
-  waypoints,
-});
 
 const layoutEditor = createLayoutEditor({
   getExportText: () => layout.exportLayout(),
@@ -272,14 +265,6 @@ function setLayoutTransformMode(mode: LayoutTransformMode): void {
   transformControls.showY = mode === "rotate";
   transformControls.showZ = mode === "translate";
   syncLayoutEditor();
-}
-
-function stopDemoForRealtime(): void {
-  if (!demo.running) {
-    return;
-  }
-  demo.stop();
-  hud.setDemoRunning(false);
 }
 
 function cancelRemoval(agentId: string): void {
@@ -590,8 +575,6 @@ function handleAgentRegistered(message: Extract<ServerMessage, { type: "agent-re
 }
 
 function handleAgentEvent(event: AgentEvent): void {
-  stopDemoForRealtime();
-
   const previous = agentStates.get(event.agentId);
   const next = upsertAgentState({
     id: event.agentId,
@@ -693,7 +676,6 @@ function handleServerMessage(message: ServerMessage): void {
   }
 
   if (message.type === "meeting-start") {
-    stopDemoForRealtime();
     meetingTranscript = [];
     currentMeeting = {
       active: true,
@@ -787,32 +769,6 @@ const websocketClient = new OfficeWebSocketClient({
   onAgentRemoved: handleAgentRemoved,
 });
 websocketClient.connect();
-
-function toggleDemo(): void {
-  if (demo.running) {
-    demo.stop();
-    hud.setDemoRunning(false);
-    resetAgentsToDesks();
-    return;
-  }
-
-  demo.start();
-  hud.setDemoRunning(true);
-}
-
-function resetAgentsToDesks(): void {
-  agents.forEach((controller, id) => {
-    const desk = getDeskDestination(id);
-    if (!desk) {
-      return;
-    }
-    moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, desk, {
-      facing: desk.facing,
-      status: STATUS.working,
-      seated: false,
-    });
-  });
-}
 
 function resetCamera(): void {
   camera.position.copy(defaultCameraPosition);
@@ -1032,7 +988,6 @@ renderer.setAnimationLoop(() => {
   const delta = clock.getDelta();
   const elapsed = clock.elapsedTime;
 
-  demo.update(delta);
   updateKeyboardCamera(delta);
   controls.update();
   updaters.forEach((updater) => updater(delta, elapsed));
