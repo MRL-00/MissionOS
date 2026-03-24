@@ -2,7 +2,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
-import { WebSocketServer } from "ws";
+import { WebSocket as WsWebSocket, WebSocketServer } from "ws";
 import defaultAppearancesJson from "../src/config/default-appearances.json";
 import { createDeterministicAppearance, getKnownDeskIndex } from "../src/agentDefaults";
 import { FACILITATOR_ROTATION } from "../src/config/meeting-rules";
@@ -874,52 +874,170 @@ function normalizeToolSessions(result: unknown): OpenClawSessionInfo[] {
   });
 }
 
-async function fetchOpenClawSessions(): Promise<OpenClawSessionInfo[]> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (OPENCLAW_TOKEN) {
-    headers.Authorization = `Bearer ${OPENCLAW_TOKEN}`;
-  }
+// --- OpenClaw Gateway WebSocket Client ---
 
-  const legacyResponse = await fetch(
-    `${OPENCLAW_URL}/api/sessions?activeMinutes=${OPENCLAW_ACTIVITY_WINDOW_MINUTES}&messageLimit=1`,
-    { headers },
-  );
-  if (legacyResponse.ok) {
-    const data = await legacyResponse.json() as { sessions?: OpenClawSessionInfo[] };
-    return data.sessions ?? [];
-  }
+let openClawWs: WsWebSocket | null = null;
+let openClawWsConnected = false;
+let openClawWsPending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+let openClawWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let openClawWsConnectSent = false;
 
-  if (legacyResponse.status !== 404) {
-    const body = await legacyResponse.text().catch(() => "");
-    console.error(`[openclaw-sync] OpenClaw API returned ${legacyResponse.status}${body ? `: ${body}` : ""}`);
-    return [];
-  }
+function openClawWsUrl(): string {
+  // Convert http(s) URL to ws(s)
+  return OPENCLAW_URL.replace(/^http/, "ws");
+}
 
-  const toolsResponse = await fetch(`${OPENCLAW_URL}/tools/invoke`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      tool: "sessions_list",
-      action: "json",
-      sessionKey: "main",
-      args: {
-        activeMinutes: OPENCLAW_ACTIVITY_WINDOW_MINUTES,
-        messageLimit: 1,
-      },
-    }),
+function generateId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function openClawWsRequest(method: string, params: unknown): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    if (!openClawWs || !openClawWsConnected) {
+      reject(new Error("OpenClaw WS not connected"));
+      return;
+    }
+    const id = generateId();
+    const timeout = setTimeout(() => {
+      openClawWsPending.delete(id);
+      reject(new Error(`OpenClaw WS request timeout: ${method}`));
+    }, 15000);
+    openClawWsPending.set(id, {
+      resolve: (value) => { clearTimeout(timeout); resolve(value); },
+      reject: (error) => { clearTimeout(timeout); reject(error); },
+    });
+    openClawWs.send(JSON.stringify({ type: "req", id, method, params }));
   });
-  if (!toolsResponse.ok) {
-    const body = await toolsResponse.text().catch(() => "");
-    console.error(`[openclaw-sync] OpenClaw tools API returned ${toolsResponse.status}${body ? `: ${body}` : ""}`);
+}
+
+function startOpenClawWsConnection(): void {
+  if (openClawWs) {
+    return;
+  }
+  const wsUrl = openClawWsUrl();
+  openClawWsConnected = false;
+  openClawWsConnectSent = false;
+
+  const socket = new WsWebSocket(wsUrl);
+  openClawWs = socket;
+
+  socket.on("open", () => {
+    // Wait briefly for connect.challenge, then send connect
+    setTimeout(() => {
+      if (!openClawWsConnectSent && socket.readyState === WsWebSocket.OPEN) {
+        sendOpenClawConnect(socket);
+      }
+    }, 1000);
+  });
+
+  socket.on("message", (data) => {
+    try {
+      const msg = JSON.parse(String(data)) as Record<string, unknown>;
+
+      // Handle connect.challenge event
+      if (msg.type === "event") {
+        const event = msg as { event?: string; payload?: { nonce?: string } };
+        if (event.event === "connect.challenge" && event.payload?.nonce) {
+          sendOpenClawConnect(socket, event.payload.nonce);
+          return;
+        }
+        return;
+      }
+
+      // Handle response
+      if (msg.type === "res") {
+        const res = msg as { id?: string; ok?: boolean; payload?: unknown; error?: { message?: string } };
+        const id = res.id as string;
+        const pending = openClawWsPending.get(id);
+        if (!pending) return;
+        openClawWsPending.delete(id);
+
+        // Check if this is the connect response
+        if (res.ok && !openClawWsConnected) {
+          openClawWsConnected = true;
+          console.log("[openclaw-sync] WebSocket connected and authenticated");
+        }
+
+        if (res.ok) {
+          pending.resolve(res.payload);
+        } else {
+          pending.reject(new Error(res.error?.message ?? "request failed"));
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  });
+
+  socket.on("close", () => {
+    openClawWs = null;
+    openClawWsConnected = false;
+    openClawWsConnectSent = false;
+    // Reject all pending
+    for (const [, pending] of openClawWsPending) {
+      pending.reject(new Error("OpenClaw WS closed"));
+    }
+    openClawWsPending.clear();
+    // Reconnect after delay
+    if (!openClawWsReconnectTimer) {
+      openClawWsReconnectTimer = setTimeout(() => {
+        openClawWsReconnectTimer = null;
+        startOpenClawWsConnection();
+      }, 5000);
+    }
+  });
+
+  socket.on("error", (err) => {
+    console.error("[openclaw-sync] WebSocket error:", err.message);
+  });
+}
+
+function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
+  if (openClawWsConnectSent) return;
+  openClawWsConnectSent = true;
+
+  const connectParams: Record<string, unknown> = {
+    minProtocol: 3,
+    maxProtocol: 3,
+    client: {
+      id: "the-office",
+      version: "1.0.0",
+      platform: "node",
+      mode: "backend",
+      instanceId: generateId(),
+    },
+    role: "operator",
+    scopes: ["operator.admin"],
+    caps: [],
+    auth: {
+      token: OPENCLAW_TOKEN || undefined,
+    },
+  };
+
+  openClawWsRequest("connect", connectParams).catch((err) => {
+    console.error("[openclaw-sync] Connect auth failed:", err.message);
+    socket.close();
+  });
+}
+
+async function fetchOpenClawSessions(): Promise<OpenClawSessionInfo[]> {
+  if (!openClawWsConnected) {
     return [];
   }
 
-  const data = await toolsResponse.json() as { ok?: boolean; result?: unknown };
-  if (!data.ok && data.result === undefined) {
-    console.error(`[openclaw-sync] OpenClaw tools API returned non-ok payload: ${JSON.stringify(data)}`);
+  try {
+    const result = await openClawWsRequest("sessions.list", {
+      activeMinutes: OPENCLAW_ACTIVITY_WINDOW_MINUTES,
+      includeGlobal: true,
+      includeUnknown: false,
+      limit: 200,
+    }) as { sessions?: OpenClawSessionListRow[] } | null;
+
+    return normalizeToolSessions(result);
+  } catch (error) {
+    console.error("[openclaw-sync] sessions.list failed:", (error as Error).message);
     return [];
   }
-  return normalizeToolSessions(data.result);
 }
 
 async function ensureOpenClawAgentRegistered(officeAgentId: string, openClawAgentId: string): Promise<void> {
@@ -1031,8 +1149,14 @@ function startOpenClawSync(): void {
     return;
   }
 
-  console.log(`[openclaw-sync] Polling ${OPENCLAW_URL} every ${OPENCLAW_POLL_INTERVAL_MS / 1000}s`);
-  void pollOpenClawSessions();
+  console.log(`[openclaw-sync] Connecting to ${OPENCLAW_URL} via WebSocket, polling every ${OPENCLAW_POLL_INTERVAL_MS / 1000}s`);
+  void startOpenClawWsConnection();
+
+  // Wait a bit for WS to connect before first poll
+  setTimeout(() => {
+    void pollOpenClawSessions();
+  }, 3000);
+
   setInterval(() => {
     void pollOpenClawSessions();
   }, OPENCLAW_POLL_INTERVAL_MS);
