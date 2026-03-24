@@ -146,7 +146,8 @@ export class AgentController {
         const typingAmount = 0.1;
         this.parts.arms.leftArm.rotation.x = seatedLeftArmX + Math.sin(typingWave) * typingAmount;
         this.parts.arms.rightArm.rotation.x = seatedRightArmX + Math.cos(typingWave) * typingAmount;
-        this.parts.headPivot.rotation.x += Math.sin(typingWave * 0.5) * 0.025;
+        this.parts.headPivot.rotation.x =
+          Math.sin(elapsed * 1.5 + this.phase) * 0.03 + Math.sin(typingWave * 0.5) * 0.025;
       }
     }
 
