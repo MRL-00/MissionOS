@@ -1,11 +1,14 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer } from "ws";
-import agentsConfig from "../src/config/agents.json";
+import defaultAppearancesJson from "../src/config/default-appearances.json";
+import { createDeterministicAppearance, getKnownDeskIndex } from "../src/agentDefaults";
 import { FACILITATOR_ROTATION } from "../src/config/meeting-rules";
 import type {
   ActivityLogEntry,
+  AgentAppearance,
   AgentCompleteRequest,
+  AgentConfig,
   AgentEvent,
   AgentEventLocation,
   AgentRegistration,
@@ -30,16 +33,20 @@ const DEFAULT_HEADERS = {
   "Content-Type": "application/json",
 } as const;
 
-const builtInAgentIds = new Set<string>();
 const agentStates = new Map<string, AgentRuntimeState>();
 const activityLog: ActivityLogEntry[] = [];
-const spawnTimers = new Map<string, NodeJS.Timeout>();
+const transitionTimers = new Map<string, NodeJS.Timeout>();
+const residentDeskAssignments = new Map<string, number>();
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_LOG_ENTRIES = 60;
+const DESK_COUNT = 10;
 const VALID_STATUSES = new Set<RealtimeAgentStatus>(["idle", "working", "meeting", "entering", "leaving"]);
 const VALID_LOCATIONS = new Set<AgentEventLocation>(["desk", "meeting-room", "door", "cio-office"]);
 const VALID_MEETING_TYPES = new Set<MeetingType>(["standup", "strategy", "review"]);
 const VALID_SPEEDS = new Set<MeetingSpeed>([1, 2, 3]);
+const VALID_AGENT_TYPES = new Set<NonNullable<AgentRegistration["type"]>>(["resident", "visitor"]);
+const defaultAppearanceConfigs = defaultAppearancesJson as AgentConfig[];
+const defaultAppearances = new Map(defaultAppearanceConfigs.map((agent) => [agent.id, agent]));
 
 class RequestBodyError extends Error {
   statusCode: number;
@@ -49,21 +56,6 @@ class RequestBodyError extends Error {
     this.name = "RequestBodyError";
     this.statusCode = statusCode;
   }
-}
-
-function seedBuiltInAgents(): void {
-  agentsConfig.forEach((agent) => {
-    builtInAgentIds.add(agent.id);
-    agentStates.set(agent.id, {
-      id: agent.id,
-      name: agent.name,
-      role: agent.role,
-      connected: true,
-      status: "idle",
-      location: "desk",
-      timestamp: Date.now(),
-    });
-  });
 }
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
@@ -118,7 +110,39 @@ function isRegistration(value: unknown): value is AgentRegistration {
   return (
     typeof registration.id === "string" &&
     typeof registration.name === "string" &&
-    typeof registration.role === "string"
+    typeof registration.role === "string" &&
+    (registration.emoji === undefined || typeof registration.emoji === "string") &&
+    (registration.type === undefined || VALID_AGENT_TYPES.has(registration.type)) &&
+    (registration.appearance === undefined || isAgentAppearance(registration.appearance))
+  );
+}
+
+function isAgentAppearance(value: unknown): value is AgentAppearance {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const appearance = value as Partial<AgentAppearance>;
+  return (
+    (appearance.height === undefined || typeof appearance.height === "number") &&
+    (appearance.headShape === "round" || appearance.headShape === "oval" || appearance.headShape === "square") &&
+    typeof appearance.skinColor === "string" &&
+    (appearance.hairStyle === "none" ||
+      appearance.hairStyle === "short" ||
+      appearance.hairStyle === "long" ||
+      appearance.hairStyle === "mohawk" ||
+      appearance.hairStyle === "messy" ||
+      appearance.hairStyle === "slicked" ||
+      appearance.hairStyle === "buzz" ||
+      appearance.hairStyle === "curly") &&
+    typeof appearance.hairColor === "string" &&
+    typeof appearance.bodyColor === "string" &&
+    typeof appearance.pantsColor === "string" &&
+    (appearance.accessories === undefined ||
+      (Array.isArray(appearance.accessories) &&
+        appearance.accessories.every((accessory) =>
+          ["glasses", "hat", "tie", "beard"].includes(accessory),
+        )))
   );
 }
 
@@ -243,6 +267,7 @@ function ensureAgentState(agentId: string): AgentRuntimeState {
     name: agentId,
     role: "Temporary Agent",
     connected: true,
+    type: "visitor",
     status: "idle",
     location: "desk",
     timestamp: Date.now(),
@@ -278,6 +303,75 @@ function applyEvent(event: AgentEvent): AgentRuntimeState {
   return next;
 }
 
+function getAvailableDeskIndex(excludedAgentId?: string): number | undefined {
+  const occupied = new Set<number>();
+
+  agentStates.forEach((state) => {
+    if (state.id !== excludedAgentId && typeof state.deskIndex === "number") {
+      occupied.add(state.deskIndex);
+    }
+  });
+
+  for (let deskIndex = 0; deskIndex < DESK_COUNT; deskIndex += 1) {
+    if (!occupied.has(deskIndex)) {
+      return deskIndex;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveDeskIndex(registration: AgentRegistration, existing?: AgentRuntimeState): number {
+  if (typeof existing?.deskIndex === "number") {
+    return existing.deskIndex;
+  }
+
+  const agentType = registration.type ?? existing?.type ?? "visitor";
+
+  if (agentType === "resident") {
+    const reservedDesk = residentDeskAssignments.get(registration.id) ?? getKnownDeskIndex(registration.id);
+    if (reservedDesk !== undefined) {
+      residentDeskAssignments.set(registration.id, reservedDesk);
+      const occupyingAgent = Array.from(agentStates.values()).find(
+        (state) => state.id !== registration.id && state.deskIndex === reservedDesk,
+      );
+      if (!occupyingAgent) {
+        return reservedDesk;
+      }
+    }
+
+    const availableDesk = getAvailableDeskIndex(registration.id);
+    if (availableDesk === undefined) {
+      throw new RequestBodyError("No desks available", 409);
+    }
+    residentDeskAssignments.set(registration.id, availableDesk);
+    return availableDesk;
+  }
+
+  const availableDesk = getAvailableDeskIndex(registration.id);
+  if (availableDesk === undefined) {
+    throw new RequestBodyError("No hot desks available", 409);
+  }
+  return availableDesk;
+}
+
+function resolveAppearance(registration: AgentRegistration): { appearance: AgentAppearance; emoji: string } {
+  const fallback = defaultAppearances.get(registration.id);
+  return {
+    appearance: registration.appearance ?? fallback?.appearance ?? createDeterministicAppearance(registration.id),
+    emoji: registration.emoji ?? fallback?.emoji ?? "🙂",
+  };
+}
+
+function scheduleTransition(agentId: string, callback: () => void, delayMs: number): void {
+  cancelTransitionTimer(agentId);
+  const timer = setTimeout(() => {
+    transitionTimers.delete(agentId);
+    callback();
+  }, delayMs);
+  transitionTimers.set(agentId, timer);
+}
+
 function ensureKnownAgents(agentIds: string[]): void {
   const unknownAgentId = agentIds.find((agentId) => !agentStates.has(agentId));
   if (unknownAgentId) {
@@ -311,24 +405,60 @@ function buildLegacyMeetingScript(agentIds: string[]): MeetingScript {
   };
 }
 
-seedBuiltInAgents();
-
 let meetingStartActivityEmitted = false;
 
-function cancelSpawnTimer(agentId: string): void {
-  const timer = spawnTimers.get(agentId);
+function cancelTransitionTimer(agentId: string): void {
+  const timer = transitionTimers.get(agentId);
   if (!timer) {
     return;
   }
   clearTimeout(timer);
-  spawnTimers.delete(agentId);
+  transitionTimers.delete(agentId);
+}
+
+function readStatusEvent(body: unknown, agentIdFromPath?: string): AgentEvent {
+  if (typeof body !== "object" || body === null) {
+    throw new RequestBodyError("Invalid agent event payload");
+  }
+
+  const payload = body as Partial<AgentEvent>;
+  const agentId = agentIdFromPath ?? payload.agentId;
+
+  if (!agentId) {
+    throw new RequestBodyError("Missing agent id");
+  }
+  if (agentIdFromPath && payload.agentId && payload.agentId !== agentIdFromPath) {
+    throw new RequestBodyError("Agent id in URL does not match payload");
+  }
+
+  const normalized: AgentEvent = {
+    agentId,
+    status: payload.status as RealtimeAgentStatus,
+    timestamp: payload.timestamp as number,
+  };
+
+  if (payload.task !== undefined) {
+    normalized.task = payload.task;
+  }
+  if (payload.message !== undefined) {
+    normalized.message = payload.message;
+  }
+  if (payload.location !== undefined) {
+    normalized.location = payload.location;
+  }
+
+  if (!isAgentEvent(normalized)) {
+    throw new RequestBodyError("Invalid agent event payload");
+  }
+
+  return normalized;
 }
 
 const meetingEngine = new MeetingEngine({
   onBroadcast: broadcast,
   onApplyEvent(event) {
     if (event.status === "meeting" || event.location === "meeting-room") {
-      cancelSpawnTimer(event.agentId);
+      cancelTransitionTimer(event.agentId);
     }
     applyEvent(event);
     const state = agentStates.get(event.agentId);
@@ -396,29 +526,82 @@ const httpServer = createServer(async (request, response) => {
         throw new RequestBodyError("Invalid registration payload");
       }
 
-      const next: AgentRuntimeState = {
+      const existing = agentStates.get(body.id);
+      const { appearance, emoji } = resolveAppearance(body);
+      const type = body.type ?? existing?.type ?? "visitor";
+      const deskIndex = resolveDeskIndex(body, existing);
+      const timestamp = Date.now();
+      const enteringState: AgentRuntimeState = {
         id: body.id,
         name: body.name,
         role: body.role,
+        emoji,
+        type,
+        deskIndex,
         connected: true,
-        status: "idle",
-        location: "desk",
-        timestamp: Date.now(),
+        status: "entering",
+        location: "door",
+        timestamp,
       };
-      agentStates.set(body.id, next);
-      pushActivity("registration", `Registered external agent ${body.name}.`, body.id);
+
+      if (type === "resident") {
+        residentDeskAssignments.set(body.id, deskIndex);
+      }
+
+      agentStates.set(body.id, enteringState);
+      pushActivity("registration", `Registered agent ${body.name} at desk ${deskIndex}.`, body.id);
+      broadcast({
+        type: "agent-registered",
+        agent: {
+          ...enteringState,
+          appearance,
+        },
+      });
+      broadcast({
+        type: "agent-event",
+        event: {
+          agentId: body.id,
+          status: "entering",
+          location: "door",
+          timestamp,
+        },
+      });
       broadcastSnapshot();
-      sendJson(response, 201, next);
+      sendJson(response, 201, {
+        ...enteringState,
+        appearance,
+      });
+
+      scheduleTransition(body.id, () => {
+        if (!agentStates.has(body.id)) {
+          return;
+        }
+        applyEvent({
+          agentId: body.id,
+          status: "idle",
+          location: "desk",
+          timestamp: Date.now(),
+        });
+      }, 900);
       return;
     }
 
     if (method === "POST" && url.pathname === "/api/agent/status") {
       const body = await readJson<unknown>(request);
-      if (!isAgentEvent(body)) {
-        throw new RequestBodyError("Invalid agent event payload");
-      }
+      const event = readStatusEvent(body);
 
-      const next = applyEvent(body);
+      const next = applyEvent(event);
+      pushActivity("agent-status", `${next.name} is now ${next.status}.`, next.id);
+      sendJson(response, 200, next);
+      return;
+    }
+
+    const statusPathMatch = method === "POST" ? url.pathname.match(/^\/api\/agent\/([^/]+)\/status$/) : null;
+    if (statusPathMatch) {
+      const body = await readJson<unknown>(request);
+      const event = readStatusEvent(body, decodeURIComponent(statusPathMatch[1] ?? ""));
+
+      const next = applyEvent(event);
       pushActivity("agent-status", `${next.name} is now ${next.status}.`, next.id);
       sendJson(response, 200, next);
       return;
@@ -443,9 +626,7 @@ const httpServer = createServer(async (request, response) => {
       pushActivity("agent-spawn", `${entering.name} spawned on task: ${body.task}.`, body.agentId);
       sendJson(response, 200, entering);
 
-      cancelSpawnTimer(body.agentId);
-      const timer = setTimeout(() => {
-        spawnTimers.delete(body.agentId);
+      scheduleTransition(body.agentId, () => {
         applyEvent({
           agentId: body.agentId,
           status: "working",
@@ -455,7 +636,6 @@ const httpServer = createServer(async (request, response) => {
           timestamp: Date.now(),
         });
       }, 900);
-      spawnTimers.set(body.agentId, timer);
       return;
     }
 
@@ -485,22 +665,38 @@ const httpServer = createServer(async (request, response) => {
         sendJson(response, 400, { error: "Missing agent id" });
         return;
       }
-      if (builtInAgentIds.has(agentId)) {
-        sendJson(response, 400, { error: "Built-in agents cannot be deregistered" });
-        return;
-      }
-
-      const existed = agentStates.delete(agentId);
-      if (!existed) {
+      const existing = agentStates.get(agentId);
+      if (!existing) {
         sendJson(response, 404, { error: "Agent not found" });
         return;
       }
 
-      cancelSpawnTimer(agentId);
-      broadcast({ type: "agent-removed", agentId });
-      pushActivity("agent-status", `Removed external agent ${agentId}.`, agentId);
-      broadcastSnapshot();
+      cancelTransitionTimer(agentId);
+      const leavingTimestamp = Date.now();
+      agentStates.set(agentId, {
+        ...existing,
+        status: "leaving",
+        location: "door",
+        timestamp: leavingTimestamp,
+      });
+      broadcast({
+        type: "agent-event",
+        event: {
+          agentId,
+          status: "leaving",
+          location: "door",
+          timestamp: leavingTimestamp,
+        },
+      });
+      pushActivity("agent-status", `${existing.name} is leaving the office.`, agentId);
       sendJson(response, 200, { ok: true });
+
+      scheduleTransition(agentId, () => {
+        agentStates.delete(agentId);
+        broadcast({ type: "agent-removed", agentId });
+        pushActivity("agent-status", `Removed agent ${existing.name}.`, agentId);
+        broadcastSnapshot();
+      }, 350);
       return;
     }
 
