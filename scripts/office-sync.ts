@@ -8,9 +8,12 @@
  * When an agent is typing → sets "working" with task info
  */
 
+process.loadEnvFile?.();
+
 const OFFICE_URL = process.env.OFFICE_URL ?? "http://localhost:3001";
 const OPENCLAW_URL = process.env.OPENCLAW_URL ?? "http://localhost:18789";
 const OPENCLAW_TOKEN = process.env.OPENCLAW_TOKEN ?? "";
+const OPENCLAW_ACTIVITY_WINDOW_MINUTES = Math.max(1, Number(process.env.OPENCLAW_ACTIVITY_WINDOW_MINUTES ?? "5") || 5);
 const POLL_INTERVAL_MS = 5000;
 
 // Known OpenClaw agents and their office config
@@ -34,6 +37,12 @@ interface SessionInfo {
   task?: string;
   model?: string;
   runtime?: string;
+}
+
+interface SessionListRow {
+  key?: string;
+  displayName?: string;
+  messages?: unknown[];
 }
 
 const registeredAgents = new Set<string>();
@@ -80,6 +89,109 @@ async function updateStatus(agentId: string, status: string, task?: string, mess
   });
 }
 
+function extractAgentId(sessionKey: string, explicitAgentId?: string): string | undefined {
+  if (explicitAgentId?.trim()) {
+    return explicitAgentId.trim();
+  }
+  if (sessionKey === "main") {
+    return "main";
+  }
+  return sessionKey.match(/^agent:([^:]+)/)?.[1];
+}
+
+function extractMessageText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractMessageText(item);
+      if (text) {
+        return text;
+      }
+    }
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  return extractMessageText(record.text) ?? extractMessageText(record.content) ?? extractMessageText(record.parts);
+}
+
+function normalizeToolSessions(result: unknown): SessionInfo[] {
+  const rows = Array.isArray(result)
+    ? result
+    : (Array.isArray((result as { sessions?: unknown[] } | null | undefined)?.sessions)
+        ? (result as { sessions: unknown[] }).sessions
+        : []);
+
+  return rows.flatMap((row): SessionInfo[] => {
+    if (typeof row !== "object" || row === null) {
+      return [];
+    }
+
+    const session = row as SessionListRow;
+    const sessionKey = session.key?.trim();
+    if (!sessionKey) {
+      return [];
+    }
+
+    return [{
+      sessionKey,
+      agentId: extractAgentId(sessionKey),
+      status: "active",
+      label: session.displayName,
+      task: extractMessageText(Array.isArray(session.messages) ? session.messages.at(-1) : undefined),
+    }];
+  });
+}
+
+async function fetchSessions(headers: Record<string, string>): Promise<SessionInfo[]> {
+  const legacyResponse = await fetch(
+    `${OPENCLAW_URL}/api/sessions?activeMinutes=${OPENCLAW_ACTIVITY_WINDOW_MINUTES}&messageLimit=1`,
+    { headers },
+  );
+  if (legacyResponse.ok) {
+    const data = await legacyResponse.json() as { sessions?: SessionInfo[] };
+    return data.sessions ?? [];
+  }
+
+  if (legacyResponse.status !== 404) {
+    const body = await legacyResponse.text().catch(() => "");
+    console.error(`[office-sync] OpenClaw API returned ${legacyResponse.status}${body ? `: ${body}` : ""}`);
+    return [];
+  }
+
+  const toolsResponse = await fetch(`${OPENCLAW_URL}/tools/invoke`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      tool: "sessions_list",
+      action: "json",
+      sessionKey: "main",
+      args: {
+        activeMinutes: OPENCLAW_ACTIVITY_WINDOW_MINUTES,
+        messageLimit: 1,
+      },
+    }),
+  });
+  if (!toolsResponse.ok) {
+    const body = await toolsResponse.text().catch(() => "");
+    console.error(`[office-sync] OpenClaw tools API returned ${toolsResponse.status}${body ? `: ${body}` : ""}`);
+    return [];
+  }
+
+  const data = await toolsResponse.json() as { ok?: boolean; result?: unknown };
+  if (!data.ok && data.result === undefined) {
+    console.error(`[office-sync] OpenClaw tools API returned non-ok payload: ${JSON.stringify(data)}`);
+    return [];
+  }
+  return normalizeToolSessions(data.result);
+}
+
 async function pollSessions(): Promise<void> {
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -87,25 +199,14 @@ async function pollSessions(): Promise<void> {
       headers["Authorization"] = `Bearer ${OPENCLAW_TOKEN}`;
     }
 
-    const response = await fetch(`${OPENCLAW_URL}/api/sessions?activeMinutes=30&messageLimit=1`, {
-      headers,
-    });
-
-    if (!response.ok) {
-      console.error(`[office-sync] OpenClaw API returned ${response.status}`);
-      return;
-    }
-
-    const data = await response.json() as { sessions?: SessionInfo[] };
-    const sessions = data.sessions ?? [];
+    const sessions = await fetchSessions(headers);
 
     // Track which agents are currently active
     const currentlyActive = new Set<string>();
 
     for (const session of sessions) {
       // Extract agent ID from session key (e.g. "agent:zoe:subagent:..." → "zoe")
-      const match = session.sessionKey?.match(/^agent:([^:]+)/);
-      const agentId = match?.[1];
+      const agentId = extractAgentId(session.sessionKey, session.agentId);
       if (!agentId || !KNOWN_AGENTS[agentId]) continue;
 
       currentlyActive.add(agentId);

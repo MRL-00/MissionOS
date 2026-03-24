@@ -41,6 +41,7 @@ interface LayoutInputRefs {
 export interface LayoutEditorApi {
   sync(state: LayoutEditorState): void;
   setNotice(message: string): void;
+  attachLauncher(button: HTMLButtonElement): void;
 }
 
 function toFixed(value: number, digits = 2): string {
@@ -67,12 +68,6 @@ async function copyText(text: string): Promise<boolean> {
 export function createLayoutEditor(options: LayoutEditorOptions): LayoutEditorApi {
   const shell = document.createElement("div");
   shell.className = "layout-shell";
-
-  const launcher = document.createElement("button");
-  launcher.className = "layout-launcher";
-  launcher.type = "button";
-  launcher.textContent = "Layout";
-  shell.append(launcher);
 
   const panel = document.createElement("aside");
   panel.className = "layout-panel";
@@ -166,11 +161,16 @@ export function createLayoutEditor(options: LayoutEditorOptions): LayoutEditorAp
     selection: null,
     catalog: [],
   };
+  let launcher: HTMLButtonElement | null = null;
 
   function setEnabled(enabled: boolean): void {
     state = { ...state, enabled };
     panel.hidden = !enabled;
-    launcher.dataset.active = enabled ? "true" : "false";
+    if (launcher) {
+      launcher.dataset.active = enabled ? "true" : "false";
+      launcher.setAttribute("aria-pressed", enabled ? "true" : "false");
+      launcher.classList.toggle("active", enabled);
+    }
     options.onEnabledChange(enabled);
   }
 
@@ -225,7 +225,6 @@ export function createLayoutEditor(options: LayoutEditorOptions): LayoutEditorAp
     }
   }
 
-  launcher.addEventListener("click", () => setEnabled(!state.enabled));
   closeButton?.addEventListener("click", () => setEnabled(false));
   moveButton?.addEventListener("click", () => options.onSetMode("translate"));
   rotateButton?.addEventListener("click", () => options.onSetMode("rotate"));
@@ -298,13 +297,24 @@ export function createLayoutEditor(options: LayoutEditorOptions): LayoutEditorAp
     sync(nextState) {
       state = nextState;
       panel.hidden = !state.enabled;
-      launcher.dataset.active = state.enabled ? "true" : "false";
+      if (launcher) {
+        launcher.dataset.active = state.enabled ? "true" : "false";
+        launcher.setAttribute("aria-pressed", state.enabled ? "true" : "false");
+        launcher.classList.toggle("active", state.enabled);
+      }
       render();
     },
     setNotice(message) {
       if (notice) {
         notice.textContent = message;
       }
+    },
+    attachLauncher(button) {
+      launcher = button;
+      launcher.addEventListener("click", () => setEnabled(!state.enabled));
+      launcher.dataset.active = state.enabled ? "true" : "false";
+      launcher.setAttribute("aria-pressed", state.enabled ? "true" : "false");
+      launcher.classList.toggle("active", state.enabled);
     },
   };
 }

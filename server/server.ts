@@ -33,7 +33,13 @@ import { handleCodexAuth } from "./auth/codex";
 import { ensureDataDir } from "./auth/storage";
 import { MeetingEngine } from "./meeting";
 
+process.loadEnvFile?.();
+
 const PORT = 3001;
+const OPENCLAW_URL = process.env.OPENCLAW_URL?.trim() ?? "";
+const OPENCLAW_TOKEN = process.env.OPENCLAW_TOKEN ?? "";
+const OPENCLAW_ACTIVITY_WINDOW_MINUTES = Math.max(1, Number(process.env.OPENCLAW_ACTIVITY_WINDOW_MINUTES ?? "5") || 5);
+const OPENCLAW_POLL_INTERVAL_MS = Math.max(1000, Number(process.env.OPENCLAW_POLL_INTERVAL_MS ?? "5000") || 5000);
 const DEFAULT_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type",
@@ -42,7 +48,7 @@ const DEFAULT_HEADERS = {
 } as const;
 
 const MAX_BODY_BYTES = 64 * 1024;
-const MAX_LOG_ENTRIES = 60;
+const MAX_LOG_ENTRIES = 180;
 const DESK_COUNT = 10;
 const VALID_STATUSES = new Set<RealtimeAgentStatus>(["idle", "working", "meeting", "entering", "leaving"]);
 const VALID_LOCATIONS = new Set<AgentEventLocation>(["desk", "meeting-room", "door", "cio-office"]);
@@ -71,6 +77,33 @@ interface PersistedAgentsFile {
   agents: PersistedAgentRecord[];
 }
 
+interface OpenClawSessionInfo {
+  sessionKey: string;
+  status: string;
+  agentId?: string | undefined;
+  label?: string | undefined;
+  task?: string | undefined;
+}
+
+interface OpenClawSessionListRow {
+  key?: string | undefined;
+  displayName?: string | undefined;
+  messages?: unknown[] | undefined;
+}
+
+const OPENCLAW_AGENT_MAP = {
+  main: "pickle",
+  pickle: "pickle",
+  zoe: "zoe",
+  ink: "ink",
+  harry: "harry",
+  kevin: "kevin",
+  danny: "danny",
+  johnny: "johnny",
+  tommy: "tommy",
+  randall: "randall",
+} as const satisfies Record<string, string>;
+
 class RequestBodyError extends Error {
   statusCode: number;
 
@@ -86,6 +119,7 @@ const agentAppearances = new Map<string, AgentAppearance>();
 const activityLog: ActivityLogEntry[] = [];
 const transitionTimers = new Map<string, NodeJS.Timeout>();
 const residentDeskAssignments = new Map<string, number>();
+const openClawStates = new Map<string, { openClawAgentId: string; status: "idle" | "working"; task?: string | undefined }>();
 let websocketServer: WebSocketServer;
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
@@ -312,6 +346,34 @@ function pushActivity(kind: ActivityLogEntry["kind"], message: string, agentId?:
     entry,
   });
   return entry;
+}
+
+function formatStatusActivity(state: AgentRuntimeState, event: AgentEvent): string {
+  switch (event.status) {
+    case "entering":
+      return `${state.name} is moving to ${event.location ?? "the office"}.`;
+    case "leaving":
+      return `${state.name} is leaving the office.`;
+    case "working":
+      return `${state.name} is working${event.task ? ` on ${event.task}` : ""}.`;
+    case "meeting":
+      return `${state.name} is in a meeting.`;
+    case "idle":
+    default:
+      return `${state.name} is idle${event.task ? ` after ${event.task}` : ""}.`;
+  }
+}
+
+function pushAgentMessageActivity(
+  kind: Extract<ActivityLogEntry["kind"], "agent-message" | "meeting-turn">,
+  state: AgentRuntimeState,
+  message?: string,
+): void {
+  const trimmed = message?.trim();
+  if (!trimmed) {
+    return;
+  }
+  pushActivity(kind, `${state.name}: ${trimmed}`, state.id);
 }
 
 function getAvailableDeskIndex(excludedAgentId?: string): number | undefined {
@@ -740,6 +802,242 @@ async function upsertRegistration(body: AgentRegistration, mode: "create" | "upd
   return nextState;
 }
 
+function resolveOpenClawOfficeAgentId(openClawAgentId: string): string | undefined {
+  return OPENCLAW_AGENT_MAP[openClawAgentId as keyof typeof OPENCLAW_AGENT_MAP];
+}
+
+function extractOpenClawAgentId(sessionKey: string, explicitAgentId?: string): string | undefined {
+  if (explicitAgentId?.trim()) {
+    return explicitAgentId.trim();
+  }
+  if (sessionKey === "main") {
+    return "main";
+  }
+  return sessionKey.match(/^agent:([^:]+)/)?.[1];
+}
+
+function extractOpenClawMessageText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractOpenClawMessageText(item);
+      if (text) {
+        return text;
+      }
+    }
+    return undefined;
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    extractOpenClawMessageText(record.text)
+    ?? extractOpenClawMessageText(record.content)
+    ?? extractOpenClawMessageText(record.parts)
+    ?? extractOpenClawMessageText(record.message)
+  );
+}
+
+function normalizeToolSessions(result: unknown): OpenClawSessionInfo[] {
+  const rows = Array.isArray(result)
+    ? result
+    : (Array.isArray((result as { sessions?: unknown[] } | null | undefined)?.sessions)
+        ? (result as { sessions: unknown[] }).sessions
+        : []);
+
+  return rows.flatMap((row): OpenClawSessionInfo[] => {
+    if (typeof row !== "object" || row === null) {
+      return [];
+    }
+
+    const session = row as OpenClawSessionListRow;
+    const sessionKey = session.key?.trim();
+    if (!sessionKey) {
+      return [];
+    }
+
+    const lastMessage = Array.isArray(session.messages) ? session.messages.at(-1) : undefined;
+    return [{
+      sessionKey,
+      agentId: extractOpenClawAgentId(sessionKey),
+      status: "active",
+      label: session.displayName,
+      task: extractOpenClawMessageText(lastMessage),
+    }];
+  });
+}
+
+async function fetchOpenClawSessions(): Promise<OpenClawSessionInfo[]> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (OPENCLAW_TOKEN) {
+    headers.Authorization = `Bearer ${OPENCLAW_TOKEN}`;
+  }
+
+  const legacyResponse = await fetch(
+    `${OPENCLAW_URL}/api/sessions?activeMinutes=${OPENCLAW_ACTIVITY_WINDOW_MINUTES}&messageLimit=1`,
+    { headers },
+  );
+  if (legacyResponse.ok) {
+    const data = await legacyResponse.json() as { sessions?: OpenClawSessionInfo[] };
+    return data.sessions ?? [];
+  }
+
+  if (legacyResponse.status !== 404) {
+    const body = await legacyResponse.text().catch(() => "");
+    console.error(`[openclaw-sync] OpenClaw API returned ${legacyResponse.status}${body ? `: ${body}` : ""}`);
+    return [];
+  }
+
+  const toolsResponse = await fetch(`${OPENCLAW_URL}/tools/invoke`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      tool: "sessions_list",
+      action: "json",
+      sessionKey: "main",
+      args: {
+        activeMinutes: OPENCLAW_ACTIVITY_WINDOW_MINUTES,
+        messageLimit: 1,
+      },
+    }),
+  });
+  if (!toolsResponse.ok) {
+    const body = await toolsResponse.text().catch(() => "");
+    console.error(`[openclaw-sync] OpenClaw tools API returned ${toolsResponse.status}${body ? `: ${body}` : ""}`);
+    return [];
+  }
+
+  const data = await toolsResponse.json() as { ok?: boolean; result?: unknown };
+  if (!data.ok && data.result === undefined) {
+    console.error(`[openclaw-sync] OpenClaw tools API returned non-ok payload: ${JSON.stringify(data)}`);
+    return [];
+  }
+  return normalizeToolSessions(data.result);
+}
+
+async function ensureOpenClawAgentRegistered(officeAgentId: string, openClawAgentId: string): Promise<void> {
+  const existing = agentStates.get(officeAgentId);
+  const fallback = defaultAppearances.get(officeAgentId);
+  const appearance = agentAppearances.get(officeAgentId)
+    ?? (existing ? resolveAppearance(existing).appearance : undefined)
+    ?? fallback?.appearance
+    ?? createDeterministicAppearance(officeAgentId);
+
+  const connectedAt = existing?.backendLink.connectedAt ?? Date.now();
+  const backendLink: AgentBackendLink = {
+    provider: "openclaw",
+    connected: true,
+    agentId: openClawAgentId,
+    connectedAt,
+  };
+
+  if (
+    existing &&
+    existing.backendLink.provider === "openclaw" &&
+    existing.backendLink.connected &&
+    existing.backendLink.agentId === openClawAgentId
+  ) {
+    return;
+  }
+
+  await upsertRegistration({
+    id: officeAgentId,
+    name: existing?.name ?? fallback?.name ?? officeAgentId,
+    role: existing?.role ?? fallback?.role ?? "OpenClaw Agent",
+    emoji: existing?.emoji ?? fallback?.emoji ?? "🤖",
+    appearance,
+    type: existing?.type ?? "resident",
+    deskIndex: existing?.deskIndex ?? getKnownDeskIndex(officeAgentId),
+    backendLink,
+  }, existing ? "update" : "create");
+}
+
+async function applyOpenClawStatus(
+  officeAgentId: string,
+  openClawAgentId: string,
+  status: "idle" | "working",
+  task?: string,
+): Promise<void> {
+  await ensureOpenClawAgentRegistered(officeAgentId, openClawAgentId);
+
+  const normalizedTask = task?.trim() || undefined;
+  const previous = openClawStates.get(officeAgentId);
+  if (previous?.status === status && previous?.task === normalizedTask) {
+    return;
+  }
+
+  cancelTransitionTimer(officeAgentId);
+
+  const event: AgentEvent = {
+    agentId: officeAgentId,
+    status,
+    location: "desk",
+    timestamp: Date.now(),
+    task: status === "working" ? (normalizedTask ?? "") : "",
+  };
+  const next = applyEvent(event);
+  openClawStates.set(officeAgentId, {
+    openClawAgentId,
+    status,
+    task: normalizedTask,
+  });
+  pushActivity("agent-status", formatStatusActivity(next, event), officeAgentId);
+}
+
+async function pollOpenClawSessions(): Promise<void> {
+  if (!OPENCLAW_URL) {
+    return;
+  }
+
+  try {
+    const sessions = await fetchOpenClawSessions();
+    const currentlyActive = new Set<string>();
+
+    for (const session of sessions) {
+      const openClawAgentId = extractOpenClawAgentId(session.sessionKey, session.agentId);
+      if (!openClawAgentId) {
+        continue;
+      }
+      const officeAgentId = resolveOpenClawOfficeAgentId(openClawAgentId);
+      if (!officeAgentId) {
+        continue;
+      }
+
+      currentlyActive.add(officeAgentId);
+      const isWorking = session.status === "running" || session.status === "active";
+      const task = session.task ?? session.label;
+      await applyOpenClawStatus(officeAgentId, openClawAgentId, isWorking ? "working" : "idle", task);
+    }
+
+    for (const [officeAgentId, state] of openClawStates) {
+      if (!currentlyActive.has(officeAgentId) && state.status !== "idle") {
+        await applyOpenClawStatus(officeAgentId, state.openClawAgentId, "idle");
+      }
+    }
+  } catch (error) {
+    console.error("[openclaw-sync] Poll error:", error);
+  }
+}
+
+function startOpenClawSync(): void {
+  if (!OPENCLAW_URL) {
+    return;
+  }
+
+  console.log(`[openclaw-sync] Polling ${OPENCLAW_URL} every ${OPENCLAW_POLL_INTERVAL_MS / 1000}s`);
+  void pollOpenClawSessions();
+  setInterval(() => {
+    void pollOpenClawSessions();
+  }, OPENCLAW_POLL_INTERVAL_MS);
+}
+
 let meetingStartActivityEmitted = false;
 
 const meetingEngine = new MeetingEngine({
@@ -754,14 +1052,19 @@ const meetingEngine = new MeetingEngine({
       return;
     }
     if (event.status === "entering") {
-      pushActivity("agent-status", `${state.name} is moving to ${event.location ?? "the office"}.`, event.agentId);
+      pushAgentMessageActivity("agent-message", state, event.message);
+      pushActivity("agent-status", formatStatusActivity(state, event), event.agentId);
       return;
     }
     if (event.status === "meeting" && event.message) {
-      pushActivity("meeting-turn", `${state.name}: ${event.message}`, event.agentId);
+      pushAgentMessageActivity("meeting-turn", state, event.message);
       return;
     }
-    pushActivity("agent-status", `${state.name} is now ${event.status}.`, event.agentId);
+    if (event.message) {
+      pushAgentMessageActivity("agent-message", state, event.message);
+      return;
+    }
+    pushActivity("agent-status", formatStatusActivity(state, event), event.agentId);
   },
   onMeetingState(state) {
     if (state.active && state.config && state.progress.currentTurn === 0) {
@@ -852,7 +1155,11 @@ const httpServer = createServer(async (request, response) => {
       const body = await readJson<unknown>(request);
       const event = readStatusEvent(body);
       const next = applyEvent(event);
-      pushActivity("agent-status", `${next.name} is now ${next.status}.`, next.id);
+      if (event.message) {
+        pushAgentMessageActivity(event.status === "meeting" ? "meeting-turn" : "agent-message", next, event.message);
+      } else {
+        pushActivity("agent-status", formatStatusActivity(next, event), next.id);
+      }
       sendJson(response, 200, next);
       return;
     }
@@ -862,7 +1169,11 @@ const httpServer = createServer(async (request, response) => {
       const body = await readJson<unknown>(request);
       const event = readStatusEvent(body, decodeURIComponent(statusPathMatch[1] ?? ""));
       const next = applyEvent(event);
-      pushActivity("agent-status", `${next.name} is now ${next.status}.`, next.id);
+      if (event.message) {
+        pushAgentMessageActivity(event.status === "meeting" ? "meeting-turn" : "agent-message", next, event.message);
+      } else {
+        pushActivity("agent-status", formatStatusActivity(next, event), next.id);
+      }
       sendJson(response, 200, next);
       return;
     }
@@ -884,6 +1195,7 @@ const httpServer = createServer(async (request, response) => {
       };
       const entering = applyEvent(enteringEvent);
       pushActivity("agent-spawn", `${entering.name} spawned on task: ${body.task}.`, body.agentId);
+      pushAgentMessageActivity("agent-message", entering, body.message);
       sendJson(response, 200, entering);
 
       scheduleTransition(body.agentId, () => {
@@ -914,6 +1226,7 @@ const httpServer = createServer(async (request, response) => {
         location: "desk",
         timestamp: Date.now(),
       });
+      pushAgentMessageActivity("agent-message", next, body.message);
       pushActivity("agent-complete", `${next.name} completed work${body.result ? `: ${body.result}` : "."}`, body.agentId);
       sendJson(response, 200, next);
       return;
@@ -1055,6 +1368,8 @@ async function start(): Promise<void> {
   httpServer.listen(PORT, () => {
     console.log(`Realtime server listening on http://localhost:${PORT}`);
   });
+
+  startOpenClawSync();
 }
 
 void start();

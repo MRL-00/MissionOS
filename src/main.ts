@@ -23,6 +23,7 @@ import type {
   DestinationWaypoint,
   MeetingState,
   MeetingTurn,
+  RealtimeAgentStatus,
   ServerMessage,
 } from "./types";
 
@@ -96,6 +97,7 @@ const agentStates = new Map<string, AgentRuntimeState>();
 const deskAssignments = new Map<string, DeskSlot>();
 const agentAppearances = new Map<string, AgentAppearance>();
 const agentColors = new Map<string, string>();
+const deskScreenMaterials = new Map<string, THREE.MeshStandardMaterial>();
 const removalTimers = new Map<string, number>();
 const activityEntries: ActivityLogEntry[] = [];
 let meetingTranscript: MeetingTurn[] = [];
@@ -172,6 +174,16 @@ const layoutEditor = createLayoutEditor({
     syncLayoutEditor();
   },
 });
+
+const topBarActions = document.querySelector<HTMLElement>(".top-bar-actions");
+if (topBarActions) {
+  const layoutButton = document.createElement("button");
+  layoutButton.type = "button";
+  layoutButton.className = "button secondary top-bar-button";
+  layoutButton.textContent = "Layout";
+  topBarActions.prepend(layoutButton);
+  layoutEditor.attachLauncher(layoutButton);
+}
 
 void hydrateOverlay();
 syncHudState();
@@ -775,8 +787,96 @@ function resetCamera(): void {
   controls.update();
 }
 
+function getDeskScreenMaterial(deskId: string): THREE.MeshStandardMaterial | null {
+  const cached = deskScreenMaterials.get(deskId);
+  if (cached) {
+    return cached;
+  }
+
+  const object = layout.getObjectForItem(deskId);
+  if (!object) {
+    return null;
+  }
+
+  let screenMaterial: THREE.MeshStandardMaterial | null = null;
+  object.traverse((child) => {
+    if (screenMaterial || child.userData.role !== "desk-screen") {
+      return;
+    }
+    const material = (child as THREE.Mesh).material;
+    if (material instanceof THREE.MeshStandardMaterial) {
+      screenMaterial = material;
+    }
+  });
+
+  if (screenMaterial) {
+    deskScreenMaterials.set(deskId, screenMaterial);
+  }
+  return screenMaterial;
+}
+
+function deskPulseSeed(input: string): number {
+  let hash = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 31 + input.charCodeAt(index)) % 997;
+  }
+  return hash / 37;
+}
+
+function paintDeskScreen(
+  material: THREE.MeshStandardMaterial,
+  mode: RealtimeAgentStatus | "unassigned",
+  elapsed: number,
+  seed: number,
+): void {
+  if (mode === "working") {
+    material.color.setHSL(0.37 + Math.sin(elapsed * 3 + seed) * 0.018, 0.76, 0.64);
+    material.emissive.setHSL(0.35, 0.9, 0.34);
+    material.emissiveIntensity = 0.95 + Math.sin(elapsed * 7 + seed) * 0.22;
+    return;
+  }
+
+  if (mode === "meeting" || mode === "entering" || mode === "leaving") {
+    material.color.setHSL(0.09, 0.82, 0.63);
+    material.emissive.setHSL(0.08, 0.86, 0.3);
+    material.emissiveIntensity = 0.58 + Math.sin(elapsed * 4 + seed) * 0.08;
+    return;
+  }
+
+  if (mode === "idle") {
+    material.color.set("#7fcee8");
+    material.emissive.set("#498eb6");
+    material.emissiveIntensity = 0.28;
+    return;
+  }
+
+  material.color.set("#546377");
+  material.emissive.set("#16202f");
+  material.emissiveIntensity = 0.1;
+}
+
+function updateDeskScreens(elapsed: number): void {
+  const statesByDeskId = new Map<string, AgentRuntimeState>();
+  agentStates.forEach((state, agentId) => {
+    const desk = deskAssignments.get(agentId);
+    if (desk) {
+      statesByDeskId.set(desk.nodeId, state);
+    }
+  });
+
+  waypoints.deskSlots.forEach((desk) => {
+    const material = getDeskScreenMaterial(desk.nodeId);
+    if (!material) {
+      return;
+    }
+    const state = statesByDeskId.get(desk.nodeId);
+    paintDeskScreen(material, state?.status ?? "unassigned", elapsed, deskPulseSeed(desk.nodeId));
+  });
+}
+
 layout.subscribe(() => {
   repairDeskAssignments();
+  deskScreenMaterials.clear();
   if (selectedLayoutItemId && !layout.getObjectForItem(selectedLayoutItemId)) {
     clearLayoutSelection();
     return;
@@ -1000,6 +1100,7 @@ renderer.setAnimationLoop(() => {
     syncSelectionHelper();
   }
 
+  updateDeskScreens(elapsed);
   labelRenderer.sync(labels, camera, { width: window.innerWidth, height: window.innerHeight });
   speechBubbleRenderer.sync(labels, camera, { width: window.innerWidth, height: window.innerHeight });
   renderer.render(scene, camera);

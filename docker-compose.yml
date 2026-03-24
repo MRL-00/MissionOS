@@ -10,5 +10,15 @@ services:
       - .env
     volumes:
       - office-data:/app/data
+  office-sync:
+    build: .
+    container_name: the-office-sync
+    profiles: ["external-sync"]
+    restart: unless-stopped
+    depends_on:
+      - the-office
+    command: ["npx", "tsx", "scripts/office-sync.ts"]
+    env_file:
+      - .env
 volumes:
   office-data:

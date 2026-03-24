@@ -32,7 +32,7 @@ export function createDesk({
   const wood = makeMaterial(accent);
   const dark = makeMaterial("#504030");
   const monitorMaterial = makeMaterial("#2d3542");
-  const screenMaterial = makeMaterial("#7fcee8", { emissive: "#498eb6", emissiveIntensity: 0.3 });
+  const screenMaterial = makeMaterial("#7fcee8", { emissive: "#498eb6", emissiveIntensity: 0.3 }).clone();
 
   const deskWidth = executive ? 3.1 : 2.6;
   const deskDepth = executive ? 1.6 : 1.4;
@@ -73,6 +73,8 @@ export function createDesk({
     new THREE.BoxGeometry(executive ? 0.88 : 0.7, executive ? 0.48 : 0.4, 0.02),
     screenMaterial,
   );
+  screen.name = "desk-screen";
+  screen.userData.role = "desk-screen";
   screen.position.set(monitorX, 1.6, monitorZ + 0.06);
   group.add(screen);
 

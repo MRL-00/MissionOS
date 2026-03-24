@@ -37,8 +37,62 @@ interface AgentListRefs {
   task: HTMLSpanElement;
 }
 
+type ActivityViewFilter = "all" | "messages" | "status" | "meetings";
+
 function formatRealtimeStatus(status: RealtimeAgentStatus): string {
-  return status === "meeting" ? "meeting" : status;
+  switch (status) {
+    case "working":
+      return "Working \u{1F7E2}";
+    case "meeting":
+      return "Meeting";
+    case "entering":
+      return "Arriving";
+    case "leaving":
+      return "Leaving";
+    case "idle":
+    default:
+      return "Idle";
+  }
+}
+
+function activityKindLabel(kind: ActivityLogEntry["kind"]): string {
+  switch (kind) {
+    case "agent-message":
+      return "Message";
+    case "agent-status":
+      return "Status";
+    case "agent-spawn":
+      return "Spawn";
+    case "agent-complete":
+      return "Complete";
+    case "meeting-start":
+      return "Meeting Start";
+    case "meeting-turn":
+      return "Meeting Turn";
+    case "meeting-end":
+      return "Meeting End";
+    case "meeting-stop":
+      return "Meeting Stop";
+    case "registration":
+    default:
+      return "Roster";
+  }
+}
+
+function matchesActivityViewFilter(kind: ActivityLogEntry["kind"], filter: ActivityViewFilter): boolean {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "messages") {
+    return kind === "agent-message" || kind === "meeting-turn";
+  }
+
+  if (filter === "meetings") {
+    return kind === "meeting-start" || kind === "meeting-turn" || kind === "meeting-end" || kind === "meeting-stop";
+  }
+
+  return kind === "agent-status" || kind === "agent-spawn" || kind === "agent-complete" || kind === "registration";
 }
 
 function timeLabel(timestamp: number): string {
@@ -118,12 +172,41 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   const activityPanel = document.createElement("section");
   activityPanel.className = "activity-panel";
   activityPanel.hidden = true;
+  activityPanel.style.display = "none";
+  activityPanel.setAttribute("aria-hidden", "true");
   activityPanel.innerHTML = `
     <div class="activity-header">
-      <span class="eyebrow">Ops Feed</span>
-      <strong>Activity Log</strong>
+      <div>
+        <span class="eyebrow">Ops Feed</span>
+        <strong>Activity Log</strong>
+      </div>
+      <div class="activity-header-actions">
+        <button class="button secondary top-bar-button" type="button" data-action="reset-activity-filters">All Activity</button>
+        <button class="icon-button" type="button" data-action="close-activity" aria-label="Close activity log">×</button>
+      </div>
     </div>
+    <div class="activity-toolbar">
+      <label class="activity-filter-field">
+        <span>Agent</span>
+        <select class="admin-select activity-agent-filter"></select>
+      </label>
+      <label class="activity-filter-field">
+        <span>View</span>
+        <select class="admin-select activity-kind-filter">
+          <option value="all">All activity</option>
+          <option value="messages">Conversation</option>
+          <option value="status">Status updates</option>
+          <option value="meetings">Meetings</option>
+        </select>
+      </label>
+      <label class="activity-filter-field activity-search-field">
+        <span>Search</span>
+        <input class="admin-input activity-search" type="search" placeholder="Search messages, tasks, or names" />
+      </label>
+    </div>
+    <div class="activity-summary"></div>
     <div class="activity-log"></div>
+    <div class="activity-empty" hidden>No activity matches the current filter.</div>
   `;
   hud.append(activityPanel);
 
@@ -186,16 +269,32 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   const meetingSpeed = adminPanel.querySelector<HTMLSelectElement>('select[name="meeting-speed"]');
   const adminAgentList = adminPanel.querySelector<HTMLDivElement>(".admin-agent-list");
   const activityLog = activityPanel.querySelector<HTMLDivElement>(".activity-log");
+  const activitySummary = activityPanel.querySelector<HTMLDivElement>(".activity-summary");
+  const activityEmpty = activityPanel.querySelector<HTMLDivElement>(".activity-empty");
+  const activityAgentFilter = activityPanel.querySelector<HTMLSelectElement>(".activity-agent-filter");
+  const activityKindFilter = activityPanel.querySelector<HTMLSelectElement>(".activity-kind-filter");
+  const activitySearch = activityPanel.querySelector<HTMLInputElement>(".activity-search");
   const transcriptLog = transcriptPanel.querySelector<HTMLDivElement>(".transcript-log");
   const transcriptSummary = transcriptPanel.querySelector<HTMLDivElement>(".transcript-summary");
   const agentNodes = new Map<string, AgentListRefs>();
   let latestStates: AgentRuntimeState[] = [];
+  let latestActivityEntries: ActivityLogEntry[] = [];
   let meetingActive = false;
   let activityVisible = false;
+  let activityAgentId = "";
+  let activityView: ActivityViewFilter = "all";
+  let activitySearchTerm = "";
   const characterCreator = createCharacterCreator({
     apiBase,
     getExistingAgents: () => latestStates,
   });
+
+  function getAgentName(agentId?: string): string | undefined {
+    if (!agentId) {
+      return undefined;
+    }
+    return latestStates.find((state) => state.id === agentId)?.name;
+  }
 
   function setSidebarCollapsed(next: boolean): void {
     sidebarCollapsed = next;
@@ -210,7 +309,119 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   function toggleActivity(force?: boolean): void {
     activityVisible = force ?? !activityVisible;
     activityPanel.hidden = !activityVisible;
+    activityPanel.style.display = activityVisible ? "grid" : "none";
+    activityPanel.setAttribute("aria-hidden", activityVisible ? "false" : "true");
     topBarActivityButton?.classList.toggle("active", activityVisible);
+  }
+
+  function syncActivityAgentOptions(): void {
+    if (!activityAgentFilter) {
+      return;
+    }
+
+    activityAgentFilter.replaceChildren();
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "All agents";
+    activityAgentFilter.append(all);
+
+    latestStates.forEach((state) => {
+      const option = document.createElement("option");
+      option.value = state.id;
+      option.textContent = state.name;
+      activityAgentFilter.append(option);
+    });
+
+    if (activityAgentId && !latestStates.some((state) => state.id === activityAgentId)) {
+      activityAgentId = "";
+    }
+    activityAgentFilter.value = activityAgentId;
+  }
+
+  function renderActivityLog(): void {
+    if (!activityLog || !activitySummary || !activityEmpty) {
+      return;
+    }
+
+    const filteredEntries = latestActivityEntries.filter((entry) => {
+      if (activityAgentId && entry.agentId !== activityAgentId) {
+        return false;
+      }
+      if (!matchesActivityViewFilter(entry.kind, activityView)) {
+        return false;
+      }
+      if (!activitySearchTerm) {
+        return true;
+      }
+
+      const agentName = getAgentName(entry.agentId)?.toLowerCase() ?? "";
+      const haystack = `${entry.message} ${agentName} ${entry.agentId ?? ""}`.toLowerCase();
+      return haystack.includes(activitySearchTerm);
+    });
+
+    const subject = activityAgentId ? getAgentName(activityAgentId) ?? activityAgentId : "everyone";
+    const viewLabel =
+      activityView === "all"
+        ? "all activity"
+        : activityView === "messages"
+          ? "conversation"
+          : activityView === "meetings"
+            ? "meeting updates"
+            : "status changes";
+    activitySummary.textContent = `Showing ${viewLabel} for ${subject} · ${filteredEntries.length} item${filteredEntries.length === 1 ? "" : "s"}`;
+
+    activityEmpty.hidden = filteredEntries.length > 0;
+    activityLog.hidden = filteredEntries.length === 0;
+    activityLog.replaceChildren(
+      ...filteredEntries.map((entry) => {
+        const row = document.createElement("article");
+        row.className = "activity-row";
+        row.dataset.kind = entry.kind;
+
+        const header = document.createElement("div");
+        header.className = "activity-row-header";
+
+        const meta = document.createElement("div");
+        meta.className = "activity-row-meta";
+
+        const time = document.createElement("span");
+        time.className = "activity-time";
+        time.textContent = timeLabel(entry.timestamp);
+        meta.append(time);
+
+        if (entry.agentId) {
+          const agent = document.createElement("button");
+          agent.type = "button";
+          agent.className = "activity-agent-chip";
+          agent.textContent = getAgentName(entry.agentId) ?? entry.agentId;
+          agent.addEventListener("click", () => {
+            focusActivity(entry.agentId);
+          });
+          meta.append(agent);
+        }
+
+        const kind = document.createElement("span");
+        kind.className = "activity-kind";
+        kind.textContent = activityKindLabel(entry.kind);
+        header.append(meta, kind);
+
+        const message = document.createElement("p");
+        message.className = "activity-message";
+        message.textContent = entry.message;
+
+        row.append(header, message);
+        return row;
+      }),
+    );
+  }
+
+  function focusActivity(agentId = ""): void {
+    activityAgentId = agentId;
+    if (activityAgentFilter) {
+      activityAgentFilter.value = activityAgentId;
+    }
+    renderActivityLog();
+    toggleActivity(true);
   }
 
   async function post(path: string, body: unknown): Promise<void> {
@@ -371,6 +582,34 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
 
   sidebarToggleButton?.addEventListener("click", () => setSidebarCollapsed(!sidebarCollapsed));
   topBarActivityButton?.addEventListener("click", () => toggleActivity());
+  activityPanel.querySelector<HTMLButtonElement>('[data-action="close-activity"]')?.addEventListener("click", () => toggleActivity(false));
+  activityPanel.querySelector<HTMLButtonElement>('[data-action="reset-activity-filters"]')?.addEventListener("click", () => {
+    activityAgentId = "";
+    activityView = "all";
+    activitySearchTerm = "";
+    if (activityAgentFilter) {
+      activityAgentFilter.value = "";
+    }
+    if (activityKindFilter) {
+      activityKindFilter.value = "all";
+    }
+    if (activitySearch) {
+      activitySearch.value = "";
+    }
+    renderActivityLog();
+  });
+  activityAgentFilter?.addEventListener("change", () => {
+    activityAgentId = activityAgentFilter.value;
+    renderActivityLog();
+  });
+  activityKindFilter?.addEventListener("change", () => {
+    activityView = (activityKindFilter.value as ActivityViewFilter) || "all";
+    renderActivityLog();
+  });
+  activitySearch?.addEventListener("input", () => {
+    activitySearchTerm = activitySearch.value.trim().toLowerCase();
+    renderActivityLog();
+  });
   addAgentButton?.addEventListener("click", () => {
     characterCreator.openCreate();
   });
@@ -400,6 +639,10 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     if (event.repeat) {
       return;
     }
+    if (event.key === "Escape" && activityVisible) {
+      toggleActivity(false);
+      return;
+    }
     if (event.key === "`") {
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
@@ -425,6 +668,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     syncAgentStates(states) {
       latestStates = [...states];
       renderAdminAgents();
+      syncActivityAgentOptions();
       if (agentCount) {
         const connectedCount = states.filter((state) => state.connected).length;
         agentCount.textContent = `${connectedCount} agent${connectedCount === 1 ? "" : "s"} online`;
@@ -465,6 +709,9 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
           agentNodes.set(state.id, refs);
           agentList.append(node);
           trigger.addEventListener("click", () => {
+            focusActivity(state.id);
+          });
+          trigger.addEventListener("dblclick", () => {
             const latest = latestStates.find((item) => item.id === state.id);
             if (latest) {
               characterCreator.openEdit(latest);
@@ -473,7 +720,8 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
         }
 
         refs.node.dataset.status = state.status;
-        refs.trigger.title = `${state.name} · ${state.role}`;
+        refs.node.dataset.selected = state.id === activityAgentId ? "true" : "false";
+        refs.trigger.title = `${state.name} · ${state.role} · click to filter activity`;
         refs.dot.dataset.status = state.status;
         refs.name.textContent = state.name;
         refs.role.textContent = state.role;
@@ -488,26 +736,11 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
           agentNodes.delete(id);
         }
       });
+      renderActivityLog();
     },
     syncActivityLog(entries) {
-      if (!activityLog) {
-        return;
-      }
-
-      activityLog.replaceChildren(
-        ...entries.map((entry) => {
-          const row = document.createElement("div");
-          row.className = "activity-row";
-          const time = document.createElement("span");
-          time.className = "activity-time";
-          time.textContent = timeLabel(entry.timestamp);
-          const message = document.createElement("span");
-          message.className = "activity-message";
-          message.textContent = entry.message;
-          row.append(time, message);
-          return row;
-        }),
-      );
+      latestActivityEntries = [...entries];
+      renderActivityLog();
     },
     syncMeetingTranscript(turns, summary) {
       if (!transcriptLog || !transcriptSummary) {
@@ -589,7 +822,7 @@ export class LabelRenderer {
       refs.name.textContent = label.name;
       refs.role.textContent = label.role;
       refs.status.dataset.status = label.status;
-      refs.status.textContent = label.status;
+      refs.status.textContent = formatRealtimeStatus(label.status === "in-meeting" ? "meeting" : label.status);
       refs.task.textContent = label.task ?? "";
       refs.task.style.display = label.task ? "block" : "none";
     });

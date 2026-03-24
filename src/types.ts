@@ -163,6 +163,7 @@ export interface ActivityLogEntry {
   timestamp: number;
   kind:
     | "agent-status"
+    | "agent-message"
     | "agent-spawn"
     | "agent-complete"
     | "meeting-start"
