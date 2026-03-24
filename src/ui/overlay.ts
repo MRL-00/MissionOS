@@ -326,7 +326,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
         return;
       }
 
-      const expanded = !message.classList.contains("activity-message-clamped");
+      const expanded = message.dataset.expanded === "true";
       message.classList.remove("activity-message-clamped");
       const naturalHeight = message.scrollHeight;
       const computedStyle = window.getComputedStyle(message);
@@ -334,6 +334,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       const clampedHeight = lineHeight * 3;
       const overflowing = naturalHeight > clampedHeight + 1;
       if (!overflowing) {
+        message.dataset.expanded = expanded ? "true" : "false";
         toggle.hidden = true;
         toggle.textContent = "Show more";
         toggle.setAttribute("aria-expanded", "false");
@@ -528,6 +529,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
         const agentLabel = entry.agentId ? getAgentName(entry.agentId) ?? entry.agentId : "system";
         message.className = "activity-message activity-message-clamped";
         message.id = messageId;
+        message.dataset.expanded = "false";
         message.textContent = entry.message;
 
         const toggle = document.createElement("button");
@@ -540,6 +542,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
         toggle.setAttribute("aria-label", `Show more for message from ${agentLabel}`);
         toggle.addEventListener("click", () => {
           const expanded = !message.classList.toggle("activity-message-clamped");
+          message.dataset.expanded = expanded ? "true" : "false";
           toggle.textContent = expanded ? "Show less" : "Show more";
           toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
           toggle.setAttribute(
@@ -729,6 +732,11 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   topBarActivityButton?.addEventListener("click", () => toggleActivity());
   mobileActivityToggle.addEventListener("click", () => toggleActivity());
   activityBackdrop.addEventListener("click", () => toggleActivity(false));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isMobileLayout && activityVisible) {
+      toggleActivity(false);
+    }
+  });
   activityPanel.querySelector<HTMLButtonElement>('[data-action="close-activity"]')?.addEventListener("click", () => toggleActivity(false));
   activityPanel.querySelector<HTMLButtonElement>('[data-action="reset-activity-filters"]')?.addEventListener("click", () => {
     activityAgentId = "";
