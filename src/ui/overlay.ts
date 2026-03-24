@@ -428,7 +428,6 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       toggleActivity(false);
     } else {
       setSidebarCollapsed(desktopSidebarCollapsed, false);
-      sidebarBackdrop.hidden = true;
       activityBackdrop.hidden = true;
       mobileActivityToggle.hidden = true;
     }
@@ -724,9 +723,9 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   }
 
   sidebarToggleButton?.addEventListener("click", () => {
-    setSidebarCollapsed(!sidebarCollapsed);
+    setSidebarCollapsed(!sidebarCollapsed, !isMobileLayout);
   });
-  sidebarBackdrop.addEventListener("click", () => setSidebarCollapsed(true));
+  sidebarBackdrop.addEventListener("click", () => setSidebarCollapsed(true, false));
   topBarActivityButton?.addEventListener("click", () => toggleActivity());
   mobileActivityToggle.addEventListener("click", () => toggleActivity());
   activityBackdrop.addEventListener("click", () => toggleActivity(false));
