@@ -995,7 +995,7 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "the-office",
+      id: "gateway-client",
       version: "1.0.0",
       platform: "node",
       mode: "backend",
@@ -1006,11 +1006,9 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
     caps: [],
     auth: {
       token: OPENCLAW_TOKEN || undefined,
+      nonce: nonce || undefined,
     },
   };
-  if (nonce) {
-    (connectParams as Record<string, unknown>).nonce = nonce;
-  }
 
   // Send connect directly (not via openClawWsRequest which requires openClawWsConnected)
   const timeout = setTimeout(() => {
