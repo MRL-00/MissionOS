@@ -171,6 +171,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
 
   const activityPanel = document.createElement("section");
   activityPanel.className = "activity-panel";
+  activityPanel.id = "activity-panel";
   activityPanel.hidden = true;
   activityPanel.style.display = "none";
   activityPanel.setAttribute("aria-hidden", "true");
@@ -209,6 +210,23 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     <div class="activity-empty" hidden>No activity matches the current filter.</div>
   `;
   hud.append(activityPanel);
+
+  const activityBackdrop = document.createElement("button");
+  activityBackdrop.className = "activity-panel-backdrop";
+  activityBackdrop.type = "button";
+  activityBackdrop.hidden = true;
+  activityBackdrop.setAttribute("aria-label", "Dismiss activity log");
+  hud.append(activityBackdrop);
+
+  const mobileActivityToggle = document.createElement("button");
+  mobileActivityToggle.className = "mobile-activity-toggle";
+  mobileActivityToggle.type = "button";
+  mobileActivityToggle.hidden = true;
+  mobileActivityToggle.setAttribute("aria-controls", "activity-panel");
+  mobileActivityToggle.setAttribute("aria-expanded", "false");
+  mobileActivityToggle.setAttribute("aria-label", "Open activity log");
+  mobileActivityToggle.innerHTML = `<span aria-hidden="true">Activity</span>`;
+  hud.append(mobileActivityToggle);
 
   const transcriptPanel = document.createElement("section");
   transcriptPanel.className = "transcript-panel";
@@ -290,6 +308,9 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     apiBase,
     getExistingAgents: () => latestStates,
   });
+  const mobileMediaQuery = window.matchMedia("(max-width: 767px)");
+  let isMobileLayout = mobileMediaQuery.matches;
+  let desktopSidebarCollapsed = sidebarCollapsed;
 
   function measureActivityMessages(): void {
     activityMeasurementFrame = 0;
@@ -306,13 +327,13 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       }
 
       const expanded = !message.classList.contains("activity-message-clamped");
-      if (expanded) {
-        message.classList.add("activity-message-clamped");
-      }
-
-      const overflowing = message.scrollHeight > message.clientHeight;
+      message.classList.remove("activity-message-clamped");
+      const naturalHeight = message.scrollHeight;
+      const computedStyle = window.getComputedStyle(message);
+      const lineHeight = Number.parseFloat(computedStyle.lineHeight) || Number.parseFloat(computedStyle.fontSize) * 1.5 || 0;
+      const clampedHeight = lineHeight * 3;
+      const overflowing = naturalHeight > clampedHeight + 1;
       if (!overflowing) {
-        message.classList.remove("activity-message-clamped");
         toggle.hidden = true;
         toggle.textContent = "Show more";
         toggle.setAttribute("aria-expanded", "false");
@@ -320,8 +341,8 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       }
 
       toggle.hidden = false;
-      if (expanded) {
-        message.classList.remove("activity-message-clamped");
+      if (!expanded) {
+        message.classList.add("activity-message-clamped");
       }
       toggle.textContent = expanded ? "Show less" : "Show more";
       toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
@@ -363,15 +384,52 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     window.localStorage.setItem(sidebarCollapsedKey, String(next));
   }
 
+  function syncActivityToggleState(): void {
+    const label = activityVisible ? "Hide activity" : "Activity";
+    mobileActivityToggle.hidden = !isMobileLayout;
+    mobileActivityToggle.classList.toggle("active", activityVisible);
+    mobileActivityToggle.innerHTML = `<span aria-hidden="true">${label}</span>`;
+    mobileActivityToggle.setAttribute("aria-expanded", activityVisible ? "true" : "false");
+    mobileActivityToggle.setAttribute("aria-label", activityVisible ? "Hide activity log" : "Show activity log");
+  }
+
   function toggleActivity(force?: boolean): void {
     activityVisible = force ?? !activityVisible;
     activityPanel.hidden = !activityVisible;
     activityPanel.style.display = activityVisible ? "grid" : "none";
     activityPanel.setAttribute("aria-hidden", activityVisible ? "false" : "true");
+    activityBackdrop.hidden = !(isMobileLayout && activityVisible);
     topBarActivityButton?.classList.toggle("active", activityVisible);
+    syncActivityToggleState();
     if (activityVisible) {
       scheduleActivityMessageMeasurement();
     }
+  }
+
+  function applyMobileLayout(next: boolean): void {
+    isMobileLayout = next;
+    hud.dataset.mobile = next ? "true" : "false";
+    activityPanel.dataset.mobile = next ? "true" : "false";
+    sidebar.dataset.mobile = next ? "true" : "false";
+    topBarActivityButton?.toggleAttribute("hidden", next);
+    if (next) {
+      desktopSidebarCollapsed = sidebarCollapsed;
+      sidebar.dataset.collapsed = "true";
+      sidebarToggleButton?.setAttribute("aria-label", "Expand agent sidebar");
+      if (sidebarToggleIcon) {
+        sidebarToggleIcon.textContent = "☰";
+      }
+      toggleActivity(false);
+    } else {
+      sidebar.dataset.collapsed = String(desktopSidebarCollapsed);
+      sidebarToggleButton?.setAttribute("aria-label", desktopSidebarCollapsed ? "Expand agent sidebar" : "Collapse agent sidebar");
+      if (sidebarToggleIcon) {
+        sidebarToggleIcon.textContent = desktopSidebarCollapsed ? "☰" : "‹";
+      }
+      activityBackdrop.hidden = true;
+      mobileActivityToggle.hidden = true;
+    }
+    syncActivityToggleState();
   }
 
   function syncActivityAgentOptions(): void {
@@ -662,8 +720,15 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     }
   }
 
-  sidebarToggleButton?.addEventListener("click", () => setSidebarCollapsed(!sidebarCollapsed));
+  sidebarToggleButton?.addEventListener("click", () => {
+    if (isMobileLayout) {
+      return;
+    }
+    setSidebarCollapsed(!sidebarCollapsed);
+  });
   topBarActivityButton?.addEventListener("click", () => toggleActivity());
+  mobileActivityToggle.addEventListener("click", () => toggleActivity());
+  activityBackdrop.addEventListener("click", () => toggleActivity(false));
   activityPanel.querySelector<HTMLButtonElement>('[data-action="close-activity"]')?.addEventListener("click", () => toggleActivity(false));
   activityPanel.querySelector<HTMLButtonElement>('[data-action="reset-activity-filters"]')?.addEventListener("click", () => {
     activityAgentId = "";
@@ -733,6 +798,18 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       toggleAdmin();
     }
   });
+
+  const handleMobileMediaChange = (event: MediaQueryListEvent): void => {
+    applyMobileLayout(event.matches);
+  };
+
+  if (typeof mobileMediaQuery.addEventListener === "function") {
+    mobileMediaQuery.addEventListener("change", handleMobileMediaChange);
+  } else {
+    mobileMediaQuery.addListener(handleMobileMediaChange);
+  }
+
+  applyMobileLayout(isMobileLayout);
 
   return {
     setRealtimeConnected(connected) {
