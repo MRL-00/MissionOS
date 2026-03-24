@@ -434,7 +434,10 @@ function handleAgentRegistered(message: Extract<ServerMessage, { type: "agent-re
   if (appearance) {
     agentAppearances.set(state.id, appearance);
   }
-  const next = upsertAgentState(state);
+  const next = upsertAgentState({
+    ...state,
+    appearance,
+  });
   ensureController(next, appearance);
   syncHudState();
 }
@@ -448,8 +451,10 @@ function handleAgentEvent(event: AgentEvent): void {
     name: previous?.name ?? getDefaultAgentConfig(event.agentId)?.name ?? event.agentId,
     role: previous?.role ?? getDefaultAgentConfig(event.agentId)?.role ?? "Temporary Agent",
     emoji: previous?.emoji ?? getDefaultAgentConfig(event.agentId)?.emoji,
+    appearance: previous?.appearance,
     type: previous?.type ?? "visitor",
     deskIndex: previous?.deskIndex ?? getKnownDeskIndex(event.agentId),
+    backendLink: previous?.backendLink,
     connected: true,
     status: event.status,
     timestamp: event.timestamp,
@@ -484,9 +489,8 @@ function handleSnapshot(message: Extract<ServerMessage, { type: "agents-snapshot
   agentStates.clear();
   message.agents.forEach((snapshotState: AgentSnapshotState) => {
     agentAppearances.set(snapshotState.id, snapshotState.appearance);
-    const { appearance, ...state } = snapshotState;
-    const next = upsertAgentState(state);
-    const controller = ensureController(next, appearance);
+    const next = upsertAgentState(snapshotState);
+    const controller = ensureController(next, snapshotState.appearance);
     controller.status = getControllerStatus(next.status);
     controller.task = next.task;
     moveControllerForEvent(controller, {

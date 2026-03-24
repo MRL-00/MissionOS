@@ -1,12 +1,16 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import path from "node:path";
 import { WebSocketServer } from "ws";
 import defaultAppearancesJson from "../src/config/default-appearances.json";
 import { createDeterministicAppearance, getKnownDeskIndex } from "../src/agentDefaults";
 import { FACILITATOR_ROTATION } from "../src/config/meeting-rules";
 import type {
+  Accessory,
   ActivityLogEntry,
   AgentAppearance,
+  AgentBackendLink,
   AgentCompleteRequest,
   AgentConfig,
   AgentEvent,
@@ -24,21 +28,18 @@ import type {
   RealtimeAgentStatus,
   ServerMessage,
 } from "../src/types";
+import { handleClaudeAuth } from "./auth/claude";
+import { handleCodexAuth } from "./auth/codex";
 import { MeetingEngine } from "./meeting";
 
 const PORT = 3001;
 const DEFAULT_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+  "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "Content-Type": "application/json",
 } as const;
 
-const agentStates = new Map<string, AgentRuntimeState>();
-const agentAppearances = new Map<string, AgentAppearance>();
-const activityLog: ActivityLogEntry[] = [];
-const transitionTimers = new Map<string, NodeJS.Timeout>();
-const residentDeskAssignments = new Map<string, number>();
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_LOG_ENTRIES = 60;
 const DESK_COUNT = 10;
@@ -47,8 +48,27 @@ const VALID_LOCATIONS = new Set<AgentEventLocation>(["desk", "meeting-room", "do
 const VALID_MEETING_TYPES = new Set<MeetingType>(["standup", "strategy", "review"]);
 const VALID_SPEEDS = new Set<MeetingSpeed>([1, 2, 3]);
 const VALID_AGENT_TYPES = new Set<NonNullable<AgentRegistration["type"]>>(["resident", "visitor"]);
+const VALID_BACKEND_PROVIDERS = new Set<AgentBackendLink["provider"]>(["openclaw", "claude", "codex", "unlinked"]);
+const VALID_ACCESSORIES = new Set<Accessory>(["glasses", "hat", "tie", "beard"]);
 const defaultAppearanceConfigs = defaultAppearancesJson as AgentConfig[];
 const defaultAppearances = new Map(defaultAppearanceConfigs.map((agent) => [agent.id, agent]));
+const dataDir = path.resolve(process.cwd(), "data");
+const agentsFilePath = path.join(dataDir, "agents.json");
+
+interface PersistedAgentRecord extends AgentRegistration {
+  id: string;
+  name: string;
+  role: string;
+  emoji: string;
+  type: "resident" | "visitor";
+  appearance: AgentAppearance;
+  backendLink: AgentBackendLink;
+  deskIndex?: number | undefined;
+}
+
+interface PersistedAgentsFile {
+  agents: PersistedAgentRecord[];
+}
 
 class RequestBodyError extends Error {
   statusCode: number;
@@ -59,6 +79,13 @@ class RequestBodyError extends Error {
     this.statusCode = statusCode;
   }
 }
+
+const agentStates = new Map<string, AgentRuntimeState>();
+const agentAppearances = new Map<string, AgentAppearance>();
+const activityLog: ActivityLogEntry[] = [];
+const transitionTimers = new Map<string, NodeJS.Timeout>();
+const residentDeskAssignments = new Map<string, number>();
+let websocketServer: WebSocketServer;
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
   response.writeHead(statusCode, DEFAULT_HEADERS);
@@ -89,42 +116,12 @@ async function readJson<T>(request: IncomingMessage): Promise<T | null> {
   }
 }
 
-function isAgentEvent(value: unknown): value is AgentEvent {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const event = value as Partial<AgentEvent>;
-  return (
-    typeof event.agentId === "string" &&
-    VALID_STATUSES.has(event.status as RealtimeAgentStatus) &&
-    (event.location === undefined || VALID_LOCATIONS.has(event.location as AgentEventLocation)) &&
-    typeof event.timestamp === "number"
-  );
-}
-
 function isRealtimeAgentStatus(value: unknown): value is RealtimeAgentStatus {
   return typeof value === "string" && VALID_STATUSES.has(value as RealtimeAgentStatus);
 }
 
 function isAgentEventLocation(value: unknown): value is AgentEventLocation {
   return typeof value === "string" && VALID_LOCATIONS.has(value as AgentEventLocation);
-}
-
-function isRegistration(value: unknown): value is AgentRegistration {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const registration = value as Partial<AgentRegistration>;
-  return (
-    typeof registration.id === "string" &&
-    typeof registration.name === "string" &&
-    typeof registration.role === "string" &&
-    (registration.emoji === undefined || typeof registration.emoji === "string") &&
-    (registration.type === undefined || VALID_AGENT_TYPES.has(registration.type)) &&
-    (registration.appearance === undefined || isAgentAppearance(registration.appearance))
-  );
 }
 
 function isAgentAppearance(value: unknown): value is AgentAppearance {
@@ -149,10 +146,53 @@ function isAgentAppearance(value: unknown): value is AgentAppearance {
     typeof appearance.bodyColor === "string" &&
     typeof appearance.pantsColor === "string" &&
     (appearance.accessories === undefined ||
-      (Array.isArray(appearance.accessories) &&
-        appearance.accessories.every((accessory) =>
-          ["glasses", "hat", "tie", "beard"].includes(accessory),
-        )))
+      (Array.isArray(appearance.accessories) && appearance.accessories.every((accessory) => VALID_ACCESSORIES.has(accessory as Accessory))))
+  );
+}
+
+function isBackendLink(value: unknown): value is AgentBackendLink {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const link = value as Partial<AgentBackendLink>;
+  return (
+    VALID_BACKEND_PROVIDERS.has(link.provider as AgentBackendLink["provider"]) &&
+    typeof link.connected === "boolean" &&
+    (link.agentId === undefined || typeof link.agentId === "string") &&
+    (link.tokenId === undefined || typeof link.tokenId === "string") &&
+    (link.connectedAt === undefined || typeof link.connectedAt === "number")
+  );
+}
+
+function isRegistration(value: unknown): value is AgentRegistration {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const registration = value as Partial<AgentRegistration>;
+  return (
+    typeof registration.id === "string" &&
+    typeof registration.name === "string" &&
+    typeof registration.role === "string" &&
+    (registration.emoji === undefined || typeof registration.emoji === "string") &&
+    (registration.type === undefined || VALID_AGENT_TYPES.has(registration.type)) &&
+    (registration.appearance === undefined || isAgentAppearance(registration.appearance)) &&
+    (registration.backendLink === undefined || isBackendLink(registration.backendLink))
+  );
+}
+
+function isAgentEvent(value: unknown): value is AgentEvent {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const event = value as Partial<AgentEvent>;
+  return (
+    typeof event.agentId === "string" &&
+    VALID_STATUSES.has(event.status as RealtimeAgentStatus) &&
+    (event.location === undefined || VALID_LOCATIONS.has(event.location as AgentEventLocation)) &&
+    typeof event.timestamp === "number"
   );
 }
 
@@ -237,6 +277,10 @@ function buildSnapshotStates(): AgentSnapshotState[] {
 }
 
 function broadcast(message: ServerMessage): void {
+  if (!websocketServer) {
+    return;
+  }
+
   const payload = JSON.stringify(message);
   websocketServer.clients.forEach((client) => {
     if (client.readyState === client.OPEN) {
@@ -252,11 +296,7 @@ function broadcastSnapshot(): void {
   });
 }
 
-function pushActivity(
-  kind: ActivityLogEntry["kind"],
-  message: string,
-  agentId?: string,
-): ActivityLogEntry {
+function pushActivity(kind: ActivityLogEntry["kind"], message: string, agentId?: string): ActivityLogEntry {
   const entry: ActivityLogEntry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: Date.now(),
@@ -273,16 +313,105 @@ function pushActivity(
   return entry;
 }
 
+function getAvailableDeskIndex(excludedAgentId?: string): number | undefined {
+  const occupied = new Set<number>();
+
+  agentStates.forEach((state) => {
+    if (state.id !== excludedAgentId && typeof state.deskIndex === "number") {
+      occupied.add(state.deskIndex);
+    }
+  });
+
+  for (let deskIndex = 0; deskIndex < DESK_COUNT; deskIndex += 1) {
+    if (!occupied.has(deskIndex)) {
+      return deskIndex;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveAppearance(registration: AgentRegistration): { appearance: AgentAppearance; emoji: string } {
+  const fallback = defaultAppearances.get(registration.id);
+  return {
+    appearance: registration.appearance ?? fallback?.appearance ?? createDeterministicAppearance(registration.id),
+    emoji: registration.emoji ?? fallback?.emoji ?? "🙂",
+  };
+}
+
+function normalizeBackendLink(
+  incoming?: AgentBackendLink,
+  existing?: AgentBackendLink,
+): AgentBackendLink {
+  const base = incoming ?? existing;
+  if (!base || base.provider === "unlinked") {
+    return {
+      provider: "unlinked",
+      connected: false,
+    };
+  }
+
+  return {
+    provider: base.provider,
+    connected: base.connected,
+    agentId: base.agentId,
+    tokenId: base.tokenId,
+    connectedAt: base.connectedAt ?? (base.connected ? Date.now() : undefined),
+  };
+}
+
+function resolveDeskIndex(registration: AgentRegistration, existing?: AgentRuntimeState): number {
+  if (typeof existing?.deskIndex === "number" && (registration.type ?? existing.type) === existing.type) {
+    return existing.deskIndex;
+  }
+
+  const agentType = registration.type ?? existing?.type ?? "visitor";
+
+  if (agentType === "resident") {
+    const reservedDesk = residentDeskAssignments.get(registration.id) ?? getKnownDeskIndex(registration.id);
+    if (reservedDesk !== undefined) {
+      residentDeskAssignments.set(registration.id, reservedDesk);
+      const occupyingAgent = Array.from(agentStates.values()).find(
+        (state) => state.id !== registration.id && state.deskIndex === reservedDesk,
+      );
+      if (!occupyingAgent) {
+        return reservedDesk;
+      }
+    }
+
+    const availableDesk = getAvailableDeskIndex(registration.id);
+    if (availableDesk === undefined) {
+      throw new RequestBodyError("No desks available", 409);
+    }
+    residentDeskAssignments.set(registration.id, availableDesk);
+    return availableDesk;
+  }
+
+  residentDeskAssignments.delete(registration.id);
+  const availableDesk = getAvailableDeskIndex(registration.id);
+  if (availableDesk === undefined) {
+    throw new RequestBodyError("No desks available", 409);
+  }
+  return availableDesk;
+}
+
 function ensureAgentState(agentId: string): AgentRuntimeState {
   const existing = agentStates.get(agentId);
   if (existing) {
     return existing;
   }
 
+  const fallbackAppearance = resolveAppearance({
+    id: agentId,
+    name: agentId,
+    role: "Temporary Agent",
+  });
   const fallback: AgentRuntimeState = {
     id: agentId,
     name: agentId,
     role: "Temporary Agent",
+    emoji: fallbackAppearance.emoji,
+    backendLink: normalizeBackendLink(),
     connected: true,
     type: "visitor",
     status: "idle",
@@ -290,7 +419,7 @@ function ensureAgentState(agentId: string): AgentRuntimeState {
     timestamp: Date.now(),
   };
   agentStates.set(agentId, fallback);
-  agentAppearances.set(agentId, resolveAppearance(fallback).appearance);
+  agentAppearances.set(agentId, fallbackAppearance.appearance);
   return fallback;
 }
 
@@ -321,66 +450,6 @@ function applyEvent(event: AgentEvent): AgentRuntimeState {
   return next;
 }
 
-function getAvailableDeskIndex(excludedAgentId?: string): number | undefined {
-  const occupied = new Set<number>();
-
-  agentStates.forEach((state) => {
-    if (state.id !== excludedAgentId && typeof state.deskIndex === "number") {
-      occupied.add(state.deskIndex);
-    }
-  });
-
-  for (let deskIndex = 0; deskIndex < DESK_COUNT; deskIndex += 1) {
-    if (!occupied.has(deskIndex)) {
-      return deskIndex;
-    }
-  }
-
-  return undefined;
-}
-
-function resolveDeskIndex(registration: AgentRegistration, existing?: AgentRuntimeState): number {
-  if (typeof existing?.deskIndex === "number") {
-    return existing.deskIndex;
-  }
-
-  const agentType = registration.type ?? existing?.type ?? "visitor";
-
-  if (agentType === "resident") {
-    const reservedDesk = residentDeskAssignments.get(registration.id) ?? getKnownDeskIndex(registration.id);
-    if (reservedDesk !== undefined) {
-      residentDeskAssignments.set(registration.id, reservedDesk);
-      const occupyingAgent = Array.from(agentStates.values()).find(
-        (state) => state.id !== registration.id && state.deskIndex === reservedDesk,
-      );
-      if (!occupyingAgent) {
-        return reservedDesk;
-      }
-    }
-
-    const availableDesk = getAvailableDeskIndex(registration.id);
-    if (availableDesk === undefined) {
-      throw new RequestBodyError("No desks available", 409);
-    }
-    residentDeskAssignments.set(registration.id, availableDesk);
-    return availableDesk;
-  }
-
-  const availableDesk = getAvailableDeskIndex(registration.id);
-  if (availableDesk === undefined) {
-    throw new RequestBodyError("No desks available", 409);
-  }
-  return availableDesk;
-}
-
-function resolveAppearance(registration: AgentRegistration): { appearance: AgentAppearance; emoji: string } {
-  const fallback = defaultAppearances.get(registration.id);
-  return {
-    appearance: registration.appearance ?? fallback?.appearance ?? createDeterministicAppearance(registration.id),
-    emoji: registration.emoji ?? fallback?.emoji ?? "🙂",
-  };
-}
-
 function scheduleTransition(agentId: string, callback: () => void, delayMs: number): void {
   cancelTransitionTimer(agentId);
   const timer = setTimeout(() => {
@@ -388,6 +457,15 @@ function scheduleTransition(agentId: string, callback: () => void, delayMs: numb
     callback();
   }, delayMs);
   transitionTimers.set(agentId, timer);
+}
+
+function cancelTransitionTimer(agentId: string): void {
+  const timer = transitionTimers.get(agentId);
+  if (!timer) {
+    return;
+  }
+  clearTimeout(timer);
+  transitionTimers.delete(agentId);
 }
 
 function ensureKnownAgents(agentIds: string[]): void {
@@ -421,17 +499,6 @@ function buildLegacyMeetingScript(agentIds: string[]): MeetingScript {
     })),
     summary: "Standup complete. Back to execution.",
   };
-}
-
-let meetingStartActivityEmitted = false;
-
-function cancelTransitionTimer(agentId: string): void {
-  const timer = transitionTimers.get(agentId);
-  if (!timer) {
-    return;
-  }
-  clearTimeout(timer);
-  transitionTimers.delete(agentId);
 }
 
 function readStatusEvent(body: unknown, agentIdFromPath?: string): AgentEvent {
@@ -486,6 +553,174 @@ function readStatusEvent(body: unknown, agentIdFromPath?: string): AgentEvent {
 
   return normalized;
 }
+
+async function ensureDataDir(): Promise<void> {
+  await mkdir(dataDir, { recursive: true });
+}
+
+async function readPersistedAgents(): Promise<PersistedAgentsFile> {
+  await ensureDataDir();
+
+  try {
+    const raw = await readFile(agentsFilePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<PersistedAgentsFile>;
+    return {
+      agents: Array.isArray(parsed.agents) ? parsed.agents : [],
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return { agents: [] };
+    }
+    throw error;
+  }
+}
+
+function toPersistedRecord(state: AgentRuntimeState): PersistedAgentRecord {
+  const appearance = agentAppearances.get(state.id) ?? resolveAppearance(state).appearance;
+  return {
+    id: state.id,
+    name: state.name,
+    role: state.role,
+    emoji: state.emoji ?? "🙂",
+    type: state.type ?? "visitor",
+    appearance,
+    backendLink: normalizeBackendLink(state.backendLink),
+    deskIndex: state.deskIndex,
+  };
+}
+
+async function persistAgents(): Promise<void> {
+  await ensureDataDir();
+  const payload: PersistedAgentsFile = {
+    agents: getOrderedStates().map((state) => toPersistedRecord(state)),
+  };
+  await writeFile(agentsFilePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+function applyPersistedAgent(record: PersistedAgentRecord): void {
+  const appearance = record.appearance;
+  const type = record.type ?? "visitor";
+  let deskIndex = record.deskIndex;
+
+  if (type === "resident") {
+    deskIndex = deskIndex ?? getKnownDeskIndex(record.id) ?? getAvailableDeskIndex(record.id);
+    if (deskIndex !== undefined) {
+      residentDeskAssignments.set(record.id, deskIndex);
+    }
+  } else if (deskIndex === undefined || Array.from(agentStates.values()).some((state) => state.deskIndex === deskIndex)) {
+    deskIndex = getAvailableDeskIndex(record.id);
+  }
+
+  const runtimeState: AgentRuntimeState = {
+    id: record.id,
+    name: record.name,
+    role: record.role,
+    emoji: record.emoji,
+    type,
+    backendLink: normalizeBackendLink(record.backendLink),
+    connected: true,
+    status: "idle",
+    location: "desk",
+    timestamp: Date.now(),
+    deskIndex,
+  };
+
+  agentStates.set(record.id, runtimeState);
+  agentAppearances.set(record.id, appearance);
+}
+
+async function loadPersistedAgents(): Promise<void> {
+  const persisted = await readPersistedAgents();
+  persisted.agents.forEach((record) => {
+    if (isRegistration(record) && isAgentAppearance(record.appearance) && isBackendLink(record.backendLink) && typeof record.emoji === "string") {
+      applyPersistedAgent(record as PersistedAgentRecord);
+    }
+  });
+}
+
+async function upsertRegistration(body: AgentRegistration, mode: "create" | "update"): Promise<AgentRuntimeState> {
+  const existing = agentStates.get(body.id);
+  if (mode === "create" && existing) {
+    throw new RequestBodyError(`Agent ${body.id} already exists`, 409);
+  }
+  if (mode === "update" && !existing) {
+    throw new RequestBodyError("Agent not found", 404);
+  }
+
+  const { appearance, emoji } = resolveAppearance(body);
+  const type = body.type ?? existing?.type ?? "visitor";
+  const backendLink = normalizeBackendLink(body.backendLink, existing?.backendLink);
+  const timestamp = Date.now();
+  const deskIndex = resolveDeskIndex({ ...body, type }, existing);
+  const nextStatus: RealtimeAgentStatus = mode === "create" ? "entering" : (existing?.status ?? "idle");
+  const nextLocation: AgentEventLocation = mode === "create" ? "door" : (existing?.location ?? "desk");
+
+  const nextState: AgentRuntimeState = {
+    id: body.id,
+    name: body.name,
+    role: body.role,
+    emoji,
+    type,
+    backendLink,
+    connected: true,
+    status: nextStatus,
+    location: nextLocation,
+    timestamp,
+    task: existing?.task,
+    message: existing?.message,
+    deskIndex,
+  };
+
+  if (type === "resident") {
+    residentDeskAssignments.set(body.id, deskIndex);
+  } else {
+    residentDeskAssignments.delete(body.id);
+  }
+
+  agentStates.set(body.id, nextState);
+  agentAppearances.set(body.id, appearance);
+  await persistAgents();
+
+  const action = mode === "create" ? "Registered" : "Updated";
+  pushActivity("registration", `${action} agent ${body.name} at desk ${deskIndex + 1}.`, body.id);
+  broadcast({
+    type: "agent-registered",
+    agent: {
+      ...nextState,
+      appearance,
+    },
+  });
+  broadcastSnapshot();
+
+  if (mode === "create") {
+    broadcast({
+      type: "agent-event",
+      event: {
+        agentId: body.id,
+        status: "entering",
+        location: "door",
+        timestamp,
+      },
+    });
+
+    scheduleTransition(body.id, () => {
+      if (!agentStates.has(body.id)) {
+        return;
+      }
+      applyEvent({
+        agentId: body.id,
+        status: "idle",
+        location: "desk",
+        timestamp: Date.now(),
+      });
+    }, 900);
+  }
+
+  return nextState;
+}
+
+let meetingStartActivityEmitted = false;
 
 const meetingEngine = new MeetingEngine({
   onBroadcast: broadcast,
@@ -543,6 +778,13 @@ const httpServer = createServer(async (request, response) => {
   }
 
   try {
+    if (await handleClaudeAuth(url.pathname, url, response)) {
+      return;
+    }
+    if (await handleCodexAuth(url.pathname, url, response)) {
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/api/agents") {
       sendJson(response, 200, { agents: getOrderedStates() });
       return;
@@ -553,77 +795,42 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
-    if (method === "POST" && url.pathname === "/api/agent/register") {
+    if (method === "POST" && (url.pathname === "/api/agents/register" || url.pathname === "/api/agent/register")) {
       const body = await readJson<unknown>(request);
       if (!isRegistration(body)) {
         throw new RequestBodyError("Invalid registration payload");
       }
 
-      const existing = agentStates.get(body.id);
-      const { appearance, emoji } = resolveAppearance(body);
-      const type = body.type ?? existing?.type ?? "visitor";
-      const deskIndex = resolveDeskIndex(body, existing);
-      const timestamp = Date.now();
-      const enteringState: AgentRuntimeState = {
-        id: body.id,
-        name: body.name,
-        role: body.role,
-        emoji,
-        type,
-        deskIndex,
-        connected: true,
-        status: "entering",
-        location: "door",
-        timestamp,
-      };
+      const state = await upsertRegistration(body, "create");
+      sendJson(response, 201, {
+        ...state,
+        appearance: agentAppearances.get(state.id),
+      });
+      return;
+    }
 
-      if (type === "resident") {
-        residentDeskAssignments.set(body.id, deskIndex);
+    const updateMatch = method === "PUT" || method === "PATCH" ? url.pathname.match(/^\/api\/agents\/([^/]+)$/) : null;
+    if (updateMatch) {
+      const agentId = decodeURIComponent(updateMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isRegistration(body)) {
+        throw new RequestBodyError("Invalid registration payload");
+      }
+      if (body.id !== agentId) {
+        throw new RequestBodyError("Agent id in URL does not match payload");
       }
 
-      agentStates.set(body.id, enteringState);
-      agentAppearances.set(body.id, appearance);
-      pushActivity("registration", `Registered agent ${body.name} at desk ${deskIndex}.`, body.id);
-      broadcast({
-        type: "agent-registered",
-        agent: {
-          ...enteringState,
-          appearance,
-        },
+      const state = await upsertRegistration(body, "update");
+      sendJson(response, 200, {
+        ...state,
+        appearance: agentAppearances.get(state.id),
       });
-      broadcast({
-        type: "agent-event",
-        event: {
-          agentId: body.id,
-          status: "entering",
-          location: "door",
-          timestamp,
-        },
-      });
-      broadcastSnapshot();
-      sendJson(response, 201, {
-        ...enteringState,
-        appearance,
-      });
-
-      scheduleTransition(body.id, () => {
-        if (!agentStates.has(body.id)) {
-          return;
-        }
-        applyEvent({
-          agentId: body.id,
-          status: "idle",
-          location: "desk",
-          timestamp: Date.now(),
-        });
-      }, 900);
       return;
     }
 
     if (method === "POST" && url.pathname === "/api/agent/status") {
       const body = await readJson<unknown>(request);
       const event = readStatusEvent(body);
-
       const next = applyEvent(event);
       pushActivity("agent-status", `${next.name} is now ${next.status}.`, next.id);
       sendJson(response, 200, next);
@@ -634,7 +841,6 @@ const httpServer = createServer(async (request, response) => {
     if (statusPathMatch) {
       const body = await readJson<unknown>(request);
       const event = readStatusEvent(body, decodeURIComponent(statusPathMatch[1] ?? ""));
-
       const next = applyEvent(event);
       pushActivity("agent-status", `${next.name} is now ${next.status}.`, next.id);
       sendJson(response, 200, next);
@@ -693,21 +899,19 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
-    if (method === "DELETE" && url.pathname.startsWith("/api/agent/")) {
-      const agentId = decodeURIComponent(url.pathname.slice("/api/agent/".length));
-      if (!agentId) {
-        sendJson(response, 400, { error: "Missing agent id" });
-        return;
-      }
-      const existing = agentStates.get(agentId);
+    const deleteMatch = method === "DELETE" ? url.pathname.match(/^\/api\/agents\/([^/]+)$/) : null;
+    const legacyDeleteMatch = method === "DELETE" ? url.pathname.match(/^\/api\/agent\/([^/]+)$/) : null;
+    const deleteAgentId = decodeURIComponent(deleteMatch?.[1] ?? legacyDeleteMatch?.[1] ?? "");
+    if (method === "DELETE" && deleteAgentId) {
+      const existing = agentStates.get(deleteAgentId);
       if (!existing) {
         sendJson(response, 404, { error: "Agent not found" });
         return;
       }
 
-      cancelTransitionTimer(agentId);
+      cancelTransitionTimer(deleteAgentId);
       const leavingTimestamp = Date.now();
-      agentStates.set(agentId, {
+      agentStates.set(deleteAgentId, {
         ...existing,
         status: "leaving",
         location: "door",
@@ -716,21 +920,22 @@ const httpServer = createServer(async (request, response) => {
       broadcast({
         type: "agent-event",
         event: {
-          agentId,
+          agentId: deleteAgentId,
           status: "leaving",
           location: "door",
           timestamp: leavingTimestamp,
         },
       });
-      pushActivity("agent-status", `${existing.name} is leaving the office.`, agentId);
+      pushActivity("agent-status", `${existing.name} is leaving the office.`, deleteAgentId);
       sendJson(response, 200, { ok: true });
 
-      scheduleTransition(agentId, () => {
-        agentStates.delete(agentId);
-        residentDeskAssignments.delete(agentId);
-        agentAppearances.delete(agentId);
-        broadcast({ type: "agent-removed", agentId });
-        pushActivity("agent-status", `Removed agent ${existing.name}.`, agentId);
+      scheduleTransition(deleteAgentId, async () => {
+        agentStates.delete(deleteAgentId);
+        residentDeskAssignments.delete(deleteAgentId);
+        agentAppearances.delete(deleteAgentId);
+        await persistAgents();
+        broadcast({ type: "agent-removed", agentId: deleteAgentId });
+        pushActivity("agent-status", `Removed agent ${existing.name}.`, deleteAgentId);
         broadcastSnapshot();
       }, 350);
       return;
@@ -804,23 +1009,28 @@ const httpServer = createServer(async (request, response) => {
   }
 });
 
-const websocketServer = new WebSocketServer({ server: httpServer });
+async function start(): Promise<void> {
+  await loadPersistedAgents();
 
-websocketServer.on("connection", (socket) => {
-  socket.send(
-    JSON.stringify({
-      type: "agents-snapshot",
-      agents: buildSnapshotStates(),
-    } satisfies ServerMessage),
-  );
-  socket.send(
-    JSON.stringify({
-      type: "meeting-status",
-      state: meetingEngine.getState(),
-    } satisfies ServerMessage),
-  );
-});
+  websocketServer = new WebSocketServer({ server: httpServer });
+  websocketServer.on("connection", (socket) => {
+    socket.send(
+      JSON.stringify({
+        type: "agents-snapshot",
+        agents: buildSnapshotStates(),
+      } satisfies ServerMessage),
+    );
+    socket.send(
+      JSON.stringify({
+        type: "meeting-status",
+        state: meetingEngine.getState(),
+      } satisfies ServerMessage),
+    );
+  });
 
-httpServer.listen(PORT, () => {
-  console.log(`Realtime server listening on http://localhost:${PORT}`);
-});
+  httpServer.listen(PORT, () => {
+    console.log(`Realtime server listening on http://localhost:${PORT}`);
+  });
+}
+
+void start();
