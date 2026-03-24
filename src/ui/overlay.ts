@@ -240,8 +240,11 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   transcriptPanel.hidden = true;
   transcriptPanel.innerHTML = `
     <div class="transcript-header">
-      <span class="eyebrow">Live Meeting</span>
-      <strong>Transcript</strong>
+      <div>
+        <span class="eyebrow">Live Meeting</span>
+        <strong>Transcript</strong>
+      </div>
+      <button class="icon-button" type="button" data-action="close-transcript" aria-label="Close transcript">×</button>
     </div>
     <div class="transcript-log"></div>
     <div class="transcript-summary"></div>
@@ -730,6 +733,9 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   mobileActivityToggle.addEventListener("click", () => toggleActivity());
   activityBackdrop.addEventListener("click", () => toggleActivity(false));
   activityPanel.querySelector<HTMLButtonElement>('[data-action="close-activity"]')?.addEventListener("click", () => toggleActivity(false));
+  transcriptPanel.querySelector<HTMLButtonElement>('[data-action="close-transcript"]')?.addEventListener("click", () => {
+    transcriptPanel.hidden = true;
+  });
   activityPanel.querySelector<HTMLButtonElement>('[data-action="reset-activity-filters"]')?.addEventListener("click", () => {
     activityAgentId = "";
     activityView = "all";
