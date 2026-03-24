@@ -76,9 +76,16 @@ export function createDesk({
   screen.position.set(monitorX, 1.6, monitorZ + 0.06);
   group.add(screen);
 
-  const keyboard = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.22), makeMaterial("#dad0c6"));
-  keyboard.position.set(monitorX, 1.22, executive ? 0.22 : 0.2);
+  const keyboard = new THREE.Mesh(
+    new THREE.BoxGeometry(executive ? 0.68 : 0.6, 0.05, 0.26),
+    makeMaterial("#d8dde3"),
+  );
+  keyboard.position.set(monitorX - (executive ? 0.12 : 0.14), 1.22, executive ? 0.42 : 0.34);
   group.add(keyboard);
+
+  const mouse = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.16), makeMaterial("#eef2f6"));
+  mouse.position.set(monitorX + (executive ? 0.42 : 0.3), 1.21, executive ? 0.4 : 0.33);
+  group.add(mouse);
 
   const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.22, 10), makeMaterial("#f7efe4"));
   mug.position.set(-0.2, 1.28, -0.2);
