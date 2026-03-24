@@ -4,13 +4,11 @@ import { createCharacterCreator } from "./characterCreator";
 import type { ActivityLogEntry, AgentRuntimeState, LabelState, MeetingTurn, RealtimeAgentStatus } from "../types";
 
 interface HudOptions {
-  onToggleDemo(): void;
   onResetCamera(): void;
   apiBase?: string | undefined;
 }
 
 interface HudApi {
-  setDemoRunning(running: boolean): void;
   setRealtimeConnected(connected: boolean): void;
   setMeetingActive(active: boolean): void;
   syncAgentStates(states: AgentRuntimeState[]): void;
@@ -30,8 +28,11 @@ interface LabelRefs {
 
 interface AgentListRefs {
   node: HTMLLIElement;
+  trigger: HTMLButtonElement;
+  dot: HTMLSpanElement;
   name: HTMLSpanElement;
-  meta: HTMLSpanElement;
+  role: HTMLSpanElement;
+  status: HTMLSpanElement;
   task: HTMLSpanElement;
 }
 
@@ -39,47 +40,45 @@ function formatRealtimeStatus(status: RealtimeAgentStatus): string {
   return status === "meeting" ? "meeting" : status;
 }
 
-function slugify(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function timeLabel(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://localhost:3001" }: HudOptions): HudApi {
+export function createHud({ onResetCamera, apiBase = "http://localhost:3001" }: HudOptions): HudApi {
   const hud = document.createElement("div");
   hud.className = "hud";
 
-  const panel = document.createElement("div");
-  panel.className = "hud-panel";
-  panel.innerHTML = `
-    <h1>EpicShot Office</h1>
-    <p>Low-poly office diorama with configurable agents, glass offices, mouse orbit controls, and WASD camera movement.</p>
-    <div class="controls">
-      <button class="button" type="button" data-action="demo">Start Demo Mode</button>
-      <button class="button secondary" type="button" data-action="reset">Reset View</button>
-      <button class="button secondary" type="button" data-action="admin-toggle">Admin Panel</button>
+  const topBar = document.createElement("header");
+  topBar.className = "top-bar";
+  topBar.innerHTML = `
+    <div class="top-bar-section top-bar-brand">
+      <span class="top-bar-label">EpicShot Office</span>
+      <span class="agent-count">0 agents online</span>
+      <span class="connection-pill" data-connection="offline" aria-label="Realtime disconnected">
+        <i class="dot"></i>
+      </span>
     </div>
-    <div class="legend">
-      <span><i class="dot" style="background: var(--status-idle)"></i>idle</span>
-      <span><i class="dot" style="background: var(--status-working)"></i>working</span>
-      <span><i class="dot" style="background: var(--status-meeting)"></i>meeting</span>
-    </div>
-    <div class="connection-status" data-connection="offline">Realtime: offline</div>
-    <div class="agent-sidebar">
-      <div class="agent-sidebar-header">
-        <h2>Live Agents</h2>
-        <button class="button" type="button" data-action="add-agent">Add Agent</button>
+    <div class="top-bar-section top-bar-actions">
+      <button class="button secondary top-bar-button" type="button" data-action="toggle-activity">Activity</button>
+      <button class="button top-bar-button" type="button" data-action="add-agent">Add Agent</button>
+      <div class="meeting-launcher">
+        <select class="admin-select meeting-select" name="meeting-type" aria-label="Meeting type">
+          <option value="standup">Standup</option>
+          <option value="strategy">Strategy</option>
+          <option value="review">Review</option>
+        </select>
+        <button class="button top-bar-button" type="button" data-action="start-meeting">Start Meeting</button>
       </div>
-      <ul class="agent-list"></ul>
+      <button class="icon-button" type="button" data-action="settings" aria-label="Settings">
+        <span aria-hidden="true">⚙</span>
+      </button>
     </div>
   `;
-  hud.append(panel);
+  hud.append(topBar);
+
+  const sidebar = document.createElement("aside");
+  sidebar.className = "agent-sidebar";
+  hud.append(sidebar);
 
   const adminPanel = document.createElement("aside");
   adminPanel.className = "admin-panel";
@@ -110,6 +109,7 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
             <option value="2" selected>2x speed</option>
             <option value="3">3x speed</option>
           </select>
+          <button class="button secondary" type="button" data-action="reset">Reset View</button>
           <button class="button secondary" type="button" data-action="stop-meeting">Stop Meeting</button>
         </div>
       </div>
@@ -122,12 +122,20 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
       <h3>Roster</h3>
       <button class="button secondary" type="button" data-action="add-agent">Open Character Creator</button>
     </div>
-    <div class="admin-section">
-      <h3>Activity Log</h3>
-      <div class="activity-log"></div>
-    </div>
   `;
   hud.append(adminPanel);
+
+  const activityPanel = document.createElement("section");
+  activityPanel.className = "activity-panel";
+  activityPanel.hidden = true;
+  activityPanel.innerHTML = `
+    <div class="activity-header">
+      <span class="eyebrow">Ops Feed</span>
+      <strong>Activity Log</strong>
+    </div>
+    <div class="activity-log"></div>
+  `;
+  hud.append(activityPanel);
 
   const transcriptPanel = document.createElement("section");
   transcriptPanel.className = "transcript-panel";
@@ -152,26 +160,71 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
 
   document.body.append(hud);
 
-  const demoButton = panel.querySelector<HTMLButtonElement>('[data-action="demo"]');
-  const resetButton = panel.querySelector<HTMLButtonElement>('[data-action="reset"]');
-  const adminToggleButton = panel.querySelector<HTMLButtonElement>('[data-action="admin-toggle"]');
-  const connectionStatus = panel.querySelector<HTMLDivElement>(".connection-status");
-  const agentList = panel.querySelector<HTMLUListElement>(".agent-list");
+  const sidebarCollapsedKey = "sidebar-collapsed";
+  const storedCollapsed = window.localStorage.getItem(sidebarCollapsedKey);
+  let sidebarCollapsed = storedCollapsed === null ? true : storedCollapsed === "true";
+  sidebar.dataset.collapsed = String(sidebarCollapsed);
+  sidebar.innerHTML = `
+    <div class="agent-sidebar-header">
+      <button class="icon-button sidebar-toggle" type="button" data-action="toggle-sidebar" aria-label="${sidebarCollapsed ? "Expand agent sidebar" : "Collapse agent sidebar"}">
+        <span class="sidebar-toggle-icon" aria-hidden="true">${sidebarCollapsed ? "☰" : "‹"}</span>
+      </button>
+      <div class="agent-sidebar-heading">
+        <span class="eyebrow">Live Agents</span>
+        <strong>Roster</strong>
+      </div>
+    </div>
+    <ul class="agent-list"></ul>
+    <div class="agent-sidebar-footer">
+      <button class="button secondary" type="button" data-action="reset">Reset View</button>
+      <button class="button secondary" type="button" data-action="admin-toggle">Control Room</button>
+    </div>
+  `;
+
+  const connectionStatus = topBar.querySelector<HTMLSpanElement>(".connection-pill");
+  const agentCount = topBar.querySelector<HTMLSpanElement>(".agent-count");
+  const meetingTypeSelect = topBar.querySelector<HTMLSelectElement>('select[name="meeting-type"]');
+  const agentList = sidebar.querySelector<HTMLUListElement>(".agent-list");
+  const sidebarToggleButton = sidebar.querySelector<HTMLButtonElement>('[data-action="toggle-sidebar"]');
+  const sidebarToggleIcon = sidebar.querySelector<HTMLSpanElement>(".sidebar-toggle-icon");
+  const topBarActivityButton = topBar.querySelector<HTMLButtonElement>('[data-action="toggle-activity"]');
+  const addAgentButton = topBar.querySelector<HTMLButtonElement>('[data-action="add-agent"]');
+  const startMeetingButton = topBar.querySelector<HTMLButtonElement>('[data-action="start-meeting"]');
+  const topBarSettingsButton = topBar.querySelector<HTMLButtonElement>('[data-action="settings"]');
+  const resetButtons = hud.querySelectorAll<HTMLButtonElement>('[data-action="reset"]');
+  const adminToggleButton = sidebar.querySelector<HTMLButtonElement>('[data-action="admin-toggle"]');
   const adminClose = adminPanel.querySelector<HTMLButtonElement>(".admin-close");
   const strategyTopic = adminPanel.querySelector<HTMLInputElement>('input[name="strategy-topic"]');
   const reviewPresenter = adminPanel.querySelector<HTMLSelectElement>('select[name="review-presenter"]');
   const meetingSpeed = adminPanel.querySelector<HTMLSelectElement>('select[name="meeting-speed"]');
   const adminAgentList = adminPanel.querySelector<HTMLDivElement>(".admin-agent-list");
-  const activityLog = adminPanel.querySelector<HTMLDivElement>(".activity-log");
+  const activityLog = activityPanel.querySelector<HTMLDivElement>(".activity-log");
   const transcriptLog = transcriptPanel.querySelector<HTMLDivElement>(".transcript-log");
   const transcriptSummary = transcriptPanel.querySelector<HTMLDivElement>(".transcript-summary");
   const agentNodes = new Map<string, AgentListRefs>();
   let latestStates: AgentRuntimeState[] = [];
   let meetingActive = false;
+  let activityVisible = false;
   const characterCreator = createCharacterCreator({
     apiBase,
     getExistingAgents: () => latestStates,
   });
+
+  function setSidebarCollapsed(next: boolean): void {
+    sidebarCollapsed = next;
+    sidebar.dataset.collapsed = String(next);
+    sidebarToggleButton?.setAttribute("aria-label", next ? "Expand agent sidebar" : "Collapse agent sidebar");
+    if (sidebarToggleIcon) {
+      sidebarToggleIcon.textContent = next ? "☰" : "‹";
+    }
+    window.localStorage.setItem(sidebarCollapsedKey, String(next));
+  }
+
+  function toggleActivity(force?: boolean): void {
+    activityVisible = force ?? !activityVisible;
+    activityPanel.hidden = !activityVisible;
+    topBarActivityButton?.classList.toggle("active", activityVisible);
+  }
 
   async function post(path: string, body: unknown): Promise<void> {
     const response = await fetch(`${apiBase}${path}`, {
@@ -329,8 +382,24 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
     }
   }
 
-  demoButton?.addEventListener("click", () => onToggleDemo());
-  resetButton?.addEventListener("click", () => onResetCamera());
+  sidebarToggleButton?.addEventListener("click", () => setSidebarCollapsed(!sidebarCollapsed));
+  topBarActivityButton?.addEventListener("click", () => toggleActivity());
+  addAgentButton?.addEventListener("click", () => {
+    characterCreator.openCreate();
+  });
+  startMeetingButton?.addEventListener("click", () => {
+    const meetingType = meetingTypeSelect?.value as "standup" | "strategy" | "review" | undefined;
+    if (!meetingType) {
+      return;
+    }
+    void runMeeting(meetingType);
+  });
+  topBarSettingsButton?.addEventListener("click", () => {
+    topBarSettingsButton.blur();
+  });
+  resetButtons.forEach((button) => {
+    button.addEventListener("click", () => onResetCamera());
+  });
   adminToggleButton?.addEventListener("click", () => toggleAdmin());
   adminClose?.addEventListener("click", () => toggleAdmin(false));
 
@@ -345,9 +414,6 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
   });
   adminPanel.querySelector<HTMLButtonElement>('[data-action="stop-meeting"]')?.addEventListener("click", () => {
     void post("/api/meeting/stop", {});
-  });
-  panel.querySelector<HTMLButtonElement>('[data-action="add-agent"]')?.addEventListener("click", () => {
-    characterCreator.openCreate();
   });
   adminPanel.querySelector<HTMLButtonElement>('[data-action="add-agent"]')?.addEventListener("click", () => {
     characterCreator.openCreate();
@@ -367,17 +433,12 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
   });
 
   return {
-    setDemoRunning(running) {
-      if (demoButton) {
-        demoButton.textContent = running ? "Stop Demo Mode" : "Start Demo Mode";
-      }
-    },
     setRealtimeConnected(connected) {
       if (!connectionStatus) {
         return;
       }
       connectionStatus.dataset.connection = connected ? "online" : "offline";
-      connectionStatus.textContent = `Realtime: ${connected ? "online" : "offline"}`;
+      connectionStatus.setAttribute("aria-label", connected ? "Realtime connected" : "Realtime disconnected");
     },
     setMeetingActive(active) {
       meetingActive = active;
@@ -387,6 +448,10 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
     syncAgentStates(states) {
       latestStates = [...states];
       renderAdminAgents();
+      if (agentCount) {
+        const connectedCount = states.filter((state) => state.connected).length;
+        agentCount.textContent = `${connectedCount} agent${connectedCount === 1 ? "" : "s"} online`;
+      }
 
       if (!agentList) {
         return;
@@ -400,20 +465,29 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
           const node = document.createElement("li");
           node.className = "agent-list-item";
           node.innerHTML = `
-            <span class="agent-list-name"></span>
-            <span class="agent-list-meta"></span>
-            <span class="agent-list-task"></span>
+            <button class="agent-list-button" type="button">
+              <span class="agent-list-dot"></span>
+              <span class="agent-list-body">
+                <span class="agent-list-name"></span>
+                <span class="agent-list-role"></span>
+                <span class="agent-list-status"></span>
+                <span class="agent-list-task"></span>
+              </span>
+            </button>
           `;
+          const trigger = node.querySelector<HTMLButtonElement>(".agent-list-button");
+          const dot = node.querySelector<HTMLSpanElement>(".agent-list-dot");
           const name = node.querySelector<HTMLSpanElement>(".agent-list-name");
-          const meta = node.querySelector<HTMLSpanElement>(".agent-list-meta");
+          const role = node.querySelector<HTMLSpanElement>(".agent-list-role");
+          const status = node.querySelector<HTMLSpanElement>(".agent-list-status");
           const task = node.querySelector<HTMLSpanElement>(".agent-list-task");
-          if (!name || !meta || !task) {
+          if (!trigger || !dot || !name || !role || !status || !task) {
             return;
           }
-          refs = { node, name, meta, task };
+          refs = { node, trigger, dot, name, role, status, task };
           agentNodes.set(state.id, refs);
           agentList.append(node);
-          node.addEventListener("click", () => {
+          trigger.addEventListener("click", () => {
             const latest = latestStates.find((item) => item.id === state.id);
             if (latest) {
               characterCreator.openEdit(latest);
@@ -422,9 +496,12 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
         }
 
         refs.node.dataset.status = state.status;
-        refs.name.textContent = `${state.name} · ${state.role}`;
+        refs.trigger.title = `${state.name} · ${state.role}`;
+        refs.dot.dataset.status = state.status;
+        refs.name.textContent = state.name;
+        refs.role.textContent = state.role;
         const deskLabel = typeof state.deskIndex === "number" ? `Desk ${state.deskIndex + 1}` : "Desk unassigned";
-        refs.meta.textContent = `${deskLabel} · ${formatRealtimeStatus(state.status)}${state.connected ? "" : " · offline"}`;
+        refs.status.textContent = `${formatRealtimeStatus(state.status)} · ${deskLabel}${state.connected ? "" : " · offline"}`;
         refs.task.textContent = state.task ?? "No active task";
       });
 
