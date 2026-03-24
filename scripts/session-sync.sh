@@ -42,6 +42,9 @@ for store_path in glob.glob(agents_dir + '/*/sessions/sessions.json'):
                 except:
                     updated = 0
             if updated > cutoff:
+                # Skip cron run sessions — they cause flickering
+                if ':cron:' in key and ':run:' in key:
+                    continue
                 sessions.append({
                     'key': key,
                     'displayName': meta.get('displayName', meta.get('label', key)),
