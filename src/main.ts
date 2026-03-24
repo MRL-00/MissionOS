@@ -9,12 +9,15 @@ import { createOfficeScene } from "./scene/officeScene";
 import { createHud, LabelRenderer } from "./ui/overlay";
 import { SpeechBubbleRenderer } from "./ui/speechBubble";
 import type {
+  ActivityLogEntry,
   AgentConfig,
   AgentEvent,
   AgentRuntimeState,
   AgentStatus,
   DeskSlot,
   DestinationWaypoint,
+  MeetingState,
+  MeetingTurn,
   ServerMessage,
 } from "./types";
 
@@ -79,6 +82,7 @@ scene.add(office);
 
 const agents = new Map<string, AgentController>();
 const deskAssignments = new Map<string, DeskSlot>();
+const agentColors = new Map<string, string>();
 const unassignedDesks = waypoints.deskSlots.filter((desk) => !desk.assignedTo);
 
 typedAgentsConfig.forEach((agentConfig, index) => {
@@ -91,6 +95,7 @@ typedAgentsConfig.forEach((agentConfig, index) => {
   controller.navNodeId = assignedDesk?.nodeId ?? waypoints.entrance.nodeId;
   scene.add(controller.mesh);
   agents.set(agentConfig.id, controller);
+  agentColors.set(agentConfig.id, agentConfig.appearance.bodyColor);
 
   if (assignedDesk) {
     deskAssignments.set(agentConfig.id, assignedDesk);
@@ -130,6 +135,17 @@ const agentStates = new Map<string, AgentRuntimeState>(
     },
   ]),
 );
+const activityEntries: ActivityLogEntry[] = [];
+let meetingTranscript: MeetingTurn[] = [];
+let currentMeeting: MeetingState = {
+  active: false,
+  transcript: [],
+  progress: { currentTurn: 0, totalTurns: 0 },
+  speed: 1,
+  stopped: false,
+};
+
+void hydrateOverlay();
 
 function getControllerStatus(status: AgentEvent["status"]): AgentStatus {
   if (status === "meeting") {
@@ -172,8 +188,10 @@ function getMeetingDestination(agentId: string): DestinationWaypoint | null {
     return null;
   }
 
-  const agentIndex = agentOrder.indexOf(agentId);
-  const seatIndex = agentIndex >= 0 ? agentIndex % waypoints.meetingSeats.length : 0;
+  const config = currentMeeting.config;
+  const participantOrder = config?.participants ?? agentOrder;
+  const participantIndex = participantOrder.indexOf(agentId);
+  const seatIndex = participantIndex >= 0 ? participantIndex % waypoints.meetingSeats.length : 0;
   return waypoints.meetingSeats[seatIndex] ?? null;
 }
 
@@ -236,6 +254,29 @@ function applyAgentState(state: AgentRuntimeState): void {
   controller.task = state.task;
 }
 
+function clearMeetingHighlights(): void {
+  agents.forEach((controller) => controller.setMeetingHighlight(false));
+}
+
+function showSpeech(agentId: string, message: string, mode: "default" | "meeting", typing = false): void {
+  speechBubbleRenderer.show(agentId, message, {
+    color: agentColors.get(agentId),
+    persistent: mode === "meeting",
+    variant: mode,
+    typing,
+  });
+}
+
+function syncTranscript(): void {
+  hud.syncMeetingTranscript(meetingTranscript, currentMeeting.summary);
+}
+
+function pushActivity(entry: ActivityLogEntry): void {
+  activityEntries.unshift(entry);
+  activityEntries.splice(40);
+  hud.syncActivityLog(activityEntries);
+}
+
 function handleAgentEvent(event: AgentEvent): void {
   stopDemoForRealtime();
 
@@ -261,7 +302,9 @@ function handleAgentEvent(event: AgentEvent): void {
   }
 
   if (event.message) {
-    speechBubbleRenderer.show(event.agentId, event.message);
+    showSpeech(event.agentId, event.message, currentMeeting.active ? "meeting" : "default");
+  } else if (!currentMeeting.active && event.status !== "meeting") {
+    speechBubbleRenderer.hide(event.agentId);
   }
 
   syncHudState();
@@ -289,6 +332,106 @@ function handleAgentRemoved(agentId: string): void {
   syncHudState();
 }
 
+function handleServerMessage(message: ServerMessage): void {
+  if (message.type === "meeting-start") {
+    stopDemoForRealtime();
+    meetingTranscript = [];
+    currentMeeting = {
+      active: true,
+      config: message.config,
+      transcript: [],
+      progress: {
+        currentTurn: 0,
+        totalTurns: message.totalTurns,
+      },
+      startedAt: message.startedAt,
+      speed: message.speed,
+      stopped: false,
+    };
+    hud.setMeetingActive(true);
+    syncTranscript();
+    clearMeetingHighlights();
+    return;
+  }
+
+  if (message.type === "meeting-turn") {
+    clearMeetingHighlights();
+    const controller = agents.get(message.agentId);
+    controller?.setMeetingHighlight(true);
+
+    if (message.isTyping) {
+      showSpeech(message.agentId, "Typing...", "meeting", true);
+      return;
+    }
+
+    showSpeech(message.agentId, message.message, "meeting");
+    if (!meetingTranscript.some((turn) => turn.timestamp === message.timestamp && turn.agentId === message.agentId)) {
+      meetingTranscript = [
+        ...meetingTranscript,
+        {
+          agentId: message.agentId,
+          message: message.message,
+          timestamp: message.timestamp,
+        },
+      ];
+    }
+    currentMeeting = {
+      ...currentMeeting,
+      active: true,
+      currentSpeakerId: message.agentId,
+      transcript: meetingTranscript,
+      progress: {
+        currentTurn: Math.min(message.turnIndex + 1, currentMeeting.progress.totalTurns || message.totalTurns),
+        totalTurns: currentMeeting.progress.totalTurns || message.totalTurns,
+      },
+    };
+    syncTranscript();
+    return;
+  }
+
+  if (message.type === "meeting-end") {
+    currentMeeting = {
+      ...currentMeeting,
+      active: false,
+      summary: message.summary,
+      transcript: message.transcript,
+      currentSpeakerId: undefined,
+      stopped: false,
+    };
+    meetingTranscript = message.transcript;
+    clearMeetingHighlights();
+    hud.setMeetingActive(false);
+    syncTranscript();
+    return;
+  }
+
+  if (message.type === "meeting-status") {
+    applyMeetingStatus(message.state);
+    return;
+  }
+
+  if (message.type === "activity-log") {
+    pushActivity(message.entry);
+    return;
+  }
+}
+
+function applyMeetingStatus(state: MeetingState): void {
+  currentMeeting = state;
+  meetingTranscript = state.transcript;
+  hud.setMeetingActive(state.active);
+  syncTranscript();
+
+  clearMeetingHighlights();
+  if (state.currentSpeakerId) {
+    agents.get(state.currentSpeakerId)?.setMeetingHighlight(true);
+  }
+
+  if (!state.active) {
+    speechBubbleRenderer.clear();
+  }
+}
+
 const websocketClient = new OfficeWebSocketClient({
   onOpen() {
     hud.setRealtimeConnected(true);
@@ -297,6 +440,7 @@ const websocketClient = new OfficeWebSocketClient({
     hud.setRealtimeConnected(false);
   },
   onEvent: handleAgentEvent,
+  onServerMessage: handleServerMessage,
   onSnapshot: handleSnapshot,
   onAgentRemoved: handleAgentRemoved,
 });
@@ -341,6 +485,31 @@ function resize(): void {
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height);
+}
+
+async function hydrateOverlay(): Promise<void> {
+  try {
+    const [activityResponse, transcriptResponse] = await Promise.all([
+      fetch("http://localhost:3001/api/activity"),
+      fetch("http://localhost:3001/api/meeting/transcript"),
+    ]);
+
+    if (activityResponse.ok) {
+      const payload = (await activityResponse.json()) as { entries: ActivityLogEntry[] };
+      activityEntries.splice(0, activityEntries.length, ...payload.entries);
+      hud.syncActivityLog(activityEntries);
+    }
+
+    if (transcriptResponse.ok) {
+      const payload = (await transcriptResponse.json()) as { transcript: { turns: MeetingTurn[]; summary: string } | null };
+      if (payload.transcript) {
+        meetingTranscript = payload.transcript.turns;
+        hud.syncMeetingTranscript(meetingTranscript, payload.transcript.summary);
+      }
+    }
+  } catch {
+    hud.syncActivityLog(activityEntries);
+  }
 }
 
 window.addEventListener("resize", resize);

@@ -18,6 +18,7 @@ export class AgentController {
   name: string;
   role: string;
   emoji: string;
+  bodyColor: string;
   mesh: THREE.Group;
   parts: ReturnType<typeof createAgent>["parts"];
   velocity: THREE.Vector3;
@@ -34,6 +35,8 @@ export class AgentController {
   seatAmount: number;
   navNodeId: string | null;
   labelWorldPosition: THREE.Vector3;
+  highlightAmount: number;
+  highlightTarget: number;
 
   constructor(agentConfig: AgentConfig, initialPosition: THREE.Vector3, initialFacing = 0) {
     const built = createAgent(agentConfig);
@@ -41,6 +44,7 @@ export class AgentController {
     this.name = built.name;
     this.role = built.role;
     this.emoji = built.emoji;
+    this.bodyColor = agentConfig.appearance.bodyColor;
     this.mesh = built.mesh;
     this.parts = built.parts;
 
@@ -61,6 +65,8 @@ export class AgentController {
     this.seatAmount = 0;
     this.navNodeId = null;
     this.labelWorldPosition = new THREE.Vector3();
+    this.highlightAmount = 0;
+    this.highlightTarget = 0;
   }
 
   setTarget(position: THREE.Vector3, options: AgentTargetOptions = {}): void {
@@ -133,8 +139,20 @@ export class AgentController {
       this.parts.legs.rightLeg.rotation.x = 1.5;
     }
 
+    this.highlightAmount = THREE.MathUtils.damp(this.highlightAmount, this.highlightTarget, 5, delta);
+    this.mesh.scale.setScalar(1 + this.highlightAmount * 0.08);
+    const bodyMaterial = this.parts.body.material;
+    if (bodyMaterial instanceof THREE.MeshStandardMaterial) {
+      bodyMaterial.emissive.set(this.bodyColor);
+      bodyMaterial.emissiveIntensity = this.highlightAmount * 0.45;
+    }
+
     this.labelWorldPosition.copy(this.mesh.position);
     this.labelWorldPosition.y += typeof this.mesh.userData.labelOffset === "number" ? this.mesh.userData.labelOffset : 2.5;
+  }
+
+  setMeetingHighlight(highlighted: boolean): void {
+    this.highlightTarget = highlighted ? 1 : 0;
   }
 
   getLabelState(): LabelState {
