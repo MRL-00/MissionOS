@@ -67,11 +67,9 @@ export function createHud({ onResetCamera, apiBase = "http://localhost:3001" }: 
           <option value="strategy">Strategy</option>
           <option value="review">Review</option>
         </select>
-        <button class="button top-bar-button" type="button" data-action="start-meeting">Start Meeting</button>
+
       </div>
-      <button class="icon-button" type="button" data-action="settings" aria-label="Settings">
-        <span aria-hidden="true">⚙</span>
-      </button>
+
     </div>
   `;
   hud.append(topBar);

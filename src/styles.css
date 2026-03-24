@@ -224,11 +224,11 @@ canvas {
 .agent-sidebar {
   position: fixed;
   top: 84px;
-  left: 16px;
-  bottom: 16px;
+  left: 0;
+  bottom: 0;
   width: 280px;
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 0 12px 0 0;
   pointer-events: auto;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
