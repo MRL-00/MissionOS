@@ -16,6 +16,7 @@ interface DraftAgent {
   role: string;
   emoji: string;
   type: "resident" | "visitor";
+  deskIndex?: number | undefined;
   appearance: AgentAppearance;
   backendLink: AgentBackendLink;
 }
@@ -83,6 +84,7 @@ function cloneDraft(agent?: AgentRuntimeState): DraftAgent {
     role: agent.role,
     emoji: agent.emoji ?? "🙂",
     type: agent.type ?? "visitor",
+    deskIndex: agent.deskIndex,
     appearance: {
       ...fallback.appearance,
       ...(agent.appearance ?? {}),
@@ -207,6 +209,22 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
               <label><input type="radio" name="agent-type" value="visitor" /> Visitor</label>
             </div>
           </div>
+          <label class="creator-field">
+            <span>Desk</span>
+            <select class="admin-input" name="desk-index">
+              <option value="auto">Auto</option>
+              <option value="0">Desk 1</option>
+              <option value="1">Desk 2</option>
+              <option value="2">Desk 3</option>
+              <option value="3">Desk 4</option>
+              <option value="4">Desk 5</option>
+              <option value="5">Desk 6</option>
+              <option value="6">Desk 7</option>
+              <option value="7">Desk 8</option>
+              <option value="8">Desk 9</option>
+              <option value="9">Desk 10</option>
+            </select>
+          </label>
         </section>
         <section class="character-step" data-step-panel="1" hidden>
           <div class="creator-layout">
@@ -338,6 +356,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   const hairColorInput = modal.querySelector<HTMLInputElement>('input[name="hair-color"]');
   const bodyColorInput = modal.querySelector<HTMLInputElement>('input[name="body-color"]');
   const pantsColorInput = modal.querySelector<HTMLInputElement>('input[name="pants-color"]');
+  const deskIndexInput = modal.querySelector<HTMLSelectElement>('select[name="desk-index"]');
   const backendProviderInput = modal.querySelector<HTMLSelectElement>('select[name="backend-provider"]');
   const backendAgentIdInput = modal.querySelector<HTMLInputElement>('input[name="backend-agent-id"]');
   const openclawField = modal.querySelector<HTMLElement>("[data-backend-openclaw]");
@@ -365,6 +384,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     !hairColorInput ||
     !bodyColorInput ||
     !pantsColorInput ||
+    !deskIndexInput ||
     !backendProviderInput ||
     !backendAgentIdInput ||
     !openclawField ||
@@ -386,6 +406,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   const nameInputEl = nameInput;
   const roleInputEl = roleInput;
   const emojiInputEl = emojiInput;
+  const deskIndexInputEl = deskIndexInput;
   const heightInputEl = heightInput;
   const heightValueEl = heightValue;
   const skinColorInputEl = skinColorInput;
@@ -582,6 +603,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     if (typeInput) {
       typeInput.checked = true;
     }
+    deskIndexInputEl.value = typeof draft.deskIndex === "number" ? String(draft.deskIndex) : "auto";
     heightInputEl.value = String(draft.appearance.height ?? 1);
     heightValueEl.textContent = `${(draft.appearance.height ?? 1).toFixed(2)}x`;
     const headShapeInput = modal.querySelector<HTMLInputElement>(`input[name="head-shape"][value="${draft.appearance.headShape}"]`);
@@ -698,6 +720,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     draft.name = nameInputEl.value.trim();
     draft.role = roleInputEl.value.trim();
     draft.emoji = emojiInputEl.value.trim() || "🙂";
+    draft.deskIndex = deskIndexInputEl.value === "auto" ? undefined : Number(deskIndexInputEl.value);
 
     if (!draft.name || !draft.role) {
       setSaveStatus("Name and role are required.");
