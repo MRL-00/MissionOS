@@ -85,6 +85,9 @@ export interface AgentRegistration {
   id: string;
   name: string;
   role: string;
+  emoji?: string | undefined;
+  appearance?: AgentAppearance | undefined;
+  type?: "resident" | "visitor" | undefined;
 }
 
 export interface AgentRuntimeState extends AgentRegistration {
@@ -94,6 +97,11 @@ export interface AgentRuntimeState extends AgentRegistration {
   message?: string | undefined;
   location?: AgentEventLocation | undefined;
   timestamp: number;
+  deskIndex?: number | undefined;
+}
+
+export interface AgentSnapshotState extends AgentRuntimeState {
+  appearance: AgentAppearance;
 }
 
 export interface MeetingRequest {
@@ -163,11 +171,15 @@ export type ServerMessage =
     }
   | {
       type: "agents-snapshot";
-      agents: AgentRuntimeState[];
+      agents: AgentSnapshotState[];
     }
   | {
       type: "agent-removed";
       agentId: string;
+    }
+  | {
+      type: "agent-registered";
+      agent: AgentRuntimeState & { appearance?: AgentAppearance | undefined };
     }
   | {
       type: "meeting-start";

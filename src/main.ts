@@ -1,7 +1,7 @@
 import "./styles.css";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import agentsConfig from "./config/agents.json";
+import { buildAgentConfig, createDeterministicAppearance, getDefaultAgentConfig, getKnownDeskIndex } from "./agentDefaults";
 import { AgentController, STATUS } from "./characters/agentController";
 import { DemoDirector, moveAgentToDestination } from "./demo";
 import { OfficeWebSocketClient } from "./network/websocket";
@@ -10,9 +10,11 @@ import { createHud, LabelRenderer } from "./ui/overlay";
 import { SpeechBubbleRenderer } from "./ui/speechBubble";
 import type {
   ActivityLogEntry,
+  AgentAppearance,
   AgentConfig,
   AgentEvent,
   AgentRuntimeState,
+  AgentSnapshotState,
   AgentStatus,
   DeskSlot,
   DestinationWaypoint,
@@ -21,7 +23,6 @@ import type {
   ServerMessage,
 } from "./types";
 
-const typedAgentsConfig = agentsConfig as AgentConfig[];
 const app = document.querySelector<HTMLElement>("#app");
 
 if (!app) {
@@ -88,32 +89,20 @@ const { office, waypoints, updaters } = createOfficeScene();
 scene.add(office);
 
 const agents = new Map<string, AgentController>();
+const agentStates = new Map<string, AgentRuntimeState>();
 const deskAssignments = new Map<string, DeskSlot>();
+const agentAppearances = new Map<string, AgentAppearance>();
 const agentColors = new Map<string, string>();
-const unassignedDesks = waypoints.deskSlots.filter((desk) => !desk.assignedTo);
-
-typedAgentsConfig.forEach((agentConfig, index) => {
-  const assignedDesk =
-    waypoints.deskSlots.find((desk) => desk.assignedTo === agentConfig.id) ??
-    unassignedDesks.shift() ??
-    null;
-  const initialPosition = assignedDesk?.sit ?? waypoints.bullpen[index % waypoints.bullpen.length] ?? new THREE.Vector3();
-  const controller = new AgentController(agentConfig, initialPosition.clone(), assignedDesk?.facing ?? 0);
-  controller.navNodeId = assignedDesk?.nodeId ?? waypoints.entrance.nodeId;
-  scene.add(controller.mesh);
-  agents.set(agentConfig.id, controller);
-  agentColors.set(agentConfig.id, agentConfig.appearance.bodyColor);
-
-  if (assignedDesk) {
-    deskAssignments.set(agentConfig.id, assignedDesk);
-    moveAgentToDestination({ agents, deskAssignments, waypoints }, controller, assignedDesk, {
-      facing: assignedDesk.facing,
-      status: STATUS.working,
-      seated: false,
-    });
-    controller.mesh.position.copy(assignedDesk.sit);
-  }
-});
+const removalTimers = new Map<string, number>();
+const activityEntries: ActivityLogEntry[] = [];
+let meetingTranscript: MeetingTurn[] = [];
+let currentMeeting: MeetingState = {
+  active: false,
+  transcript: [],
+  progress: { currentTurn: 0, totalTurns: 0 },
+  speed: 1,
+  stopped: false,
+};
 
 const hud = createHud({
   onToggleDemo: toggleDemo,
@@ -127,32 +116,9 @@ const demo = new DemoDirector({
   deskAssignments,
   waypoints,
 });
-const agentOrder = typedAgentsConfig.map((agent) => agent.id);
-const agentStates = new Map<string, AgentRuntimeState>(
-  typedAgentsConfig.map((agent) => [
-    agent.id,
-    {
-      id: agent.id,
-      name: agent.name,
-      role: agent.role,
-      connected: false,
-      status: "idle",
-      location: "desk",
-      timestamp: Date.now(),
-    },
-  ]),
-);
-const activityEntries: ActivityLogEntry[] = [];
-let meetingTranscript: MeetingTurn[] = [];
-let currentMeeting: MeetingState = {
-  active: false,
-  transcript: [],
-  progress: { currentTurn: 0, totalTurns: 0 },
-  speed: 1,
-  stopped: false,
-};
 
 void hydrateOverlay();
+syncHudState();
 
 function getControllerStatus(status: AgentEvent["status"]): AgentStatus {
   if (status === "meeting") {
@@ -162,6 +128,12 @@ function getControllerStatus(status: AgentEvent["status"]): AgentStatus {
     return STATUS.working;
   }
   return STATUS.idle;
+}
+
+function getOrderedAgentIds(): string[] {
+  return Array.from(agentStates.values())
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((state) => state.id);
 }
 
 function syncHudState(): void {
@@ -176,18 +148,169 @@ function stopDemoForRealtime(): void {
   hud.setDemoRunning(false);
 }
 
-function getDeskDestination(agentId: string): DeskSlot | null {
-  const assignedDesk = deskAssignments.get(agentId);
-  if (assignedDesk) {
-    return assignedDesk;
+function cancelRemoval(agentId: string): void {
+  const timer = removalTimers.get(agentId);
+  if (timer === undefined) {
+    return;
+  }
+  window.clearTimeout(timer);
+  removalTimers.delete(agentId);
+}
+
+function releaseDesk(agentId: string): void {
+  deskAssignments.delete(agentId);
+}
+
+function getPreferredDesk(agentId: string, preferredIndex?: number): DeskSlot | null {
+  const assignedDesks = new Set(deskAssignments.values());
+
+  if (typeof preferredIndex === "number") {
+    const preferredDesk = waypoints.deskSlots[preferredIndex];
+    const currentOwner = preferredDesk ? Array.from(deskAssignments.entries()).find(([, desk]) => desk === preferredDesk)?.[0] : undefined;
+    if (preferredDesk && (!currentOwner || currentOwner === agentId)) {
+      return preferredDesk;
+    }
   }
 
-  const agentIndex = agentOrder.indexOf(agentId);
-  if (agentIndex < 0) {
+  return waypoints.deskSlots.find((desk) => !assignedDesks.has(desk)) ?? null;
+}
+
+function assignDesk(agentId: string, preferredIndex?: number): DeskSlot | null {
+  const assignedDesk = deskAssignments.get(agentId);
+  if (assignedDesk) {
+    if (typeof preferredIndex !== "number") {
+      return assignedDesk;
+    }
+
+    const preferredDesk = waypoints.deskSlots[preferredIndex];
+    if (!preferredDesk || preferredDesk === assignedDesk) {
+      return assignedDesk;
+    }
+
+    releaseDesk(agentId);
+    const reassignedDesk = getPreferredDesk(agentId, preferredIndex);
+    if (!reassignedDesk) {
+      deskAssignments.set(agentId, assignedDesk);
+      return assignedDesk;
+    }
+    deskAssignments.set(agentId, reassignedDesk);
+    return reassignedDesk;
+  }
+
+  const desk = getPreferredDesk(agentId, preferredIndex);
+  if (!desk) {
     return null;
   }
 
-  return waypoints.deskSlots[agentIndex] ?? null;
+  deskAssignments.set(agentId, desk);
+  return desk;
+}
+
+function appearancesMatch(left: AgentAppearance, right: AgentAppearance): boolean {
+  const leftAccessories = left.accessories ?? [];
+  const rightAccessories = right.accessories ?? [];
+  return (
+    left.height === right.height &&
+    left.headShape === right.headShape &&
+    left.skinColor === right.skinColor &&
+    left.hairStyle === right.hairStyle &&
+    left.hairColor === right.hairColor &&
+    left.bodyColor === right.bodyColor &&
+    left.pantsColor === right.pantsColor &&
+    leftAccessories.length === rightAccessories.length &&
+    leftAccessories.every((accessory, index) => accessory === rightAccessories[index])
+  );
+}
+
+function resolveAppearance(agentId: string, appearance?: AgentAppearance): AgentAppearance {
+  const cached = agentAppearances.get(agentId);
+  if (appearance) {
+    agentAppearances.set(agentId, appearance);
+    return appearance;
+  }
+
+  if (cached) {
+    return cached;
+  }
+
+  const fallback = getDefaultAgentConfig(agentId)?.appearance ?? createDeterministicAppearance(agentId);
+  agentAppearances.set(agentId, fallback);
+  return fallback;
+}
+
+function buildRuntimeConfig(state: Pick<AgentRuntimeState, "id" | "name" | "role" | "emoji">, appearance?: AgentAppearance): AgentConfig {
+  return buildAgentConfig({
+    id: state.id,
+    name: state.name,
+    role: state.role,
+    emoji: state.emoji,
+    appearance: resolveAppearance(state.id, appearance),
+  });
+}
+
+function createController(state: AgentRuntimeState, appearance?: AgentAppearance): AgentController {
+  const desk = assignDesk(state.id, state.deskIndex ?? getKnownDeskIndex(state.id));
+  const startAtDoor = state.location === "door" || state.status === "entering" || state.status === "leaving";
+  const initialPosition = startAtDoor
+    ? waypoints.entrance.position.clone()
+    : (desk?.sit ?? waypoints.entrance.position).clone();
+  const initialFacing = startAtDoor ? waypoints.entrance.facing : (desk?.facing ?? 0);
+  const controller = new AgentController(buildRuntimeConfig(state, appearance), initialPosition, initialFacing);
+  controller.navNodeId = startAtDoor ? waypoints.entrance.nodeId : (desk?.nodeId ?? waypoints.entrance.nodeId);
+  scene.add(controller.mesh);
+  agents.set(state.id, controller);
+  agentColors.set(state.id, resolveAppearance(state.id, appearance).bodyColor);
+  return controller;
+}
+
+function ensureController(state: AgentRuntimeState, appearance?: AgentAppearance): AgentController {
+  cancelRemoval(state.id);
+
+  const existing = agents.get(state.id);
+  if (existing) {
+    const currentAppearance = resolveAppearance(state.id);
+    const config = buildRuntimeConfig(state, appearance);
+    if (!appearancesMatch(currentAppearance, config.appearance)) {
+      const meshPosition = existing.mesh.position.clone();
+      const meshRotation = existing.mesh.rotation.y;
+      const navNodeId = existing.navNodeId;
+      const status = existing.status;
+      const task = existing.task;
+      const highlightTarget = existing.highlightTarget;
+
+      scene.remove(existing.mesh);
+      agents.delete(state.id);
+
+      const replacement = createController(state, config.appearance);
+      replacement.mesh.position.copy(meshPosition);
+      replacement.mesh.rotation.y = meshRotation;
+      replacement.targetPosition.copy(meshPosition);
+      replacement.targetFacing = meshRotation;
+      replacement.navNodeId = navNodeId;
+      replacement.status = status;
+      replacement.task = task;
+      replacement.highlightTarget = highlightTarget;
+      replacement.highlightAmount = highlightTarget;
+      return replacement;
+    }
+
+    existing.name = config.name;
+    existing.role = config.role;
+    existing.emoji = config.emoji;
+    existing.bodyColor = config.appearance.bodyColor;
+    agentColors.set(state.id, config.appearance.bodyColor);
+    if (typeof state.deskIndex === "number") {
+      assignDesk(state.id, state.deskIndex);
+    }
+    return existing;
+  }
+
+  return createController(state, appearance);
+}
+
+function getDeskDestination(agentId: string): DeskSlot | null {
+  const state = agentStates.get(agentId);
+  return deskAssignments.get(agentId) ?? assignDesk(agentId, state?.deskIndex ?? getKnownDeskIndex(agentId));
 }
 
 function getMeetingDestination(agentId: string): DestinationWaypoint | null {
@@ -195,8 +318,7 @@ function getMeetingDestination(agentId: string): DestinationWaypoint | null {
     return null;
   }
 
-  const config = currentMeeting.config;
-  const participantOrder = config?.participants ?? agentOrder;
+  const participantOrder = currentMeeting.config?.participants ?? getOrderedAgentIds();
   const participantIndex = participantOrder.indexOf(agentId);
   const seatIndex = participantIndex >= 0 ? participantIndex % waypoints.meetingSeats.length : 0;
   return waypoints.meetingSeats[seatIndex] ?? null;
@@ -250,15 +372,38 @@ function moveControllerForEvent(controller: AgentController, event: AgentEvent):
   });
 }
 
-function applyAgentState(state: AgentRuntimeState): void {
-  agentStates.set(state.id, state);
-  const controller = agents.get(state.id);
-  if (!controller) {
-    return;
+function upsertAgentState(state: AgentRuntimeState): AgentRuntimeState {
+  const previous = agentStates.get(state.id);
+  const next: AgentRuntimeState = {
+    ...previous,
+    ...state,
+  };
+  agentStates.set(state.id, next);
+  if (typeof next.deskIndex === "number") {
+    assignDesk(next.id, next.deskIndex);
   }
+  return next;
+}
 
-  controller.status = getControllerStatus(state.status);
-  controller.task = state.task;
+function removeAgentImmediately(agentId: string): void {
+  cancelRemoval(agentId);
+  const controller = agents.get(agentId);
+  if (controller) {
+    scene.remove(controller.mesh);
+    agents.delete(agentId);
+  }
+  releaseDesk(agentId);
+  agentColors.delete(agentId);
+  speechBubbleRenderer.hide(agentId);
+}
+
+function scheduleAgentRemoval(agentId: string, delayMs = 900): void {
+  cancelRemoval(agentId);
+  const timer = window.setTimeout(() => {
+    removalTimers.delete(agentId);
+    removeAgentImmediately(agentId);
+  }, delayMs);
+  removalTimers.set(agentId, timer);
 }
 
 function clearMeetingHighlights(): void {
@@ -284,29 +429,39 @@ function pushActivity(entry: ActivityLogEntry): void {
   hud.syncActivityLog(activityEntries);
 }
 
+function handleAgentRegistered(message: Extract<ServerMessage, { type: "agent-registered" }>): void {
+  const { appearance, ...state } = message.agent;
+  if (appearance) {
+    agentAppearances.set(state.id, appearance);
+  }
+  const next = upsertAgentState(state);
+  ensureController(next, appearance);
+  syncHudState();
+}
+
 function handleAgentEvent(event: AgentEvent): void {
   stopDemoForRealtime();
 
   const previous = agentStates.get(event.agentId);
-  const next: AgentRuntimeState = {
+  const next = upsertAgentState({
     id: event.agentId,
-    name: previous?.name ?? event.agentId,
-    role: previous?.role ?? "Temporary Agent",
+    name: previous?.name ?? getDefaultAgentConfig(event.agentId)?.name ?? event.agentId,
+    role: previous?.role ?? getDefaultAgentConfig(event.agentId)?.role ?? "Temporary Agent",
+    emoji: previous?.emoji ?? getDefaultAgentConfig(event.agentId)?.emoji,
+    type: previous?.type ?? "visitor",
+    deskIndex: previous?.deskIndex ?? getKnownDeskIndex(event.agentId),
     connected: true,
     status: event.status,
     timestamp: event.timestamp,
     location: event.location ?? previous?.location,
     task: event.task ?? previous?.task,
     message: event.message ?? previous?.message,
-  };
-  agentStates.set(event.agentId, next);
+  });
 
-  const controller = agents.get(event.agentId);
-  if (controller) {
-    controller.status = getControllerStatus(event.status);
-    controller.task = event.task ?? previous?.task;
-    moveControllerForEvent(controller, event);
-  }
+  const controller = ensureController(next);
+  controller.status = getControllerStatus(event.status);
+  controller.task = event.task ?? previous?.task;
+  moveControllerForEvent(controller, event);
 
   if (event.message) {
     showSpeech(event.agentId, event.message, currentMeeting.active ? "meeting" : "default");
@@ -318,28 +473,74 @@ function handleAgentEvent(event: AgentEvent): void {
 }
 
 function handleSnapshot(message: Extract<ServerMessage, { type: "agents-snapshot" }>): void {
-  agentStates.clear();
-  message.agents.forEach((state) => {
-    applyAgentState(state);
-    const controller = agents.get(state.id);
-    if (controller) {
-      moveControllerForEvent(controller, {
-        agentId: state.id,
-        status: state.status,
-        location: state.location,
-        timestamp: state.timestamp,
-      });
+  const snapshotIds = new Set(message.agents.map((state) => state.id));
+
+  Array.from(agents.keys()).forEach((agentId) => {
+    if (!snapshotIds.has(agentId)) {
+      removeAgentImmediately(agentId);
     }
   });
+
+  agentStates.clear();
+  message.agents.forEach((snapshotState: AgentSnapshotState) => {
+    agentAppearances.set(snapshotState.id, snapshotState.appearance);
+    const { appearance, ...state } = snapshotState;
+    const next = upsertAgentState(state);
+    const controller = ensureController(next, appearance);
+    controller.status = getControllerStatus(next.status);
+    controller.task = next.task;
+    moveControllerForEvent(controller, {
+      agentId: next.id,
+      status: next.status,
+      location: next.location,
+      timestamp: next.timestamp,
+    });
+  });
+
   syncHudState();
 }
 
 function handleAgentRemoved(agentId: string): void {
+  const controller = agents.get(agentId);
   agentStates.delete(agentId);
   syncHudState();
+
+  if (!controller) {
+    removeAgentImmediately(agentId);
+    return;
+  }
+
+  moveControllerForEvent(controller, {
+    agentId,
+    status: "leaving",
+    location: "door",
+    timestamp: Date.now(),
+  });
+  scheduleAgentRemoval(agentId, 1000);
+}
+
+function applyMeetingStatus(state: MeetingState): void {
+  currentMeeting = state;
+  meetingTranscript = state.transcript;
+  hud.setMeetingActive(state.active);
+  syncTranscript();
+
+  clearMeetingHighlights();
+  if (state.currentSpeakerId) {
+    agents.get(state.currentSpeakerId)?.setMeetingHighlight(true);
+  }
+
+  if (!state.active) {
+    speechBubbleRenderer.clear();
+  }
 }
 
 function handleServerMessage(message: ServerMessage): void {
+  if (message.type === "agent-registered") {
+    handleAgentRegistered(message);
+    return;
+  }
+
   if (message.type === "meeting-start") {
     stopDemoForRealtime();
     meetingTranscript = [];
@@ -419,23 +620,6 @@ function handleServerMessage(message: ServerMessage): void {
 
   if (message.type === "activity-log") {
     pushActivity(message.entry);
-    return;
-  }
-}
-
-function applyMeetingStatus(state: MeetingState): void {
-  currentMeeting = state;
-  meetingTranscript = state.transcript;
-  hud.setMeetingActive(state.active);
-  syncTranscript();
-
-  clearMeetingHighlights();
-  if (state.currentSpeakerId) {
-    agents.get(state.currentSpeakerId)?.setMeetingHighlight(true);
-  }
-
-  if (!state.active) {
-    speechBubbleRenderer.clear();
   }
 }
 
@@ -452,7 +636,6 @@ const websocketClient = new OfficeWebSocketClient({
   onAgentRemoved: handleAgentRemoved,
 });
 websocketClient.connect();
-syncHudState();
 
 function toggleDemo(): void {
   if (demo.running) {
@@ -468,7 +651,7 @@ function toggleDemo(): void {
 
 function resetAgentsToDesks(): void {
   agents.forEach((controller, id) => {
-    const desk = deskAssignments.get(id);
+    const desk = getDeskDestination(id);
     if (!desk) {
       return;
     }
