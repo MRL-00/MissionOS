@@ -452,11 +452,6 @@ canvas {
   z-index: 11;
 }
 
-.activity-panel-backdrop:focus-visible {
-  outline: 2px solid #9bd0ff;
-  outline-offset: -4px;
-}
-
 .mobile-activity-toggle {
   position: fixed;
   right: 16px;
@@ -612,6 +607,7 @@ canvas {
   line-height: 1.5;
   color: #f7fbff;
   overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .activity-message-clamped {
@@ -1303,18 +1299,14 @@ canvas {
     justify-content: center;
   }
 
+  .agent-sidebar .sidebar-toggle,
   .mobile-activity-toggle,
   .button,
   .icon-button,
   .top-bar-button,
   .admin-input,
-  .admin-select,
-  .activity-message-toggle {
+  .admin-select {
     min-height: 44px;
-  }
-
-  .agent-sidebar .sidebar-toggle {
-    display: none;
   }
 
   .activity-panel {
