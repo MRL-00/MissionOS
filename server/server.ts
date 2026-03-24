@@ -918,7 +918,11 @@ function startOpenClawWsConnection(): void {
   openClawWsConnected = false;
   openClawWsConnectSent = false;
 
-  const socket = new WsWebSocket(wsUrl);
+  const socket = new WsWebSocket(wsUrl, {
+    headers: {
+      Origin: OPENCLAW_URL.replace(/^ws/, "http"),
+    },
+  });
   openClawWs = socket;
 
   socket.on("open", () => {
@@ -995,10 +999,10 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "cli",
+      id: "openclaw-control-ui",
       version: "1.0.0",
       platform: "node",
-      mode: "cli",
+      mode: "webchat",
       instanceId: generateId(),
     },
     role: "operator",
