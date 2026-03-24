@@ -998,11 +998,11 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
       id: "gateway-client",
       version: "1.0.0",
       platform: "node",
-      mode: "webchat",
+      mode: "backend",
       instanceId: generateId(),
     },
     role: "operator",
-    scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
+    scopes: ["operator.admin", "operator.read", "operator.write", "operator.approvals", "operator.pairing"],
     caps: [],
     auth: {
       token: OPENCLAW_TOKEN || undefined,
