@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { FACILITATOR_ROTATION } from "../config/meeting-rules";
+import { createCharacterCreator } from "./characterCreator";
 import type { ActivityLogEntry, AgentRuntimeState, LabelState, MeetingTurn, RealtimeAgentStatus } from "../types";
 
 interface HudOptions {
@@ -71,7 +72,10 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
     </div>
     <div class="connection-status" data-connection="offline">Realtime: offline</div>
     <div class="agent-sidebar">
-      <h2>Live Agents</h2>
+      <div class="agent-sidebar-header">
+        <h2>Live Agents</h2>
+        <button class="button" type="button" data-action="add-agent">Add Agent</button>
+      </div>
       <ul class="agent-list"></ul>
     </div>
   `;
@@ -115,12 +119,8 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
       <div class="admin-agent-list"></div>
     </div>
     <div class="admin-section">
-      <h3>Register External Agent</h3>
-      <div class="admin-grid">
-        <input class="admin-input" name="register-name" placeholder="Name" />
-        <input class="admin-input" name="register-role" placeholder="Role" />
-        <button class="button secondary" type="button" data-action="register">Register External Agent</button>
-      </div>
+      <h3>Roster</h3>
+      <button class="button secondary" type="button" data-action="add-agent">Open Character Creator</button>
     </div>
     <div class="admin-section">
       <h3>Activity Log</h3>
@@ -161,8 +161,6 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
   const strategyTopic = adminPanel.querySelector<HTMLInputElement>('input[name="strategy-topic"]');
   const reviewPresenter = adminPanel.querySelector<HTMLSelectElement>('select[name="review-presenter"]');
   const meetingSpeed = adminPanel.querySelector<HTMLSelectElement>('select[name="meeting-speed"]');
-  const registerName = adminPanel.querySelector<HTMLInputElement>('input[name="register-name"]');
-  const registerRole = adminPanel.querySelector<HTMLInputElement>('input[name="register-role"]');
   const adminAgentList = adminPanel.querySelector<HTMLDivElement>(".admin-agent-list");
   const activityLog = adminPanel.querySelector<HTMLDivElement>(".activity-log");
   const transcriptLog = transcriptPanel.querySelector<HTMLDivElement>(".transcript-log");
@@ -170,6 +168,10 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
   const agentNodes = new Map<string, AgentListRefs>();
   let latestStates: AgentRuntimeState[] = [];
   let meetingActive = false;
+  const characterCreator = createCharacterCreator({
+    apiBase,
+    getExistingAgents: () => latestStates,
+  });
 
   async function post(path: string, body: unknown): Promise<void> {
     const response = await fetch(`${apiBase}${path}`, {
@@ -263,6 +265,9 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
     latestStates.forEach((state) => {
       const card = document.createElement("div");
       card.className = "admin-agent-card";
+      card.addEventListener("click", () => {
+        characterCreator.openEdit(state);
+      });
       const head = document.createElement("div");
       head.className = "admin-agent-head";
       const name = document.createElement("strong");
@@ -341,23 +346,11 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
   adminPanel.querySelector<HTMLButtonElement>('[data-action="stop-meeting"]')?.addEventListener("click", () => {
     void post("/api/meeting/stop", {});
   });
-  adminPanel.querySelector<HTMLButtonElement>('[data-action="register"]')?.addEventListener("click", () => {
-    const name = registerName?.value.trim() ?? "";
-    const role = registerRole?.value.trim() ?? "";
-    if (!name || !role) {
-      return;
-    }
-    void post("/api/agent/register", {
-      id: slugify(name),
-      name,
-      role,
-    });
-    if (registerName) {
-      registerName.value = "";
-    }
-    if (registerRole) {
-      registerRole.value = "";
-    }
+  panel.querySelector<HTMLButtonElement>('[data-action="add-agent"]')?.addEventListener("click", () => {
+    characterCreator.openCreate();
+  });
+  adminPanel.querySelector<HTMLButtonElement>('[data-action="add-agent"]')?.addEventListener("click", () => {
+    characterCreator.openCreate();
   });
 
   window.addEventListener("keydown", (event) => {
@@ -420,11 +413,18 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
           refs = { node, name, meta, task };
           agentNodes.set(state.id, refs);
           agentList.append(node);
+          node.addEventListener("click", () => {
+            const latest = latestStates.find((item) => item.id === state.id);
+            if (latest) {
+              characterCreator.openEdit(latest);
+            }
+          });
         }
 
         refs.node.dataset.status = state.status;
         refs.name.textContent = `${state.name} · ${state.role}`;
-        refs.meta.textContent = `${formatRealtimeStatus(state.status)}${state.connected ? "" : " · offline"}`;
+        const deskLabel = typeof state.deskIndex === "number" ? `Desk ${state.deskIndex + 1}` : "Desk unassigned";
+        refs.meta.textContent = `${deskLabel} · ${formatRealtimeStatus(state.status)}${state.connected ? "" : " · offline"}`;
         refs.task.textContent = state.task ?? "No active task";
       });
 

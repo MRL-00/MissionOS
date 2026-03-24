@@ -3,6 +3,7 @@ import type * as THREE from "three";
 export type HeadShape = "round" | "oval" | "square";
 export type HairStyle = "none" | "short" | "long" | "mohawk" | "messy" | "slicked" | "buzz" | "curly";
 export type Accessory = "glasses" | "hat" | "tie" | "beard";
+export type AgentBackendProvider = "openclaw" | "claude" | "codex" | "unlinked";
 export type AgentStatus = "idle" | "working" | "in-meeting";
 export type RealtimeAgentStatus = "idle" | "working" | "meeting" | "entering" | "leaving";
 export type AgentEventLocation = "desk" | "meeting-room" | "door" | "cio-office";
@@ -26,6 +27,14 @@ export interface AgentConfig {
   role: string;
   emoji: string;
   appearance: AgentAppearance;
+}
+
+export interface AgentBackendLink {
+  provider: AgentBackendProvider;
+  agentId?: string | undefined;
+  connected: boolean;
+  tokenId?: string | undefined;
+  connectedAt?: number | undefined;
 }
 
 export interface AgentParts {
@@ -88,6 +97,7 @@ export interface AgentRegistration {
   emoji?: string | undefined;
   appearance?: AgentAppearance | undefined;
   type?: "resident" | "visitor" | undefined;
+  backendLink?: AgentBackendLink | undefined;
 }
 
 export interface AgentRuntimeState extends AgentRegistration {
