@@ -45,9 +45,13 @@ for store_path in glob.glob(agents_dir + '/*/sessions/sessions.json'):
                 # Skip cron run sessions — they cause flickering
                 if ':cron:' in key and ':run:' in key:
                     continue
+                display = meta.get('displayName', meta.get('label', ''))
+                # If displayName looks like a raw session key, clear it
+                if display and (':telegram:' in display or ':discord:' in display or ':subagent:' in display or display.startswith('agent:')):
+                    display = ''
                 sessions.append({
                     'key': key,
-                    'displayName': meta.get('displayName', meta.get('label', key)),
+                    'displayName': display or None,
                     'status': 'active',
                     'agentId': agent_id,
                 })

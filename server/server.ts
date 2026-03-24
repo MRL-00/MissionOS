@@ -846,6 +846,12 @@ function extractOpenClawMessageText(value: unknown): string | undefined {
   );
 }
 
+/** Returns true if the string looks like a raw session key rather than a human-readable label. */
+function looksLikeSessionKey(text: string): boolean {
+  const t = text.trim();
+  return t.startsWith("agent:") || /:(telegram|discord|subagent|cron|direct):/.test(t);
+}
+
 function normalizeToolSessions(result: unknown): OpenClawSessionInfo[] {
   const rows = Array.isArray(result)
     ? result
@@ -1143,7 +1149,8 @@ async function pollOpenClawSessions(): Promise<void> {
 
       currentlyActive.add(officeAgentId);
       const isWorking = session.status === "running" || session.status === "active";
-      const task = session.task ?? session.label;
+      const rawTask = session.task ?? session.label;
+      const task = (rawTask && looksLikeSessionKey(rawTask)) ? undefined : rawTask;
       await applyOpenClawStatus(officeAgentId, openClawAgentId, isWorking ? "working" : "idle", task);
     }
 
@@ -1328,7 +1335,8 @@ const httpServer = createServer(async (request, response) => {
         if (!officeAgentId) continue;
         currentlyActive.add(officeAgentId);
         const isWorking = session.status === "running" || session.status === "active";
-        const task = session.task ?? session.label;
+        const rawTask = session.task ?? session.label;
+        const task = (rawTask && looksLikeSessionKey(rawTask)) ? undefined : rawTask;
         await applyOpenClawStatus(officeAgentId, openClawAgentId, isWorking ? "working" : "idle", task);
       }
       for (const [officeAgentId, state] of openClawStates) {
