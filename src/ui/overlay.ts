@@ -58,7 +58,7 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
   panel.className = "hud-panel";
   panel.innerHTML = `
     <h1>EpicShot Office</h1>
-    <p>Low-poly office diorama with configurable agents, glass offices, and a lightweight demo choreography.</p>
+    <p>Low-poly office diorama with configurable agents, glass offices, mouse orbit controls, and WASD camera movement.</p>
     <div class="controls">
       <button class="button" type="button" data-action="demo">Start Demo Mode</button>
       <button class="button secondary" type="button" data-action="reset">Reset View</button>

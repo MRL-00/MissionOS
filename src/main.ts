@@ -54,6 +54,13 @@ controls.minDistance = 7;
 controls.maxDistance = 42;
 controls.target.copy(defaultTarget);
 
+const cameraMoveKeys = new Set<string>();
+const cameraMoveVector = new THREE.Vector3();
+const cameraForward = new THREE.Vector3();
+const cameraRight = new THREE.Vector3();
+const worldUp = new THREE.Vector3(0, 1, 0);
+const CAMERA_MOVE_SPEED = 10;
+
 const ambient = new THREE.HemisphereLight("#fff5de", "#b98f60", 1.9);
 scene.add(ambient);
 
@@ -487,6 +494,75 @@ function resize(): void {
   renderer.setSize(width, height);
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
+function handleCameraMoveKey(event: KeyboardEvent, pressed: boolean): void {
+  if (event.repeat && pressed) {
+    return;
+  }
+
+  if (event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) {
+    return;
+  }
+
+  const supportedKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
+  if (!supportedKeys.has(event.code)) {
+    return;
+  }
+
+  event.preventDefault();
+  if (pressed) {
+    cameraMoveKeys.add(event.code);
+    return;
+  }
+  cameraMoveKeys.delete(event.code);
+}
+
+function updateKeyboardCamera(delta: number): void {
+  cameraMoveVector.set(0, 0, 0);
+
+  if (cameraMoveKeys.has("KeyW") || cameraMoveKeys.has("ArrowUp")) {
+    cameraMoveVector.z += 1;
+  }
+  if (cameraMoveKeys.has("KeyS") || cameraMoveKeys.has("ArrowDown")) {
+    cameraMoveVector.z -= 1;
+  }
+  if (cameraMoveKeys.has("KeyA") || cameraMoveKeys.has("ArrowLeft")) {
+    cameraMoveVector.x -= 1;
+  }
+  if (cameraMoveKeys.has("KeyD") || cameraMoveKeys.has("ArrowRight")) {
+    cameraMoveVector.x += 1;
+  }
+
+  if (cameraMoveVector.lengthSq() === 0) {
+    return;
+  }
+
+  cameraForward.subVectors(controls.target, camera.position);
+  cameraForward.y = 0;
+  if (cameraForward.lengthSq() === 0) {
+    return;
+  }
+  cameraForward.normalize();
+  cameraRight.crossVectors(cameraForward, worldUp).normalize();
+
+  const translation = new THREE.Vector3()
+    .addScaledVector(cameraForward, cameraMoveVector.z)
+    .addScaledVector(cameraRight, cameraMoveVector.x)
+    .normalize()
+    .multiplyScalar(CAMERA_MOVE_SPEED * delta);
+
+  camera.position.add(translation);
+  controls.target.add(translation);
+}
+
 async function hydrateOverlay(): Promise<void> {
   try {
     const [activityResponse, transcriptResponse] = await Promise.all([
@@ -513,6 +589,9 @@ async function hydrateOverlay(): Promise<void> {
 }
 
 window.addEventListener("resize", resize);
+window.addEventListener("keydown", (event) => handleCameraMoveKey(event, true));
+window.addEventListener("keyup", (event) => handleCameraMoveKey(event, false));
+window.addEventListener("blur", () => cameraMoveKeys.clear());
 
 const clock = new THREE.Clock();
 
@@ -521,6 +600,7 @@ renderer.setAnimationLoop(() => {
   const elapsed = clock.elapsedTime;
 
   demo.update(delta);
+  updateKeyboardCamera(delta);
   controls.update();
   updaters.forEach((updater) => updater(delta, elapsed));
 

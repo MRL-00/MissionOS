@@ -77,14 +77,27 @@ export function createDesk({
   group.add(screen);
 
   const keyboard = new THREE.Mesh(
-    new THREE.BoxGeometry(executive ? 0.68 : 0.6, 0.05, 0.26),
-    makeMaterial("#d8dde3"),
+    new THREE.BoxGeometry(executive ? 0.78 : 0.68, 0.05, 0.3),
+    makeMaterial("#f3f6fa"),
   );
-  keyboard.position.set(monitorX - (executive ? 0.12 : 0.14), 1.22, executive ? 0.42 : 0.34);
+  keyboard.position.set(monitorX - (executive ? 0.18 : 0.2), 1.22, executive ? 0.64 : 0.54);
   group.add(keyboard);
 
-  const mouse = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.16), makeMaterial("#eef2f6"));
-  mouse.position.set(monitorX + (executive ? 0.42 : 0.3), 1.21, executive ? 0.4 : 0.33);
+  [-0.18, 0, 0.18].forEach((x) => {
+    const keyStripe = new THREE.Mesh(
+      new THREE.BoxGeometry(executive ? 0.18 : 0.15, 0.012, 0.22),
+      makeMaterial("#aeb8c2"),
+    );
+    keyStripe.position.set(
+      monitorX - (executive ? 0.18 : 0.2) + x,
+      1.255,
+      executive ? 0.64 : 0.54,
+    );
+    group.add(keyStripe);
+  });
+
+  const mouse = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.18), makeMaterial("#ffffff"));
+  mouse.position.set(monitorX + (executive ? 0.24 : 0.18), 1.21, executive ? 0.62 : 0.52);
   group.add(mouse);
 
   const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.22, 10), makeMaterial("#f7efe4"));

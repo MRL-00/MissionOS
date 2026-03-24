@@ -201,12 +201,6 @@ function createBodyAccessories(accessories: Accessory[], appearance: AgentAppear
     group.add(tie);
   }
 
-  if (accessories.includes("beard")) {
-    const beard = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, 0.12), dark);
-    beard.position.set(0, -0.2, 0.26);
-    group.add(beard);
-  }
-
   return group;
 }
 

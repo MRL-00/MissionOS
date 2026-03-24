@@ -317,7 +317,7 @@ export function createOfficeScene(): OfficeSceneResult {
   meetingWallEast.rotation.y = Math.PI / 2;
   office.add(meetingWallEast);
 
-  const randallDesk = createDesk({ x: 4.45, z: -2.45, chairSide: 1, accent: "#7e8f69", rotation: -Math.PI / 2 });
+  const randallDesk = createDesk({ x: 1.7, z: -2.05, chairSide: 1, accent: "#7e8f69", rotation: -Math.PI / 2 });
   const desks = [
     createDesk({ x: -3.9, z: 3.15, chairSide: 1, accent: "#855f46" }),
     createDesk({ x: 0, z: 3.15, chairSide: 1, accent: "#91694e" }),
@@ -328,7 +328,7 @@ export function createOfficeScene(): OfficeSceneResult {
     createDesk({ x: -3.9, z: -4.85, chairSide: 1, accent: "#855f46" }),
     createDesk({ x: -1.1, z: -4.85, chairSide: 1, accent: "#91694e" }),
     randallDesk,
-    createDesk({ x: 9.55, z: 5.95, chairSide: -1, accent: "#6d4d38", rotation: Math.PI / 2, executive: true }),
+    createDesk({ x: 9.55, z: 5.95, chairSide: 1, accent: "#6d4d38", rotation: Math.PI / 2, executive: true }),
   ];
   randallDesk.scale.y = 1.08;
   desks.forEach((desk) => office.add(desk));
@@ -417,8 +417,8 @@ export function createOfficeScene(): OfficeSceneResult {
     createDeskWaypoint({ x: 3.9, z: -0.85, assignedTo: "danny" }),
     createDeskWaypoint({ x: -3.9, z: -4.85, assignedTo: "johnny" }),
     createDeskWaypoint({ x: -1.1, z: -4.85, assignedTo: "tommy" }),
-    createDeskWaypoint({ x: 4.45, z: -2.45, rotation: -Math.PI / 2, assignedTo: "randall" }),
-    createDeskWaypoint({ x: 9.55, z: 5.95, rotation: Math.PI / 2, chairSide: -1, assignedTo: "cio" }),
+    createDeskWaypoint({ x: 1.7, z: -2.05, rotation: -Math.PI / 2, assignedTo: "randall" }),
+    createDeskWaypoint({ x: 9.55, z: 5.95, rotation: Math.PI / 2, chairSide: 1, assignedTo: "cio" }),
   ];
 
   const navigation: NavigationGraph = {
@@ -442,7 +442,7 @@ export function createOfficeScene(): OfficeSceneResult {
     southHallWest: { position: new THREE.Vector3(-5.45, 0, -2.55), links: [] },
     southHallCenter: { position: new THREE.Vector3(0, 0, -2.55), links: [] },
     southHallEast: { position: new THREE.Vector3(4.65, 0, -2.55), links: [] },
-    scrumDeskHub: { position: new THREE.Vector3(2.35, 0, -2.45), links: [] },
+    scrumDeskHub: { position: new THREE.Vector3(0.05, 0, -2.05), links: [] },
     kitchenDoor: { position: new THREE.Vector3(-7.55, 0, -2.55), links: [] },
     kitchenHub: { position: new THREE.Vector3(-9.25, 0, -4.95), links: [] },
     meetingDoorOuter: { position: new THREE.Vector3(4.8, 0, -4.35), links: [] },
