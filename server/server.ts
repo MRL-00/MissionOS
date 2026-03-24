@@ -1002,7 +1002,7 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
       instanceId: generateId(),
     },
     role: "operator",
-    scopes: ["operator.admin"],
+    scopes: ["operator.admin", "operator.read"],
     caps: [],
     auth: {
       token: OPENCLAW_TOKEN || undefined,
