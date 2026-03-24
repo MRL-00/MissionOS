@@ -1006,7 +1006,6 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
     caps: [],
     auth: {
       token: OPENCLAW_TOKEN || undefined,
-      nonce: nonce || undefined,
     },
   };
 
