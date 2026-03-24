@@ -250,8 +250,9 @@ export class MeetingEngine {
 
         this.options.onApplyEvent({
           agentId,
-          status: "working",
-          task: "Post-meeting follow-up",
+          status: "idle",
+          task: "",
+          message: "",
           location: "desk",
           timestamp: Date.now(),
         });
@@ -309,8 +310,9 @@ export class MeetingEngine {
     for (const agentId of stateBeforeStop.config.participants) {
       this.options.onApplyEvent({
         agentId,
-        status: "working",
-        task: "Meeting interrupted",
+        status: "idle",
+        task: "",
+        message: "",
         location: "desk",
         timestamp: Date.now(),
       });
