@@ -452,6 +452,16 @@ canvas {
   z-index: 11;
 }
 
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: rgba(2, 6, 15, 0.48);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+  z-index: 99;
+}
+
 .mobile-activity-toggle {
   position: fixed;
   right: 16px;
@@ -1311,8 +1321,39 @@ canvas {
     display: none;
   }
 
+  .agent-sidebar[data-mobile="true"][data-collapsed="false"] {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    min-width: 280px;
+    height: 100vh;
+    padding: 18px 12px 16px;
+    border-radius: 0 18px 18px 0;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 12px;
+    z-index: 100;
+  }
+
+  .agent-sidebar[data-mobile="true"][data-collapsed="false"] .agent-list {
+    display: grid;
+  }
+
+  .agent-sidebar[data-mobile="true"][data-collapsed="false"] .agent-sidebar-footer {
+    display: flex;
+  }
+
+  .agent-sidebar[data-mobile="true"][data-collapsed="false"] .agent-sidebar-heading {
+    display: block;
+  }
+
   .agent-sidebar .agent-sidebar-header {
     justify-content: center;
+  }
+
+  .agent-sidebar[data-mobile="true"][data-collapsed="false"] .agent-sidebar-header {
+    justify-content: space-between;
   }
 
   .agent-sidebar .sidebar-toggle,

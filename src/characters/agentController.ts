@@ -124,8 +124,8 @@ export class AgentController {
     const visuallySeated = this.seated && !this.walking;
     this.seatAmount = THREE.MathUtils.damp(this.seatAmount, visuallySeated ? 1 : 0, 6, delta);
 
-    this.parts.bodyPivot.position.set(0, 0.08 + bob - this.seatAmount * 0.4, this.seatAmount * 0.14);
-    this.parts.bodyPivot.rotation.x = -this.seatAmount * 0.62;
+    this.parts.bodyPivot.position.set(0, 0.08 + bob - this.seatAmount * 0.4, this.seatAmount * 0.06);
+    this.parts.bodyPivot.rotation.x = this.seatAmount * 0.15;
     this.parts.headPivot.rotation.x = Math.sin(elapsed * 1.5 + this.phase) * 0.03;
     this.parts.arms.leftArm.rotation.x = sway;
     this.parts.arms.rightArm.rotation.x = -sway;

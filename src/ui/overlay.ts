@@ -218,6 +218,13 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   activityBackdrop.setAttribute("aria-label", "Dismiss activity log");
   hud.append(activityBackdrop);
 
+  const sidebarBackdrop = document.createElement("button");
+  sidebarBackdrop.className = "sidebar-backdrop";
+  sidebarBackdrop.type = "button";
+  sidebarBackdrop.hidden = true;
+  sidebarBackdrop.setAttribute("aria-label", "Dismiss agent sidebar");
+  hud.append(sidebarBackdrop);
+
   const mobileActivityToggle = document.createElement("button");
   mobileActivityToggle.className = "mobile-activity-toggle";
   mobileActivityToggle.type = "button";
@@ -374,14 +381,17 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     return latestStates.find((state) => state.id === agentId)?.name;
   }
 
-  function setSidebarCollapsed(next: boolean): void {
+  function setSidebarCollapsed(next: boolean, persist = true): void {
     sidebarCollapsed = next;
     sidebar.dataset.collapsed = String(next);
+    sidebarBackdrop.hidden = !(isMobileLayout && !next);
     sidebarToggleButton?.setAttribute("aria-label", next ? "Expand agent sidebar" : "Collapse agent sidebar");
     if (sidebarToggleIcon) {
       sidebarToggleIcon.textContent = next ? "☰" : "‹";
     }
-    window.localStorage.setItem(sidebarCollapsedKey, String(next));
+    if (persist) {
+      window.localStorage.setItem(sidebarCollapsedKey, String(next));
+    }
   }
 
   function syncActivityToggleState(): void {
@@ -414,18 +424,11 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     topBarActivityButton?.toggleAttribute("hidden", next);
     if (next) {
       desktopSidebarCollapsed = sidebarCollapsed;
-      sidebar.dataset.collapsed = "true";
-      sidebarToggleButton?.setAttribute("aria-label", "Expand agent sidebar");
-      if (sidebarToggleIcon) {
-        sidebarToggleIcon.textContent = "☰";
-      }
+      setSidebarCollapsed(true, false);
       toggleActivity(false);
     } else {
-      sidebar.dataset.collapsed = String(desktopSidebarCollapsed);
-      sidebarToggleButton?.setAttribute("aria-label", desktopSidebarCollapsed ? "Expand agent sidebar" : "Collapse agent sidebar");
-      if (sidebarToggleIcon) {
-        sidebarToggleIcon.textContent = desktopSidebarCollapsed ? "☰" : "‹";
-      }
+      setSidebarCollapsed(desktopSidebarCollapsed, false);
+      sidebarBackdrop.hidden = true;
       activityBackdrop.hidden = true;
       mobileActivityToggle.hidden = true;
     }
@@ -723,6 +726,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   sidebarToggleButton?.addEventListener("click", () => {
     setSidebarCollapsed(!sidebarCollapsed);
   });
+  sidebarBackdrop.addEventListener("click", () => setSidebarCollapsed(true));
   topBarActivityButton?.addEventListener("click", () => toggleActivity());
   mobileActivityToggle.addEventListener("click", () => toggleActivity());
   activityBackdrop.addEventListener("click", () => toggleActivity(false));
