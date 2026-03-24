@@ -120,7 +120,8 @@ const agentAppearances = new Map<string, AgentAppearance>();
 const activityLog: ActivityLogEntry[] = [];
 const transitionTimers = new Map<string, NodeJS.Timeout>();
 const residentDeskAssignments = new Map<string, number>();
-const openClawStates = new Map<string, { openClawAgentId: string; status: "idle" | "working"; task?: string | undefined }>();
+const openClawStates = new Map<string, { openClawAgentId: string; status: "idle" | "working"; task?: string | undefined; lastSeenWorkingAt?: number | undefined }>();
+const OPENCLAW_IDLE_GRACE_MS = 60_000; // Keep agent "working" for 60s after last seen active
 let websocketServer: WebSocketServer;
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
@@ -1104,12 +1105,27 @@ async function applyOpenClawStatus(
 ): Promise<void> {
   await ensureOpenClawAgentRegistered(officeAgentId, openClawAgentId);
 
+  const now = Date.now();
   const normalizedTask = task?.trim() || undefined;
   const previous = openClawStates.get(officeAgentId);
-  if (previous?.status === status && previous?.task === normalizedTask) {
+
+  // If going idle but was recently working, use grace period to avoid flickering
+  if (status === "idle" && previous?.status === "working" && previous.lastSeenWorkingAt) {
+    if (now - previous.lastSeenWorkingAt < OPENCLAW_IDLE_GRACE_MS) {
+      return; // Stay working during grace period
+    }
+  }
+
+  // If still working, update last-seen timestamp but skip event if nothing changed
+  if (status === "working") {
+    if (previous?.status === status && previous?.task === normalizedTask) {
+      // Just refresh the timestamp, don't broadcast
+      openClawStates.set(officeAgentId, { ...previous, lastSeenWorkingAt: now });
+      return;
+    }
+  } else if (previous?.status === status && previous?.task === normalizedTask) {
     return;
   }
-  console.log(`[openclaw-sync] ${officeAgentId}: ${previous?.status ?? "new"} → ${status} (task: ${normalizedTask ?? "none"})`);
 
   cancelTransitionTimer(officeAgentId);
 
@@ -1117,7 +1133,7 @@ async function applyOpenClawStatus(
     agentId: officeAgentId,
     status,
     location: "desk",
-    timestamp: Date.now(),
+    timestamp: now,
     task: status === "working" ? (normalizedTask ?? "") : "",
   };
   const next = applyEvent(event);
@@ -1125,6 +1141,7 @@ async function applyOpenClawStatus(
     openClawAgentId,
     status,
     task: normalizedTask,
+    lastSeenWorkingAt: status === "working" ? now : undefined,
   });
   pushActivity("agent-status", formatStatusActivity(next, event), officeAgentId);
 }
