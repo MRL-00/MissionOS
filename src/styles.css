@@ -504,6 +504,10 @@ canvas {
   pointer-events: auto;
 }
 
+.character-creator[hidden] {
+  display: none !important;
+}
+
 .character-creator-backdrop {
   position: absolute;
   inset: 0;

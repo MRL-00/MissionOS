@@ -744,6 +744,14 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     element.addEventListener("click", close);
   });
 
+  // Fallback: event delegation for close actions
+  modal.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-action='close']") || target.dataset.action === "close") {
+      close();
+    }
+  });
+
   stepButtons.forEach((button) => {
     button.addEventListener("click", () => {
       currentStep = Number(button.dataset.step ?? 0) as CreatorStep;
