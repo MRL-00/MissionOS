@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { buildAgentConfig, createDeterministicAppearance, getDefaultAgentConfig, getKnownDeskIndex } from "./agentDefaults";
+import { getApiBase } from "./config/api";
 import { AgentController, STATUS } from "./characters/agentController";
 import { moveAgentToDestination } from "./demo";
 import { OfficeWebSocketClient } from "./network/websocket";
@@ -897,8 +898,8 @@ function updateKeyboardCamera(delta: number): void {
 async function hydrateOverlay(): Promise<void> {
   try {
     const [activityResponse, transcriptResponse] = await Promise.all([
-      fetch(`http://${window.location.hostname}:3001/api/activity`),
-      fetch(`http://${window.location.hostname}:3001/api/meeting/transcript`),
+      fetch(`${getApiBase()}/api/activity`),
+      fetch(`${getApiBase()}/api/meeting/transcript`),
     ]);
 
     if (activityResponse.ok) {

@@ -1,3 +1,4 @@
+import { getWsUrl } from "../config/api";
 import type { AgentEvent, MeetingState, ServerMessage } from "../types";
 
 interface OfficeWebSocketClientOptions {
@@ -25,7 +26,7 @@ export class OfficeWebSocketClient {
   onAgentRemoved?: ((agentId: string) => void) | undefined;
 
   constructor({
-    url = `ws://${window.location.hostname}:3001`,
+    url = getWsUrl(),
     onOpen,
     onClose,
     onEvent,

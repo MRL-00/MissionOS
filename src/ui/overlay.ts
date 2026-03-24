@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { getApiBase } from "../config/api";
 import { FACILITATOR_ROTATION } from "../config/meeting-rules";
 import { createCharacterCreator } from "./characterCreator";
 import type { ActivityLogEntry, AgentRuntimeState, LabelState, MeetingTurn, RealtimeAgentStatus } from "../types";
@@ -44,7 +45,7 @@ function timeLabel(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-export function createHud({ onResetCamera, apiBase = `http://${window.location.hostname}:3001` }: HudOptions): HudApi {
+export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions): HudApi {
   const hud = document.createElement("div");
   hud.className = "hud";
 
