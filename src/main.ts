@@ -1,11 +1,13 @@
 import "./styles.css";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { buildAgentConfig, createDeterministicAppearance, getDefaultAgentConfig, getKnownDeskIndex } from "./agentDefaults";
 import { AgentController, STATUS } from "./characters/agentController";
 import { DemoDirector, moveAgentToDestination } from "./demo";
 import { OfficeWebSocketClient } from "./network/websocket";
 import { createOfficeScene } from "./scene/officeScene";
+import { createLayoutEditor, type LayoutTransformMode } from "./ui/layoutEditor";
 import { createHud, LabelRenderer } from "./ui/overlay";
 import { SpeechBubbleRenderer } from "./ui/speechBubble";
 import type {
@@ -85,7 +87,7 @@ const roomGlow = new THREE.PointLight("#fff0d0", 0.8, 24);
 roomGlow.position.set(0, 7, 0);
 scene.add(roomGlow);
 
-const { office, waypoints, updaters } = createOfficeScene();
+const { office, waypoints, updaters, layout } = createOfficeScene();
 scene.add(office);
 
 const agents = new Map<string, AgentController>();
@@ -110,6 +112,19 @@ const hud = createHud({
 });
 const labelRenderer = new LabelRenderer(hud.labelLayer);
 const speechBubbleRenderer = new SpeechBubbleRenderer(hud.speechLayer);
+const transformControls = new TransformControls(camera, renderer.domElement);
+const transformControlsHelper = transformControls.getHelper();
+transformControlsHelper.visible = false;
+scene.add(transformControlsHelper);
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let layoutEditorEnabled = false;
+let layoutTransformMode: LayoutTransformMode = "translate";
+let selectedLayoutItemId: string | null = null;
+let selectionHelper: THREE.BoxHelper | null = null;
+let selectionPointerDown = false;
+let layoutDragMoved = false;
 
 const demo = new DemoDirector({
   agents,
@@ -117,8 +132,56 @@ const demo = new DemoDirector({
   waypoints,
 });
 
+const layoutEditor = createLayoutEditor({
+  getExportText: () => layout.exportLayout(),
+  onEnabledChange(enabled) {
+    layoutEditorEnabled = enabled;
+    if (!enabled) {
+      clearLayoutSelection();
+    }
+  },
+  onSelectItem(id) {
+    selectLayoutItem(id);
+  },
+  onSetMode(mode) {
+    setLayoutTransformMode(mode);
+  },
+  onUpdateSelectionTransform(patch) {
+    if (!selectedLayoutItemId) {
+      return;
+    }
+    layout.updateItemTransform(selectedLayoutItemId, patch);
+    syncLayoutEditor();
+    syncSelectionHelper();
+  },
+  onAddItem(templateId) {
+    const id = layout.addItem(templateId);
+    if (id) {
+      selectLayoutItem(id);
+      layoutEditor.setNotice("New item added. Drag it in the scene or adjust the fields.");
+    }
+  },
+  onDeleteSelected() {
+    if (!selectedLayoutItemId) {
+      return;
+    }
+    const removedId = selectedLayoutItemId;
+    clearLayoutSelection();
+    layout.removeItem(removedId);
+    syncLayoutEditor();
+    layoutEditor.setNotice("Selected item removed from the layout.");
+  },
+  onResetLayout() {
+    clearLayoutSelection();
+    layout.reset();
+    repairDeskAssignments();
+    syncLayoutEditor();
+  },
+});
+
 void hydrateOverlay();
 syncHudState();
+syncLayoutEditor();
 
 function getControllerStatus(status: AgentEvent["status"]): AgentStatus {
   if (status === "meeting") {
@@ -140,6 +203,77 @@ function syncHudState(): void {
   hud.syncAgentStates(Array.from(agentStates.values()).sort((left, right) => left.name.localeCompare(right.name)));
 }
 
+function syncSelectionHelper(): void {
+  if (!selectedLayoutItemId) {
+    selectionHelper?.removeFromParent();
+    selectionHelper = null;
+    return;
+  }
+
+  const object = layout.getObjectForItem(selectedLayoutItemId);
+  if (!object) {
+    selectionHelper?.removeFromParent();
+    selectionHelper = null;
+    return;
+  }
+
+  if (!selectionHelper) {
+    selectionHelper = new THREE.BoxHelper(object, 0xd88a35);
+    scene.add(selectionHelper);
+  } else {
+    selectionHelper.setFromObject(object);
+  }
+
+  selectionHelper.visible = true;
+}
+
+function syncLayoutEditor(): void {
+  layoutEditor.sync({
+    enabled: layoutEditorEnabled,
+    mode: layoutTransformMode,
+    items: layout.getItems(),
+    selection: layout.getSelection(selectedLayoutItemId),
+    catalog: layout.getCatalog(),
+  });
+}
+
+function clearLayoutSelection(): void {
+  selectedLayoutItemId = null;
+  transformControls.detach();
+  transformControlsHelper.visible = false;
+  syncSelectionHelper();
+  syncLayoutEditor();
+}
+
+function selectLayoutItem(itemId: string | null): void {
+  if (!layoutEditorEnabled || !itemId) {
+    clearLayoutSelection();
+    return;
+  }
+
+  const object = layout.getObjectForItem(itemId);
+  if (!object) {
+    clearLayoutSelection();
+    return;
+  }
+
+  selectedLayoutItemId = itemId;
+  transformControls.attach(object);
+  transformControlsHelper.visible = true;
+  setLayoutTransformMode(layoutTransformMode);
+  syncSelectionHelper();
+  syncLayoutEditor();
+}
+
+function setLayoutTransformMode(mode: LayoutTransformMode): void {
+  layoutTransformMode = mode;
+  transformControls.setMode(mode);
+  transformControls.showX = mode === "translate";
+  transformControls.showY = mode === "rotate";
+  transformControls.showZ = mode === "translate";
+  syncLayoutEditor();
+}
+
 function stopDemoForRealtime(): void {
   if (!demo.running) {
     return;
@@ -159,6 +293,19 @@ function cancelRemoval(agentId: string): void {
 
 function releaseDesk(agentId: string): void {
   deskAssignments.delete(agentId);
+}
+
+function repairDeskAssignments(): void {
+  deskAssignments.forEach((desk, agentId) => {
+    const replacement = waypoints.deskSlots.find((candidate) => candidate.nodeId === desk.nodeId);
+    if (!replacement) {
+      deskAssignments.delete(agentId);
+      return;
+    }
+    if (replacement !== desk) {
+      deskAssignments.set(agentId, replacement);
+    }
+  });
 }
 
 function getPreferredDesk(agentId: string, preferredIndex?: number): DeskSlot | null {
@@ -673,6 +820,47 @@ function resetCamera(): void {
   controls.update();
 }
 
+layout.subscribe(() => {
+  repairDeskAssignments();
+  if (selectedLayoutItemId && !layout.getObjectForItem(selectedLayoutItemId)) {
+    clearLayoutSelection();
+    return;
+  }
+  syncLayoutEditor();
+  syncSelectionHelper();
+});
+
+transformControls.addEventListener("dragging-changed", (event) => {
+  controls.enabled = !event.value;
+  if (event.value) {
+    layoutDragMoved = false;
+  }
+});
+
+transformControls.addEventListener("change", () => {
+  if (selectedLayoutItemId) {
+    syncSelectionHelper();
+  }
+});
+
+transformControls.addEventListener("mouseUp", () => {
+  if (!selectedLayoutItemId) {
+    return;
+  }
+
+  const object = layout.getObjectForItem(selectedLayoutItemId);
+  if (!object) {
+    return;
+  }
+
+  layout.updateItemTransform(selectedLayoutItemId, {
+    position: [object.position.x, object.position.y, object.position.z],
+    rotationY: object.rotation.y,
+    scale: [object.scale.x, object.scale.y, object.scale.z],
+  });
+  layoutDragMoved = true;
+});
+
 function resize(): void {
   const width = window.innerWidth;
   const height = window.innerHeight;
@@ -779,6 +967,64 @@ window.addEventListener("resize", resize);
 window.addEventListener("keydown", (event) => handleCameraMoveKey(event, true));
 window.addEventListener("keyup", (event) => handleCameraMoveKey(event, false));
 window.addEventListener("blur", () => cameraMoveKeys.clear());
+window.addEventListener("keydown", (event) => {
+  if (isTypingTarget(event.target)) {
+    return;
+  }
+
+  if (event.key === "Escape" && layoutEditorEnabled) {
+    clearLayoutSelection();
+    return;
+  }
+
+  if (!layoutEditorEnabled) {
+    return;
+  }
+
+  if (event.key.toLowerCase() === "g") {
+    setLayoutTransformMode("translate");
+  }
+  if (event.key.toLowerCase() === "r") {
+    setLayoutTransformMode("rotate");
+  }
+});
+
+renderer.domElement.addEventListener("pointerdown", (event) => {
+  if (!layoutEditorEnabled || event.button !== 0) {
+    return;
+  }
+  selectionPointerDown = true;
+  layoutDragMoved = false;
+});
+
+renderer.domElement.addEventListener("pointerup", (event) => {
+  if (!layoutEditorEnabled || !selectionPointerDown || event.button !== 0) {
+    return;
+  }
+
+  selectionPointerDown = false;
+  if (layoutDragMoved) {
+    layoutDragMoved = false;
+    return;
+  }
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+
+  const intersections = raycaster.intersectObjects(office.children, true);
+  const pickedId = intersections
+    .map((intersection) => layout.getItemIdFromObject(intersection.object))
+    .find((id): id is string => Boolean(id));
+
+  if (pickedId) {
+    selectLayoutItem(pickedId);
+    return;
+  }
+
+  clearLayoutSelection();
+});
 
 const clock = new THREE.Clock();
 
@@ -795,6 +1041,10 @@ renderer.setAnimationLoop(() => {
     controller.update(delta, elapsed);
     return controller.getLabelState();
   });
+
+  if (selectionHelper && selectedLayoutItemId) {
+    syncSelectionHelper();
+  }
 
   labelRenderer.sync(labels, camera, { width: window.innerWidth, height: window.innerHeight });
   speechBubbleRenderer.sync(labels, camera, { width: window.innerWidth, height: window.innerHeight });

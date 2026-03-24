@@ -1,14 +1,28 @@
 import * as THREE from "three";
+import defaultLayoutConfig from "../config/office-layout.json";
 import {
   CHAIR_OFFSET,
   CHAIR_SIT_INSET,
   createDesk,
   createGlassWall,
+  createKitchenCounter,
   createMeetingTable,
   createPlant,
 } from "./furniture";
 import { makeGlass, makeMaterial } from "./materials";
-import type { DeskSlot, NavigationGraph, OfficeSceneResult, SceneUpdater } from "../types";
+import type {
+  DeskSlot,
+  LayoutCatalogItem,
+  LayoutItemConfig,
+  LayoutItemSummary,
+  LayoutSelectionState,
+  NavigationGraph,
+  OfficeLayoutConfig,
+  OfficeLayoutController,
+  OfficeSceneResult,
+  OfficeWaypoints,
+  SceneUpdater,
+} from "../types";
 
 type VectorTuple = [number, number, number];
 
@@ -16,13 +30,19 @@ interface BoxOptions extends THREE.MeshStandardMaterialParameters {
   rotationY?: number;
 }
 
-interface DeskWaypointOptions {
-  x: number;
-  z: number;
-  rotation?: number;
-  chairSide?: -1 | 1;
-  assignedTo?: string;
+interface RuntimeLayoutItem {
+  config: LayoutItemConfig;
+  object: THREE.Object3D;
+  updaters: SceneUpdater[];
 }
+
+interface LayoutCatalogTemplate extends LayoutCatalogItem {
+  create(id: string): LayoutItemConfig;
+}
+
+const LAYOUT_STORAGE_KEY = "the-office.layout.v1";
+const NON_BULLPEN_AGENTS = new Set(["pickle", "randall", "cio"]);
+const DEFAULT_LAYOUT = defaultLayoutConfig as unknown as OfficeLayoutConfig;
 
 function addBox(
   parent: THREE.Object3D,
@@ -65,31 +85,6 @@ function rotateYOffset(vector: THREE.Vector3, rotation: number): THREE.Vector3 {
   return vector.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rotation);
 }
 
-function createDeskWaypoint({
-  x,
-  z,
-  rotation = 0,
-  chairSide = 1,
-  assignedTo,
-}: DeskWaypointOptions): DeskSlot {
-  const origin = new THREE.Vector3(x, 0, z);
-  const sitDistance = CHAIR_OFFSET - CHAIR_SIT_INSET;
-  const chairOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * sitDistance), rotation);
-  const approachOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * (CHAIR_OFFSET + 1.02)), rotation);
-  const waypoint: DeskSlot = {
-    nodeId: `desk-${x}-${z}`,
-    approach: origin.clone().add(approachOffset),
-    sit: origin.clone().add(chairOffset),
-    facing: rotation + (chairSide > 0 ? Math.PI : 0),
-  };
-
-  if (assignedTo) {
-    waypoint.assignedTo = assignedTo;
-  }
-
-  return waypoint;
-}
-
 function connect(graph: NavigationGraph, left: string, right: string): void {
   graph[left]?.links.push(right);
   graph[right]?.links.push(left);
@@ -112,7 +107,6 @@ function createKanbanBoard(): THREE.Group {
   addBox(group, [0.05, 1.62, 0.05], [-0.54, 1.9, 0.05], "#cbb9a6");
   addBox(group, [0.05, 1.62, 0.05], [0.54, 1.9, 0.05], "#cbb9a6");
 
-  // Column headers: Todo, In Progress, Done
   [
     { x: -1.08, color: "#d47d63" },
     { x: 0, color: "#e0b75c" },
@@ -121,7 +115,6 @@ function createKanbanBoard(): THREE.Group {
     addBox(group, [0.78, 0.18, 0.04], [x, 2.5, 0.05], color);
   });
 
-  // Placeholder sticky notes in each column
   [
     { x: -1.22, y: 2.12, color: "#f1c96c" },
     { x: -0.92, y: 1.78, color: "#f1c96c" },
@@ -237,191 +230,119 @@ function createBungyDeck(): { group: THREE.Group; updaters: SceneUpdater[] } {
   return { group, updaters };
 }
 
-export function createOfficeScene(): OfficeSceneResult {
-  const office = new THREE.Group();
-  office.name = "office";
-  const updaters: SceneUpdater[] = [];
+function createBoxItem(item: LayoutItemConfig): THREE.Group {
+  const group = new THREE.Group();
+  addBox(group, item.size ?? [1, 1, 1], [0, 0, 0], item.color ?? "#ffffff");
+  return group;
+}
 
-  const palette = {
-    floor: "#d8c4a7",
-    trim: "#7e6550",
-    wall: "#f3eadf",
-    carpet: "#95acb0",
-    meeting: "#b89b72",
-    kitchen: "#d8d0c5",
+function createDeskSlotForItem(item: LayoutItemConfig, slotId: string): DeskSlot {
+  const [x, , z] = item.position;
+  const origin = new THREE.Vector3(x, 0, z);
+  const rotation = item.rotationY ?? 0;
+  const chairSide = item.deskSlot?.chairSide ?? item.chairSide ?? 1;
+  const sitDistance = CHAIR_OFFSET - CHAIR_SIT_INSET;
+  const chairOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * sitDistance), rotation);
+  const approachOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * (CHAIR_OFFSET + 1.02)), rotation);
+
+  const slot: DeskSlot = {
+    nodeId: slotId,
+    approach: origin.clone().add(approachOffset),
+    sit: origin.clone().add(chairOffset),
+    facing: rotation + (chairSide > 0 ? Math.PI : 0),
   };
 
-  const base = addBox(office, [28, 1, 20], [0, -0.5, 0], "#baa27f");
-  base.receiveShadow = true;
+  if (item.deskSlot?.assignedTo) {
+    slot.assignedTo = item.deskSlot.assignedTo;
+  }
 
-  const floor = addBox(office, [26, 0.18, 18], [0, 0.09, 0], palette.floor);
-  floor.receiveShadow = true;
+  return slot;
+}
 
-  addBox(office, [10.2, 0.05, 6.8], [0, 0.13, 1.15], palette.carpet);
-  addBox(office, [7.1, 0.05, 5.5], [8.7, 0.13, -4.4], palette.meeting);
-  addBox(office, [4.8, 0.05, 5.3], [9.55, 0.13, 5.9], "#d4c7b4");
+function applyLayoutTransform(object: THREE.Object3D, item: LayoutItemConfig): void {
+  const [x, y, z] = item.position;
+  const [sx, sy, sz] = item.scale ?? [1, 1, 1];
+  object.position.set(x, y, z);
+  object.rotation.set(0, item.rotationY ?? 0, 0);
+  object.scale.set(sx, sy, sz);
+}
 
-  const walls = new THREE.Group();
-  office.add(walls);
-  addBox(walls, [26, 3.2, 0.35], [0, 1.6, -9], palette.wall);
-  addBox(walls, [0.35, 3.2, 18], [-13, 1.6, 0], palette.wall);
-  addBox(walls, [5.2, 3.2, 0.35], [-10.4, 1.6, 9], palette.wall);
-  addBox(walls, [14.8, 3.2, 0.35], [5.6, 1.6, 9], palette.wall);
-  addBox(walls, [0.35, 3.2, 9.5], [13, 1.6, -4.25], palette.wall);
-  addBox(walls, [0.35, 3.2, 6.7], [13, 1.6, 5.65], palette.wall);
-
-  const cioGlassWestNorth = createGlassWall(2.4, 2.38);
-  cioGlassWestNorth.position.set(6.45, 1.48, 4.05);
-  cioGlassWestNorth.rotation.y = Math.PI / 2;
-  office.add(cioGlassWestNorth);
-
-  const cioGlassWestSouth = createGlassWall(2.05, 2.38);
-  cioGlassWestSouth.position.set(6.45, 1.48, 7.45);
-  cioGlassWestSouth.rotation.y = Math.PI / 2;
-  office.add(cioGlassWestSouth);
-
-  const cioGlassNorth = createGlassWall(5.35, 2.38);
-  cioGlassNorth.position.set(9.1, 1.48, 8.08);
-  office.add(cioGlassNorth);
-
-  const cioGlassWestDoor = createGlassWall(1.05, 2.38);
-  cioGlassWestDoor.position.set(6.45, 1.48, 5.9);
-  cioGlassWestDoor.rotation.y = Math.PI / 2;
-  office.add(cioGlassWestDoor);
-
-  const meetingWallWestNorth = createGlassWall(2.1, 2.35);
-  meetingWallWestNorth.position.set(5.2, 1.48, -2.55);
-  meetingWallWestNorth.rotation.y = Math.PI / 2;
-  office.add(meetingWallWestNorth);
-
-  const meetingWallWestSouth = createGlassWall(2.1, 2.35);
-  meetingWallWestSouth.position.set(5.2, 1.48, -6.15);
-  meetingWallWestSouth.rotation.y = Math.PI / 2;
-  office.add(meetingWallWestSouth);
-
-  const meetingDoorGlass = createGlassWall(1.05, 2.35);
-  meetingDoorGlass.position.set(5.2, 1.48, -4.35);
-  meetingDoorGlass.rotation.y = Math.PI / 2;
-  office.add(meetingDoorGlass);
-
-  const meetingWallNorth = createGlassWall(7, 2.35);
-  meetingWallNorth.position.set(8.7, 1.48, -1.68);
-  office.add(meetingWallNorth);
-
-  const meetingWallSouth = createGlassWall(7, 2.35);
-  meetingWallSouth.position.set(8.7, 1.48, -7.12);
-  office.add(meetingWallSouth);
-
-  const meetingWallEast = createGlassWall(5.5, 2.35);
-  meetingWallEast.position.set(12.18, 1.48, -4.4);
-  meetingWallEast.rotation.y = Math.PI / 2;
-  office.add(meetingWallEast);
-
-  const randallDesk = createDesk({ x: 1.7, z: -2.05, chairSide: 1, accent: "#7e8f69", rotation: -Math.PI / 2 });
-  const desks = [
-    createDesk({ x: -3.9, z: 3.15, chairSide: 1, accent: "#855f46" }),
-    createDesk({ x: 0, z: 3.15, chairSide: 1, accent: "#91694e" }),
-    createDesk({ x: 3.9, z: 3.15, chairSide: 1, accent: "#855f46" }),
-    createDesk({ x: -3.9, z: -0.85, chairSide: 1, accent: "#91694e" }),
-    createDesk({ x: 0, z: -0.85, chairSide: 1, accent: "#855f46" }),
-    createDesk({ x: 3.9, z: -0.85, chairSide: 1, accent: "#91694e" }),
-    createDesk({ x: -3.9, z: -4.85, chairSide: 1, accent: "#855f46" }),
-    createDesk({ x: -1.1, z: -4.85, chairSide: 1, accent: "#91694e" }),
-    randallDesk,
-    createDesk({ x: 9.55, z: 5.95, chairSide: 1, accent: "#6d4d38", rotation: Math.PI / 2, executive: true }),
-  ];
-  randallDesk.scale.y = 1.08;
-  desks.forEach((desk) => office.add(desk));
-
-  const table = createMeetingTable();
-  table.position.set(8.6, 0, -4.3);
-  table.scale.x = 1.25;
-  office.add(table);
-
-  const whiteboard = createWhiteboard();
-  whiteboard.position.set(11.78, 0, -4.4);
-  whiteboard.rotation.y = -Math.PI / 2;
-  office.add(whiteboard);
-
-  const kanbanBoard = createKanbanBoard();
-  kanbanBoard.position.set(4.95, 0, -8.78);
-  kanbanBoard.rotation.y = Math.PI;
-  office.add(kanbanBoard);
-
-  const cioArt = createAbstractArt("#bccb96", "#d37b53");
-  cioArt.position.set(12.15, 2.15, 5.85);
-  cioArt.rotation.y = -Math.PI / 2;
-  office.add(cioArt);
-
-  const bungyPosterNorthWest = createPoster("Queenstown x Bungy", "#d56547");
-  bungyPosterNorthWest.position.set(-10.95, 2.08, 8.82);
-  office.add(bungyPosterNorthWest);
-
-  const bungyPosterNorthCenter = createPoster("EpicShot x Operations", "#c6543f");
-  bungyPosterNorthCenter.position.set(-5.1, 2.08, 8.82);
-  office.add(bungyPosterNorthCenter);
-
-  const bungyPosterWest = createPoster("Live More x Fear Less", "#cf7f4d");
-  bungyPosterWest.position.set(-12.8, 2.05, 4.35);
-  bungyPosterWest.rotation.y = Math.PI / 2;
-  office.add(bungyPosterWest);
-
-  const waterCooler = createWaterCooler();
-  waterCooler.position.set(-6.9, 0, 7.15);
-  office.add(waterCooler);
-
-  [
-    { x: -11.4, z: 7.4, scale: 1.25 },
-    { x: 11.35, z: 7.3, scale: 1.38 },
-    { x: 11.7, z: -7.6, scale: 1.42 },
-    { x: -11.4, z: -7.4, scale: 1.24 },
-    { x: -1.4, z: 7.2, scale: 1.02 },
-    { x: 4.8, z: 7.15, scale: 0.92 },
-    { x: -5.2, z: 4.95, scale: 0.8 },
-    { x: 4.15, z: 5.25, scale: 0.82 },
-    { x: 6.95, z: 6.95, scale: 0.9 },
-    { x: 10.95, z: 4.15, scale: 0.95 },
-  ].forEach(({ x, z, scale }) => {
-    const plant = createPlant(scale);
-    plant.position.set(x, 0, z);
-    office.add(plant);
+function applyLayoutMetadata(object: THREE.Object3D, itemId: string): void {
+  object.userData.layoutItemId = itemId;
+  object.traverse((child) => {
+    child.userData.layoutItemId = itemId;
   });
+}
 
-  const cioPlant = createPlant(1.15);
-  cioPlant.position.set(11.4, 0, 7.2);
-  office.add(cioPlant);
+function buildRuntimeItem(item: LayoutItemConfig): RuntimeLayoutItem {
+  let object: THREE.Object3D;
+  let updaters: SceneUpdater[] = [];
 
-  const { group: deck, updaters: deckUpdaters } = createBungyDeck();
-  deck.position.set(14.45, 0.1, 1.05);
-  office.add(deck);
-  updaters.push(...deckUpdaters);
+  switch (item.kind) {
+    case "box":
+      object = createBoxItem(item);
+      break;
+    case "glassWall":
+      object = createGlassWall(item.width ?? 2, item.height ?? 2, item.depth ?? 0.08);
+      if (item.glassColor) {
+        const material = (object as THREE.Mesh).material;
+        if (material instanceof THREE.MeshPhysicalMaterial) {
+          material.color.set(item.glassColor);
+        }
+      }
+      break;
+    case "desk":
+      object = createDesk({
+        x: 0,
+        z: 0,
+        chairSide: item.chairSide ?? 1,
+        accent: item.accent ?? "#7e5b43",
+        rotation: 0,
+        executive: item.executive ?? false,
+      });
+      break;
+    case "meetingTable":
+      object = createMeetingTable();
+      break;
+    case "plant":
+      object = createPlant(item.plantHeight ?? 1.1);
+      break;
+    case "whiteboard":
+      object = createWhiteboard();
+      break;
+    case "kanbanBoard":
+      object = createKanbanBoard();
+      break;
+    case "poster":
+      object = createPoster(item.posterLabel ?? "Poster", item.posterAccent);
+      break;
+    case "abstractArt":
+      object = createAbstractArt(item.artAccent ?? "#bccb96", item.artStripe ?? "#d37b53");
+      break;
+    case "waterCooler":
+      object = createWaterCooler();
+      break;
+    case "kitchenCounter":
+      object = createKitchenCounter();
+      break;
+    case "bungyDeck": {
+      const deck = createBungyDeck();
+      object = deck.group;
+      updaters = deck.updaters;
+      break;
+    }
+    default:
+      object = new THREE.Group();
+  }
 
-  const trims = new THREE.Group();
-  office.add(trims);
-  addBox(trims, [26.1, 0.22, 0.26], [0, 0.14, -8.9], palette.trim);
-  addBox(trims, [26.1, 0.22, 0.26], [0, 0.14, 8.9], palette.trim);
-  addBox(trims, [0.26, 0.22, 18.1], [-12.9, 0.14, 0], palette.trim);
-  addBox(trims, [0.26, 0.22, 18.1], [12.9, 0.14, 0], palette.trim);
+  applyLayoutTransform(object, item);
+  applyLayoutMetadata(object, item.id);
 
-  const deckWindow = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.6, 0.12), makeGlass("#d2e6eb"));
-  deckWindow.position.set(13.05, 2.1, 1.05);
-  deckWindow.rotation.y = Math.PI / 2;
-  office.add(deckWindow);
+  return { config: item, object, updaters };
+}
 
-  const deskSlots: DeskSlot[] = [
-    createDeskWaypoint({ x: -3.9, z: 3.15, assignedTo: "pickle" }),
-    createDeskWaypoint({ x: 0, z: 3.15, assignedTo: "zoe" }),
-    createDeskWaypoint({ x: 3.9, z: 3.15, assignedTo: "ink" }),
-    createDeskWaypoint({ x: -3.9, z: -0.85, assignedTo: "harry" }),
-    createDeskWaypoint({ x: 0, z: -0.85, assignedTo: "kevin" }),
-    createDeskWaypoint({ x: 3.9, z: -0.85, assignedTo: "danny" }),
-    createDeskWaypoint({ x: -3.9, z: -4.85, assignedTo: "johnny" }),
-    createDeskWaypoint({ x: -1.1, z: -4.85, assignedTo: "tommy" }),
-    createDeskWaypoint({ x: 1.7, z: -2.05, rotation: -Math.PI / 2, assignedTo: "randall" }),
-    createDeskWaypoint({ x: 9.55, z: 5.95, rotation: Math.PI / 2, chairSide: 1, assignedTo: "cio" }),
-  ];
-
-  const navigation: NavigationGraph = {
+function buildBaseNavigation(): NavigationGraph {
+  return {
     entranceExterior: { position: new THREE.Vector3(-9.55, 0, 9.4), links: [] },
     entranceInterior: { position: new THREE.Vector3(-9.55, 0, 7.45), links: [] },
     receptionFront: { position: new THREE.Vector3(-8.15, 0, 7.05), links: [] },
@@ -457,92 +378,589 @@ export function createOfficeScene(): OfficeSceneResult {
     cioDoorInner: { position: new THREE.Vector3(7.2, 0, 5.9), links: [] },
     cioHub: { position: new THREE.Vector3(9.45, 0, 5.9), links: [] },
   };
+}
 
-  deskSlots.forEach((desk) => {
-    navigation[desk.nodeId] = {
-      position: desk.approach.clone(),
+function wireNavigation(graph: NavigationGraph, deskItems: LayoutItemConfig[]): void {
+  connect(graph, "entranceExterior", "entranceInterior");
+  connect(graph, "entranceInterior", "receptionFront");
+  connect(graph, "receptionFront", "northHallWest");
+  connect(graph, "northHallWest", "northHallCenter");
+  connect(graph, "northHallCenter", "northHallEast");
+  connect(graph, "northHallWest", "centerHallWest");
+  connect(graph, "northHallCenter", "centerHallCenter");
+  connect(graph, "northHallEast", "centerHallEast");
+  connect(graph, "centerHallWest", "centerHallCenter");
+  connect(graph, "centerHallCenter", "centerHallEast");
+  connect(graph, "centerHallWest", "southHallWest");
+  connect(graph, "centerHallCenter", "southHallCenter");
+  connect(graph, "centerHallEast", "southHallEast");
+  connect(graph, "southHallWest", "southHallCenter");
+  connect(graph, "southHallCenter", "southHallEast");
+  connect(graph, "southHallWest", "deskAisleFarSouthWest");
+  connect(graph, "southHallCenter", "deskAisleFarSouthCenter");
+  connect(graph, "deskAisleFarSouthWest", "deskAisleFarSouthCenter");
+  connect(graph, "southHallCenter", "scrumDeskHub");
+  connect(graph, "scrumDeskHub", "southHallEast");
+  connect(graph, "deskAisleFarSouthCenter", "scrumDeskHub");
+  connect(graph, "southHallWest", "kitchenDoor");
+  connect(graph, "kitchenDoor", "kitchenHub");
+  connect(graph, "southHallEast", "meetingDoorOuter");
+  connect(graph, "meetingDoorOuter", "meetingDoorInner");
+  connect(graph, "meetingDoorInner", "meetingWestInner");
+  connect(graph, "meetingWestInner", "meetingNorthAisle");
+  connect(graph, "meetingWestInner", "meetingSouthAisle");
+  connect(graph, "meetingDoorInner", "meetingWestAisle");
+  connect(graph, "meetingWestAisle", "meetingNorthAisle");
+  connect(graph, "meetingWestAisle", "meetingSouthAisle");
+  connect(graph, "meetingNorthAisle", "meetingEastInner");
+  connect(graph, "meetingSouthAisle", "meetingEastInner");
+  connect(graph, "meetingEastInner", "meetingEastAisle");
+  connect(graph, "meetingNorthAisle", "meetingEastAisle");
+  connect(graph, "meetingSouthAisle", "meetingEastAisle");
+  connect(graph, "northHallEast", "cioDoorOuter");
+  connect(graph, "cioDoorOuter", "cioDoorInner");
+  connect(graph, "cioDoorInner", "cioHub");
+  connect(graph, "deskAisleNorthWest", "northHallWest");
+  connect(graph, "deskAisleNorthCenter", "northHallCenter");
+  connect(graph, "deskAisleNorthEast", "northHallEast");
+  connect(graph, "deskAisleSouthWest", "centerHallWest");
+  connect(graph, "deskAisleSouthCenter", "centerHallCenter");
+  connect(graph, "deskAisleSouthEast", "centerHallEast");
+
+  deskItems.forEach((item) => {
+    const slotId = item.id;
+    graph[slotId] = {
+      position: createDeskSlotForItem(item, slotId).approach.clone(),
       links: [],
     };
+    const connectToNode = item.deskSlot?.connectToNode;
+    if (connectToNode && graph[connectToNode]) {
+      connect(graph, slotId, connectToNode);
+    }
   });
+}
 
-  connect(navigation, "entranceExterior", "entranceInterior");
-  connect(navigation, "entranceInterior", "receptionFront");
-  connect(navigation, "receptionFront", "northHallWest");
-  connect(navigation, "northHallWest", "northHallCenter");
-  connect(navigation, "northHallCenter", "northHallEast");
-  connect(navigation, "northHallWest", "centerHallWest");
-  connect(navigation, "northHallCenter", "centerHallCenter");
-  connect(navigation, "northHallEast", "centerHallEast");
-  connect(navigation, "centerHallWest", "centerHallCenter");
-  connect(navigation, "centerHallCenter", "centerHallEast");
-  connect(navigation, "centerHallWest", "southHallWest");
-  connect(navigation, "centerHallCenter", "southHallCenter");
-  connect(navigation, "centerHallEast", "southHallEast");
-  connect(navigation, "southHallWest", "southHallCenter");
-  connect(navigation, "southHallCenter", "southHallEast");
-  connect(navigation, "southHallWest", "deskAisleFarSouthWest");
-  connect(navigation, "southHallCenter", "deskAisleFarSouthCenter");
-  connect(navigation, "deskAisleFarSouthWest", "deskAisleFarSouthCenter");
-  connect(navigation, "southHallCenter", "scrumDeskHub");
-  connect(navigation, "scrumDeskHub", "southHallEast");
-  connect(navigation, "deskAisleFarSouthCenter", "scrumDeskHub");
-  connect(navigation, "southHallWest", "kitchenDoor");
-  connect(navigation, "kitchenDoor", "kitchenHub");
-  connect(navigation, "southHallEast", "meetingDoorOuter");
-  connect(navigation, "meetingDoorOuter", "meetingDoorInner");
-  connect(navigation, "meetingDoorInner", "meetingWestInner");
-  connect(navigation, "meetingWestInner", "meetingNorthAisle");
-  connect(navigation, "meetingWestInner", "meetingSouthAisle");
-  connect(navigation, "meetingDoorInner", "meetingWestAisle");
-  connect(navigation, "meetingWestAisle", "meetingNorthAisle");
-  connect(navigation, "meetingWestAisle", "meetingSouthAisle");
-  connect(navigation, "meetingNorthAisle", "meetingEastInner");
-  connect(navigation, "meetingSouthAisle", "meetingEastInner");
-  connect(navigation, "meetingEastInner", "meetingEastAisle");
-  connect(navigation, "meetingNorthAisle", "meetingEastAisle");
-  connect(navigation, "meetingSouthAisle", "meetingEastAisle");
-  connect(navigation, "northHallEast", "cioDoorOuter");
-  connect(navigation, "cioDoorOuter", "cioDoorInner");
-  connect(navigation, "cioDoorInner", "cioHub");
+function copyVectorTuple(vector: THREE.Vector3): [number, number, number] {
+  return [vector.x, vector.y, vector.z];
+}
 
-  const [
-    deskPickle,
-    deskZoe,
-    deskInk,
-    deskHarry,
-    deskKevin,
-    deskDanny,
-    deskJohnny,
-    deskTommy,
-    deskRandall,
-    deskCio,
-  ] = deskSlots;
-  if (deskSlots.length !== 10) throw new Error("Expected 10 desk slots");
+function cloneLayoutConfig(source: OfficeLayoutConfig): OfficeLayoutConfig {
+  return structuredClone(source);
+}
 
-  connect(navigation, deskPickle!.nodeId, "deskAisleNorthWest");
-  connect(navigation, deskZoe!.nodeId, "deskAisleNorthCenter");
-  connect(navigation, deskInk!.nodeId, "deskAisleNorthEast");
-  connect(navigation, deskHarry!.nodeId, "deskAisleSouthWest");
-  connect(navigation, deskKevin!.nodeId, "deskAisleSouthCenter");
-  connect(navigation, deskDanny!.nodeId, "deskAisleSouthEast");
-  connect(navigation, deskJohnny!.nodeId, "deskAisleFarSouthWest");
-  connect(navigation, deskTommy!.nodeId, "deskAisleFarSouthCenter");
-  connect(navigation, deskRandall!.nodeId, "scrumDeskHub");
-  connect(navigation, deskCio!.nodeId, "cioHub");
-  connect(navigation, "deskAisleNorthWest", "northHallWest");
-  connect(navigation, "deskAisleNorthCenter", "northHallCenter");
-  connect(navigation, "deskAisleNorthEast", "northHallEast");
-  connect(navigation, "deskAisleSouthWest", "centerHallWest");
-  connect(navigation, "deskAisleSouthCenter", "centerHallCenter");
-  connect(navigation, "deskAisleSouthEast", "centerHallEast");
+function loadStoredLayout(): OfficeLayoutConfig {
+  const fallback = cloneLayoutConfig(DEFAULT_LAYOUT);
 
-  const entranceInterior = navigation.entranceInterior!;
-  const cioHub = navigation.cioHub!;
-  const NON_BULLPEN_AGENTS = new Set(["pickle", "randall", "cio"]);
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) {
+      return fallback;
+    }
 
-  const waypoints = {
+    const parsed = JSON.parse(raw) as Partial<OfficeLayoutConfig>;
+    if (!parsed || !Array.isArray(parsed.items)) {
+      return fallback;
+    }
+
+    return {
+      version: typeof parsed.version === "number" ? parsed.version : fallback.version,
+      items: parsed.items as LayoutItemConfig[],
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+const LAYOUT_CATALOG: LayoutCatalogTemplate[] = [
+  {
+    templateId: "desk-standard",
+    label: "Standard Desk",
+    description: "Brown team desk with monitor and mug.",
+    kind: "desk",
+    create: (id) => ({
+      id,
+      label: "Custom desk",
+      kind: "desk",
+      position: [0, 0, 0],
+      accent: "#8a6248",
+      chairSide: 1,
+      removable: true,
+    }),
+  },
+  {
+    templateId: "desk-executive",
+    label: "Executive Desk",
+    description: "Wider desk for offices and lead roles.",
+    kind: "desk",
+    create: (id) => ({
+      id,
+      label: "Custom executive desk",
+      kind: "desk",
+      position: [0, 0, 0],
+      accent: "#6d4d38",
+      chairSide: 1,
+      executive: true,
+      removable: true,
+    }),
+  },
+  {
+    templateId: "plant-tall",
+    label: "Tall Plant",
+    description: "Large potted plant for corners and hallways.",
+    kind: "plant",
+    create: (id) => ({
+      id,
+      label: "Custom tall plant",
+      kind: "plant",
+      position: [0, 0, 0],
+      plantHeight: 1.35,
+      removable: true,
+    }),
+  },
+  {
+    templateId: "plant-small",
+    label: "Small Plant",
+    description: "Shorter potted plant for desks and glass edges.",
+    kind: "plant",
+    create: (id) => ({
+      id,
+      label: "Custom small plant",
+      kind: "plant",
+      position: [0, 0, 0],
+      plantHeight: 0.85,
+      removable: true,
+    }),
+  },
+  {
+    templateId: "glass-panel",
+    label: "Glass Panel",
+    description: "Movable glass wall segment for offices and rooms.",
+    kind: "glassWall",
+    create: (id) => ({
+      id,
+      label: "Custom glass panel",
+      kind: "glassWall",
+      position: [0, 1.48, 0],
+      width: 2.4,
+      height: 2.35,
+      removable: true,
+    }),
+  },
+  {
+    templateId: "wall-segment",
+    label: "Wall Segment",
+    description: "Solid wall piece for patching or extending rooms.",
+    kind: "box",
+    create: (id) => ({
+      id,
+      label: "Custom wall segment",
+      kind: "box",
+      position: [0, 1.6, 0],
+      size: [3, 3.2, 0.35],
+      color: "#f3eadf",
+      removable: true,
+    }),
+  },
+  {
+    templateId: "meeting-table",
+    label: "Meeting Table",
+    description: "Conference table that can anchor a room.",
+    kind: "meetingTable",
+    create: (id) => ({
+      id,
+      label: "Custom meeting table",
+      kind: "meetingTable",
+      position: [0, 0, 0],
+      removable: true,
+    }),
+  },
+  {
+    templateId: "whiteboard",
+    label: "Whiteboard",
+    description: "Presentation board for walls and meeting rooms.",
+    kind: "whiteboard",
+    create: (id) => ({
+      id,
+      label: "Custom whiteboard",
+      kind: "whiteboard",
+      position: [0, 0, 0],
+      removable: true,
+    }),
+  },
+  {
+    templateId: "kanban-board",
+    label: "Kanban Board",
+    description: "Task board for walls and collaboration spaces.",
+    kind: "kanbanBoard",
+    create: (id) => ({
+      id,
+      label: "Custom kanban board",
+      kind: "kanbanBoard",
+      position: [0, 0, 0],
+      removable: true,
+    }),
+  },
+  {
+    templateId: "water-cooler",
+    label: "Water Cooler",
+    description: "Break area prop for corners and shared spaces.",
+    kind: "waterCooler",
+    create: (id) => ({
+      id,
+      label: "Custom water cooler",
+      kind: "waterCooler",
+      position: [0, 0, 0],
+      removable: true,
+    }),
+  },
+  {
+    templateId: "kitchen-counter",
+    label: "Kitchen Counter",
+    description: "Counter, fridge, and machine for kitchen areas.",
+    kind: "kitchenCounter",
+    create: (id) => ({
+      id,
+      label: "Custom kitchen counter",
+      kind: "kitchenCounter",
+      position: [0, 0, 0],
+      removable: true,
+    }),
+  },
+  {
+    templateId: "poster",
+    label: "Poster",
+    description: "Framed wall poster for decoration.",
+    kind: "poster",
+    create: (id) => ({
+      id,
+      label: "Custom poster",
+      kind: "poster",
+      position: [0, 2.05, 0],
+      posterLabel: "Office x Values",
+      posterAccent: "#cf7f4d",
+      removable: true,
+    }),
+  },
+  {
+    templateId: "abstract-art",
+    label: "Abstract Art",
+    description: "Decorative framed art for executive spaces.",
+    kind: "abstractArt",
+    create: (id) => ({
+      id,
+      label: "Custom art",
+      kind: "abstractArt",
+      position: [0, 2.05, 0],
+      artAccent: "#bccb96",
+      artStripe: "#d37b53",
+      removable: true,
+    }),
+  },
+];
+
+class OfficeLayoutManager implements OfficeLayoutController {
+  office: THREE.Group;
+  waypoints: OfficeWaypoints;
+  updaters: SceneUpdater[];
+  state: OfficeLayoutConfig;
+  items: Map<string, RuntimeLayoutItem>;
+  deskSlotsById: Map<string, DeskSlot>;
+  listeners: Set<() => void>;
+
+  constructor(office: THREE.Group, waypoints: OfficeWaypoints, updaters: SceneUpdater[]) {
+    this.office = office;
+    this.waypoints = waypoints;
+    this.updaters = updaters;
+    this.state = loadStoredLayout();
+    this.items = new Map();
+    this.deskSlotsById = new Map();
+    this.listeners = new Set();
+    this.rebuild();
+  }
+
+  getCatalog(): LayoutCatalogItem[] {
+    return LAYOUT_CATALOG.map(({ templateId, label, description, kind }) => ({
+      templateId,
+      label,
+      description,
+      kind,
+    }));
+  }
+
+  getItems(): LayoutItemSummary[] {
+    return this.state.items.map((item) => ({
+      id: item.id,
+      label: item.label,
+      kind: item.kind,
+      removable: item.removable ?? false,
+    }));
+  }
+
+  getSelection(id: string | null): LayoutSelectionState | null {
+    if (!id) {
+      return null;
+    }
+
+    const runtime = this.items.get(id);
+    if (!runtime) {
+      return null;
+    }
+
+    return {
+      id,
+      label: runtime.config.label,
+      kind: runtime.config.kind,
+      position: copyVectorTuple(runtime.object.position),
+      rotationY: runtime.object.rotation.y,
+      scale: copyVectorTuple(runtime.object.scale),
+      removable: runtime.config.removable ?? false,
+    };
+  }
+
+  getObjectForItem(id: string): THREE.Object3D | null {
+    return this.items.get(id)?.object ?? null;
+  }
+
+  getItemIdFromObject(object: THREE.Object3D | null): string | null {
+    let current: THREE.Object3D | null = object;
+    while (current) {
+      if (typeof current.userData.layoutItemId === "string") {
+        return current.userData.layoutItemId;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  updateItemTransform(
+    id: string,
+    updates: {
+      position?: [number, number, number] | undefined;
+      rotationY?: number | undefined;
+      scale?: [number, number, number] | undefined;
+    },
+  ): void {
+    const runtime = this.items.get(id);
+    const item = this.state.items.find((entry) => entry.id === id);
+    if (!runtime || !item) {
+      return;
+    }
+
+    if (updates.position) {
+      item.position = [...updates.position];
+    }
+    if (typeof updates.rotationY === "number") {
+      item.rotationY = updates.rotationY;
+    }
+    if (updates.scale) {
+      item.scale = [...updates.scale];
+    }
+
+    applyLayoutTransform(runtime.object, item);
+    this.syncDerivedWaypoints();
+    this.persist();
+    this.emit();
+  }
+
+  addItem(templateId: string): string | null {
+    const template = LAYOUT_CATALOG.find((entry) => entry.templateId === templateId);
+    if (!template) {
+      return null;
+    }
+
+    const id = `${template.templateId}-${Date.now().toString(36)}`;
+    const item = template.create(id);
+    this.state.items.push(item);
+
+    const runtime = buildRuntimeItem(item);
+    this.items.set(id, runtime);
+    this.office.add(runtime.object);
+    this.updaters.push(...runtime.updaters);
+
+    this.syncDerivedWaypoints();
+    this.persist();
+    this.emit();
+    return id;
+  }
+
+  removeItem(id: string): void {
+    const runtime = this.items.get(id);
+    if (!runtime || !(runtime.config.removable ?? false)) {
+      return;
+    }
+
+    this.office.remove(runtime.object);
+    runtime.updaters.forEach((updater) => {
+      const index = this.updaters.indexOf(updater);
+      if (index >= 0) {
+        this.updaters.splice(index, 1);
+      }
+    });
+    this.items.delete(id);
+    this.deskSlotsById.delete(id);
+    this.state.items = this.state.items.filter((item) => item.id !== id);
+
+    this.syncDerivedWaypoints();
+    this.persist();
+    this.emit();
+  }
+
+  reset(): void {
+    this.state = cloneLayoutConfig(DEFAULT_LAYOUT);
+    window.localStorage.removeItem(LAYOUT_STORAGE_KEY);
+    this.rebuild();
+    this.emit();
+  }
+
+  exportLayout(): string {
+    return JSON.stringify(this.state, null, 2);
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private rebuild(): void {
+    this.office.clear();
+    this.updaters.length = 0;
+    this.items.clear();
+
+    this.state.items.forEach((item) => {
+      const runtime = buildRuntimeItem(item);
+      this.items.set(item.id, runtime);
+      this.office.add(runtime.object);
+      this.updaters.push(...runtime.updaters);
+    });
+
+    this.syncDerivedWaypoints();
+  }
+
+  private syncDerivedWaypoints(): void {
+    const deskItems = this.state.items.filter((item) => item.deskSlot);
+    const nextDeskSlotIds = new Set(deskItems.map((item) => item.id));
+
+    deskItems.forEach((item) => {
+      const slot = this.deskSlotsById.get(item.id) ?? createDeskSlotForItem(item, item.id);
+      const next = createDeskSlotForItem(item, item.id);
+      slot.nodeId = next.nodeId;
+      slot.approach.copy(next.approach);
+      slot.sit.copy(next.sit);
+      slot.facing = next.facing;
+      if (next.assignedTo) {
+        slot.assignedTo = next.assignedTo;
+      } else {
+        delete slot.assignedTo;
+      }
+      this.deskSlotsById.set(item.id, slot);
+    });
+
+    Array.from(this.deskSlotsById.keys()).forEach((id) => {
+      if (!nextDeskSlotIds.has(id)) {
+        this.deskSlotsById.delete(id);
+      }
+    });
+
+    this.waypoints.deskSlots.length = 0;
+    deskItems.forEach((item) => {
+      const slot = this.deskSlotsById.get(item.id);
+      if (slot) {
+        this.waypoints.deskSlots.push(slot);
+      }
+    });
+
+    this.waypoints.bullpen.length = 0;
+    this.waypoints.deskSlots
+      .filter((desk) => desk.assignedTo && !NON_BULLPEN_AGENTS.has(desk.assignedTo))
+      .forEach((desk) => {
+        this.waypoints.bullpen.push(desk.approach.clone());
+      });
+
+    const navigation = buildBaseNavigation();
+    wireNavigation(navigation, deskItems);
+
+    deskItems.forEach((item) => {
+      const node = navigation[item.id];
+      const slot = this.deskSlotsById.get(item.id);
+      if (node && slot) {
+        node.position.copy(slot.approach);
+      }
+    });
+
+    Object.keys(this.waypoints.navigation).forEach((key) => {
+      delete this.waypoints.navigation[key];
+    });
+    Object.assign(this.waypoints.navigation, navigation);
+
+    const entranceInterior = this.waypoints.navigation.entranceInterior;
+    const cioHub = this.waypoints.navigation.cioHub;
+    if (entranceInterior) {
+      this.waypoints.entrance.position.copy(entranceInterior.position);
+      this.waypoints.entrance.nodeId = "entranceInterior";
+      this.waypoints.entrance.facing = Math.PI;
+    }
+    this.waypoints.reception.position.set(-8.15, 0, 6.2);
+    this.waypoints.reception.nodeId = "receptionFront";
+    this.waypoints.reception.facing = Math.PI / 2;
+    this.waypoints.kitchen.position.set(-10.25, 0, -5.35);
+    this.waypoints.kitchen.nodeId = "kitchenHub";
+    this.waypoints.kitchen.facing = Math.PI / 2;
+    if (cioHub) {
+      this.waypoints.cioOffice.position.copy(cioHub.position);
+      this.waypoints.cioOffice.nodeId = "cioHub";
+      this.waypoints.cioOffice.facing = Math.PI / 2;
+    }
+
+    this.syncMeetingSeats();
+  }
+
+  private syncMeetingSeats(): void {
+    const table = this.items.get("meeting-table")?.object;
+    const origin = table?.position ?? new THREE.Vector3(8.6, 0, -4.3);
+    const rotation = table?.rotation.y ?? 0;
+    const northOffsets = [-2.8, -1.4, 0, 1.4, 2.8].map((x) => new THREE.Vector3(x, 0, 1.75));
+    const southOffsets = [-2.8, -1.4, 0, 1.4, 2.8].map((x) => new THREE.Vector3(x, 0, -1.75));
+    const seats = [
+      ...northOffsets.map((offset) => ({
+        nodeId: "meetingNorthAisle",
+        position: rotateYOffset(offset, rotation).add(origin),
+        facing: Math.PI + rotation,
+        seated: false,
+      })),
+      ...southOffsets.map((offset) => ({
+        nodeId: "meetingSouthAisle",
+        position: rotateYOffset(offset, rotation).add(origin),
+        facing: rotation,
+        seated: false,
+      })),
+    ];
+
+    this.waypoints.meetingSeats.length = 0;
+    seats.forEach((seat) => {
+      this.waypoints.meetingSeats.push(seat);
+    });
+  }
+
+  private persist(): void {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, this.exportLayout());
+  }
+
+  private emit(): void {
+    this.listeners.forEach((listener) => listener());
+  }
+}
+
+export function createOfficeScene(): OfficeSceneResult {
+  const office = new THREE.Group();
+  office.name = "office";
+  const updaters: SceneUpdater[] = [];
+  const navigation = buildBaseNavigation();
+
+  const waypoints: OfficeWaypoints = {
     entrance: {
-      position: entranceInterior.position.clone(),
+      position: navigation.entranceInterior!.position.clone(),
       nodeId: "entranceInterior",
       facing: Math.PI,
     },
@@ -557,28 +975,16 @@ export function createOfficeScene(): OfficeSceneResult {
       facing: Math.PI / 2,
     },
     cioOffice: {
-      position: cioHub.position.clone(),
+      position: navigation.cioHub!.position.clone(),
       nodeId: "cioHub",
       facing: Math.PI / 2,
     },
-    bullpen: deskSlots
-      .filter((desk) => desk.assignedTo && !NON_BULLPEN_AGENTS.has(desk.assignedTo))
-      .map((desk) => desk.approach.clone()),
-    deskSlots,
-    meetingSeats: [
-      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(5.8, 0, -2.55), facing: Math.PI, seated: false },
-      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(7.2, 0, -2.55), facing: Math.PI, seated: false },
-      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(8.6, 0, -2.55), facing: Math.PI, seated: false },
-      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(10, 0, -2.55), facing: Math.PI, seated: false },
-      { nodeId: "meetingNorthAisle", position: new THREE.Vector3(11.4, 0, -2.55), facing: Math.PI, seated: false },
-      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(5.8, 0, -6.05), facing: 0, seated: false },
-      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(7.2, 0, -6.05), facing: 0, seated: false },
-      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(8.6, 0, -6.05), facing: 0, seated: false },
-      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(10, 0, -6.05), facing: 0, seated: false },
-      { nodeId: "meetingSouthAisle", position: new THREE.Vector3(11.4, 0, -6.05), facing: 0, seated: false },
-    ],
+    bullpen: [],
+    deskSlots: [],
+    meetingSeats: [],
     navigation,
   };
 
-  return { office, waypoints, updaters };
+  const layout = new OfficeLayoutManager(office, waypoints, updaters);
+  return { office, waypoints, updaters, layout };
 }

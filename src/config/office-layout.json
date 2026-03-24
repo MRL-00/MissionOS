@@ -1,0 +1,564 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "base",
+      "label": "Base slab",
+      "kind": "box",
+      "position": [0, -0.5, 0],
+      "size": [28, 1, 20],
+      "color": "#baa27f",
+      "removable": false
+    },
+    {
+      "id": "floor",
+      "label": "Main floor",
+      "kind": "box",
+      "position": [0, 0.09, 0],
+      "size": [26, 0.18, 18],
+      "color": "#d8c4a7",
+      "removable": false
+    },
+    {
+      "id": "bullpen-carpet",
+      "label": "Bullpen carpet",
+      "kind": "box",
+      "position": [0, 0.13, 1.15],
+      "size": [10.2, 0.05, 6.8],
+      "color": "#95acb0",
+      "removable": false
+    },
+    {
+      "id": "meeting-carpet",
+      "label": "Meeting carpet",
+      "kind": "box",
+      "position": [8.7, 0.13, -4.4],
+      "size": [7.1, 0.05, 5.5],
+      "color": "#b89b72",
+      "removable": false
+    },
+    {
+      "id": "cio-carpet",
+      "label": "CIO carpet",
+      "kind": "box",
+      "position": [9.55, 0.13, 5.9],
+      "size": [4.8, 0.05, 5.3],
+      "color": "#d4c7b4",
+      "removable": false
+    },
+    {
+      "id": "wall-south",
+      "label": "South wall",
+      "kind": "box",
+      "position": [0, 1.6, -9],
+      "size": [26, 3.2, 0.35],
+      "color": "#f3eadf",
+      "removable": false
+    },
+    {
+      "id": "wall-west",
+      "label": "West wall",
+      "kind": "box",
+      "position": [-13, 1.6, 0],
+      "size": [0.35, 3.2, 18],
+      "color": "#f3eadf",
+      "removable": false
+    },
+    {
+      "id": "wall-north-west",
+      "label": "North wall west",
+      "kind": "box",
+      "position": [-10.4, 1.6, 9],
+      "size": [5.2, 3.2, 0.35],
+      "color": "#f3eadf",
+      "removable": false
+    },
+    {
+      "id": "wall-north-east",
+      "label": "North wall east",
+      "kind": "box",
+      "position": [5.6, 1.6, 9],
+      "size": [14.8, 3.2, 0.35],
+      "color": "#f3eadf",
+      "removable": false
+    },
+    {
+      "id": "wall-east-south",
+      "label": "East wall south",
+      "kind": "box",
+      "position": [13, 1.6, -4.25],
+      "size": [0.35, 3.2, 9.5],
+      "color": "#f3eadf",
+      "removable": false
+    },
+    {
+      "id": "wall-east-north",
+      "label": "East wall north",
+      "kind": "box",
+      "position": [13, 1.6, 5.65],
+      "size": [0.35, 3.2, 6.7],
+      "color": "#f3eadf",
+      "removable": false
+    },
+    {
+      "id": "cio-glass-west-north",
+      "label": "CIO glass north panel",
+      "kind": "glassWall",
+      "position": [6.45, 1.48, 4.05],
+      "width": 2.4,
+      "height": 2.38,
+      "rotationY": 1.5707963267948966,
+      "removable": false
+    },
+    {
+      "id": "cio-glass-west-south",
+      "label": "CIO glass south panel",
+      "kind": "glassWall",
+      "position": [6.45, 1.48, 7.45],
+      "width": 2.05,
+      "height": 2.38,
+      "rotationY": 1.5707963267948966,
+      "removable": false
+    },
+    {
+      "id": "cio-glass-north",
+      "label": "CIO north glass",
+      "kind": "glassWall",
+      "position": [9.1, 1.48, 8.08],
+      "width": 5.35,
+      "height": 2.38,
+      "removable": false
+    },
+    {
+      "id": "cio-glass-door",
+      "label": "CIO glass door",
+      "kind": "glassWall",
+      "position": [6.45, 1.48, 5.9],
+      "width": 1.05,
+      "height": 2.38,
+      "rotationY": 1.5707963267948966,
+      "removable": false
+    },
+    {
+      "id": "meeting-glass-west-north",
+      "label": "Meeting glass west north",
+      "kind": "glassWall",
+      "position": [5.2, 1.48, -2.55],
+      "width": 2.1,
+      "height": 2.35,
+      "rotationY": 1.5707963267948966,
+      "removable": false
+    },
+    {
+      "id": "meeting-glass-west-south",
+      "label": "Meeting glass west south",
+      "kind": "glassWall",
+      "position": [5.2, 1.48, -6.15],
+      "width": 2.1,
+      "height": 2.35,
+      "rotationY": 1.5707963267948966,
+      "removable": false
+    },
+    {
+      "id": "meeting-glass-door",
+      "label": "Meeting glass door",
+      "kind": "glassWall",
+      "position": [5.2, 1.48, -4.35],
+      "width": 1.05,
+      "height": 2.35,
+      "rotationY": 1.5707963267948966,
+      "removable": false
+    },
+    {
+      "id": "meeting-glass-north",
+      "label": "Meeting north glass",
+      "kind": "glassWall",
+      "position": [8.7, 1.48, -1.68],
+      "width": 7,
+      "height": 2.35,
+      "removable": false
+    },
+    {
+      "id": "meeting-glass-south",
+      "label": "Meeting south glass",
+      "kind": "glassWall",
+      "position": [8.7, 1.48, -7.12],
+      "width": 7,
+      "height": 2.35,
+      "removable": false
+    },
+    {
+      "id": "meeting-glass-east",
+      "label": "Meeting east glass",
+      "kind": "glassWall",
+      "position": [12.18, 1.48, -4.4],
+      "width": 5.5,
+      "height": 2.35,
+      "rotationY": 1.5707963267948966,
+      "removable": false
+    },
+    {
+      "id": "desk-pickle",
+      "label": "Pickle desk",
+      "kind": "desk",
+      "position": [-3.9, 0, 3.15],
+      "accent": "#855f46",
+      "chairSide": 1,
+      "deskSlot": {
+        "assignedTo": "pickle",
+        "chairSide": 1,
+        "connectToNode": "deskAisleNorthWest"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-zoe",
+      "label": "Zoe desk",
+      "kind": "desk",
+      "position": [0, 0, 3.15],
+      "accent": "#91694e",
+      "chairSide": 1,
+      "deskSlot": {
+        "assignedTo": "zoe",
+        "chairSide": 1,
+        "connectToNode": "deskAisleNorthCenter"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-ink",
+      "label": "Ink desk",
+      "kind": "desk",
+      "position": [3.9, 0, 3.15],
+      "accent": "#855f46",
+      "chairSide": 1,
+      "deskSlot": {
+        "assignedTo": "ink",
+        "chairSide": 1,
+        "connectToNode": "deskAisleNorthEast"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-harry",
+      "label": "Harry desk",
+      "kind": "desk",
+      "position": [-3.9, 0, -0.85],
+      "accent": "#91694e",
+      "chairSide": 1,
+      "deskSlot": {
+        "assignedTo": "harry",
+        "chairSide": 1,
+        "connectToNode": "deskAisleSouthWest"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-kevin",
+      "label": "Kevin desk",
+      "kind": "desk",
+      "position": [0, 0, -0.85],
+      "accent": "#855f46",
+      "chairSide": 1,
+      "deskSlot": {
+        "assignedTo": "kevin",
+        "chairSide": 1,
+        "connectToNode": "deskAisleSouthCenter"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-danny",
+      "label": "Danny desk",
+      "kind": "desk",
+      "position": [3.9, 0, -0.85],
+      "accent": "#91694e",
+      "chairSide": 1,
+      "deskSlot": {
+        "assignedTo": "danny",
+        "chairSide": 1,
+        "connectToNode": "deskAisleSouthEast"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-johnny",
+      "label": "Johnny desk",
+      "kind": "desk",
+      "position": [-3.9, 0, -4.85],
+      "accent": "#855f46",
+      "chairSide": 1,
+      "deskSlot": {
+        "assignedTo": "johnny",
+        "chairSide": 1,
+        "connectToNode": "deskAisleFarSouthWest"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-tommy",
+      "label": "Tommy desk",
+      "kind": "desk",
+      "position": [-1.1, 0, -4.85],
+      "accent": "#91694e",
+      "chairSide": 1,
+      "deskSlot": {
+        "assignedTo": "tommy",
+        "chairSide": 1,
+        "connectToNode": "deskAisleFarSouthCenter"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-randall",
+      "label": "Randall desk",
+      "kind": "desk",
+      "position": [1.7, 0, -2.05],
+      "accent": "#7e8f69",
+      "chairSide": 1,
+      "rotationY": -1.5707963267948966,
+      "scale": [1, 1.08, 1],
+      "deskSlot": {
+        "assignedTo": "randall",
+        "chairSide": 1,
+        "connectToNode": "scrumDeskHub"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-cio",
+      "label": "CIO desk",
+      "kind": "desk",
+      "position": [9.55, 0, 5.95],
+      "accent": "#6d4d38",
+      "chairSide": 1,
+      "rotationY": 1.5707963267948966,
+      "executive": true,
+      "deskSlot": {
+        "assignedTo": "cio",
+        "chairSide": 1,
+        "connectToNode": "cioHub"
+      },
+      "removable": false
+    },
+    {
+      "id": "meeting-table",
+      "label": "Meeting table",
+      "kind": "meetingTable",
+      "position": [8.6, 0, -4.3],
+      "scale": [1.25, 1, 1],
+      "removable": false
+    },
+    {
+      "id": "whiteboard-main",
+      "label": "Whiteboard",
+      "kind": "whiteboard",
+      "position": [11.78, 0, -4.4],
+      "rotationY": -1.5707963267948966,
+      "removable": false
+    },
+    {
+      "id": "kanban-main",
+      "label": "Kanban board",
+      "kind": "kanbanBoard",
+      "position": [4.95, 0, -8.78],
+      "rotationY": 3.141592653589793,
+      "removable": false
+    },
+    {
+      "id": "art-cio",
+      "label": "CIO art",
+      "kind": "abstractArt",
+      "position": [12.15, 2.15, 5.85],
+      "rotationY": -1.5707963267948966,
+      "artAccent": "#bccb96",
+      "artStripe": "#d37b53",
+      "removable": false
+    },
+    {
+      "id": "poster-north-west",
+      "label": "Queenstown poster",
+      "kind": "poster",
+      "position": [-10.95, 2.08, 8.82],
+      "posterLabel": "Queenstown x Bungy",
+      "posterAccent": "#d56547",
+      "removable": false
+    },
+    {
+      "id": "poster-north-center",
+      "label": "Operations poster",
+      "kind": "poster",
+      "position": [-5.1, 2.08, 8.82],
+      "posterLabel": "EpicShot x Operations",
+      "posterAccent": "#c6543f",
+      "removable": false
+    },
+    {
+      "id": "poster-west",
+      "label": "West wall poster",
+      "kind": "poster",
+      "position": [-12.8, 2.05, 4.35],
+      "rotationY": 1.5707963267948966,
+      "posterLabel": "Live More x Fear Less",
+      "posterAccent": "#cf7f4d",
+      "removable": false
+    },
+    {
+      "id": "water-cooler",
+      "label": "Water cooler",
+      "kind": "waterCooler",
+      "position": [-6.9, 0, 7.15],
+      "removable": false
+    },
+    {
+      "id": "kitchen-counter",
+      "label": "Kitchen counter",
+      "kind": "kitchenCounter",
+      "position": [-9.25, 0, -4.95],
+      "removable": false
+    },
+    {
+      "id": "plant-corner-nw",
+      "label": "Plant northwest",
+      "kind": "plant",
+      "position": [-11.4, 0, 7.4],
+      "plantHeight": 1.25,
+      "removable": false
+    },
+    {
+      "id": "plant-corner-ne",
+      "label": "Plant northeast",
+      "kind": "plant",
+      "position": [11.35, 0, 7.3],
+      "plantHeight": 1.38,
+      "removable": false
+    },
+    {
+      "id": "plant-corner-se",
+      "label": "Plant southeast",
+      "kind": "plant",
+      "position": [11.7, 0, -7.6],
+      "plantHeight": 1.42,
+      "removable": false
+    },
+    {
+      "id": "plant-corner-sw",
+      "label": "Plant southwest",
+      "kind": "plant",
+      "position": [-11.4, 0, -7.4],
+      "plantHeight": 1.24,
+      "removable": false
+    },
+    {
+      "id": "plant-north-center-left",
+      "label": "Plant north center left",
+      "kind": "plant",
+      "position": [-1.4, 0, 7.2],
+      "plantHeight": 1.02,
+      "removable": false
+    },
+    {
+      "id": "plant-north-center-right",
+      "label": "Plant north center right",
+      "kind": "plant",
+      "position": [4.8, 0, 7.15],
+      "plantHeight": 0.92,
+      "removable": false
+    },
+    {
+      "id": "plant-bullpen-west",
+      "label": "Plant bullpen west",
+      "kind": "plant",
+      "position": [-5.2, 0, 4.95],
+      "plantHeight": 0.8,
+      "removable": false
+    },
+    {
+      "id": "plant-bullpen-east",
+      "label": "Plant bullpen east",
+      "kind": "plant",
+      "position": [4.15, 0, 5.25],
+      "plantHeight": 0.82,
+      "removable": false
+    },
+    {
+      "id": "plant-cio-entry",
+      "label": "Plant CIO entry",
+      "kind": "plant",
+      "position": [6.95, 0, 6.95],
+      "plantHeight": 0.9,
+      "removable": false
+    },
+    {
+      "id": "plant-cio-room",
+      "label": "Plant CIO room",
+      "kind": "plant",
+      "position": [10.95, 0, 4.15],
+      "plantHeight": 0.95,
+      "removable": false
+    },
+    {
+      "id": "plant-cio-back",
+      "label": "Plant CIO back",
+      "kind": "plant",
+      "position": [11.4, 0, 7.2],
+      "plantHeight": 1.15,
+      "removable": false
+    },
+    {
+      "id": "bungy-deck",
+      "label": "Bungy deck",
+      "kind": "bungyDeck",
+      "position": [14.45, 0.1, 1.05],
+      "removable": false
+    },
+    {
+      "id": "trim-south",
+      "label": "South trim",
+      "kind": "box",
+      "position": [0, 0.14, -8.9],
+      "size": [26.1, 0.22, 0.26],
+      "color": "#7e6550",
+      "removable": false
+    },
+    {
+      "id": "trim-north",
+      "label": "North trim",
+      "kind": "box",
+      "position": [0, 0.14, 8.9],
+      "size": [26.1, 0.22, 0.26],
+      "color": "#7e6550",
+      "removable": false
+    },
+    {
+      "id": "trim-west",
+      "label": "West trim",
+      "kind": "box",
+      "position": [-12.9, 0.14, 0],
+      "size": [0.26, 0.22, 18.1],
+      "color": "#7e6550",
+      "removable": false
+    },
+    {
+      "id": "trim-east",
+      "label": "East trim",
+      "kind": "box",
+      "position": [12.9, 0.14, 0],
+      "size": [0.26, 0.22, 18.1],
+      "color": "#7e6550",
+      "removable": false
+    },
+    {
+      "id": "deck-window",
+      "label": "Deck window",
+      "kind": "glassWall",
+      "position": [13.05, 2.1, 1.05],
+      "width": 3.2,
+      "height": 2.6,
+      "depth": 0.12,
+      "rotationY": 1.5707963267948966,
+      "glassColor": "#d2e6eb",
+      "removable": false
+    }
+  ]
+}
