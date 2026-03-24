@@ -14,6 +14,7 @@ import type {
   AgentConfig,
   AgentEvent,
   AgentRuntimeState,
+  AgentSnapshotState,
   AgentStatus,
   DeskSlot,
   DestinationWaypoint,
@@ -161,6 +162,8 @@ function releaseDesk(agentId: string): void {
 }
 
 function getPreferredDesk(agentId: string, preferredIndex?: number): DeskSlot | null {
+  const assignedDesks = new Set(deskAssignments.values());
+
   if (typeof preferredIndex === "number") {
     const preferredDesk = waypoints.deskSlots[preferredIndex];
     const currentOwner = preferredDesk ? Array.from(deskAssignments.entries()).find(([, desk]) => desk === preferredDesk)?.[0] : undefined;
@@ -169,16 +172,29 @@ function getPreferredDesk(agentId: string, preferredIndex?: number): DeskSlot | 
     }
   }
 
-  return (
-    waypoints.deskSlots.find((desk) => !Array.from(deskAssignments.values()).includes(desk)) ??
-    null
-  );
+  return waypoints.deskSlots.find((desk) => !assignedDesks.has(desk)) ?? null;
 }
 
 function assignDesk(agentId: string, preferredIndex?: number): DeskSlot | null {
   const assignedDesk = deskAssignments.get(agentId);
   if (assignedDesk) {
-    return assignedDesk;
+    if (typeof preferredIndex !== "number") {
+      return assignedDesk;
+    }
+
+    const preferredDesk = waypoints.deskSlots[preferredIndex];
+    if (!preferredDesk || preferredDesk === assignedDesk) {
+      return assignedDesk;
+    }
+
+    releaseDesk(agentId);
+    const reassignedDesk = getPreferredDesk(agentId, preferredIndex);
+    if (!reassignedDesk) {
+      deskAssignments.set(agentId, assignedDesk);
+      return assignedDesk;
+    }
+    deskAssignments.set(agentId, reassignedDesk);
+    return reassignedDesk;
   }
 
   const desk = getPreferredDesk(agentId, preferredIndex);
@@ -188,6 +204,22 @@ function assignDesk(agentId: string, preferredIndex?: number): DeskSlot | null {
 
   deskAssignments.set(agentId, desk);
   return desk;
+}
+
+function appearancesMatch(left: AgentAppearance, right: AgentAppearance): boolean {
+  const leftAccessories = left.accessories ?? [];
+  const rightAccessories = right.accessories ?? [];
+  return (
+    left.height === right.height &&
+    left.headShape === right.headShape &&
+    left.skinColor === right.skinColor &&
+    left.hairStyle === right.hairStyle &&
+    left.hairColor === right.hairColor &&
+    left.bodyColor === right.bodyColor &&
+    left.pantsColor === right.pantsColor &&
+    leftAccessories.length === rightAccessories.length &&
+    leftAccessories.every((accessory, index) => accessory === rightAccessories[index])
+  );
 }
 
 function resolveAppearance(agentId: string, appearance?: AgentAppearance): AgentAppearance {
@@ -236,7 +268,32 @@ function ensureController(state: AgentRuntimeState, appearance?: AgentAppearance
 
   const existing = agents.get(state.id);
   if (existing) {
+    const currentAppearance = resolveAppearance(state.id);
     const config = buildRuntimeConfig(state, appearance);
+    if (!appearancesMatch(currentAppearance, config.appearance)) {
+      const meshPosition = existing.mesh.position.clone();
+      const meshRotation = existing.mesh.rotation.y;
+      const navNodeId = existing.navNodeId;
+      const status = existing.status;
+      const task = existing.task;
+      const highlightTarget = existing.highlightTarget;
+
+      scene.remove(existing.mesh);
+      agents.delete(state.id);
+
+      const replacement = createController(state, config.appearance);
+      replacement.mesh.position.copy(meshPosition);
+      replacement.mesh.rotation.y = meshRotation;
+      replacement.targetPosition.copy(meshPosition);
+      replacement.targetFacing = meshRotation;
+      replacement.navNodeId = navNodeId;
+      replacement.status = status;
+      replacement.task = task;
+      replacement.highlightTarget = highlightTarget;
+      replacement.highlightAmount = highlightTarget;
+      return replacement;
+    }
+
     existing.name = config.name;
     existing.role = config.role;
     existing.emoji = config.emoji;
@@ -420,15 +477,16 @@ function handleSnapshot(message: Extract<ServerMessage, { type: "agents-snapshot
 
   Array.from(agents.keys()).forEach((agentId) => {
     if (!snapshotIds.has(agentId)) {
-      agentStates.delete(agentId);
       removeAgentImmediately(agentId);
     }
   });
 
   agentStates.clear();
-  message.agents.forEach((state) => {
+  message.agents.forEach((snapshotState: AgentSnapshotState) => {
+    agentAppearances.set(snapshotState.id, snapshotState.appearance);
+    const { appearance, ...state } = snapshotState;
     const next = upsertAgentState(state);
-    const controller = ensureController(next);
+    const controller = ensureController(next, appearance);
     controller.status = getControllerStatus(next.status);
     controller.task = next.task;
     moveControllerForEvent(controller, {

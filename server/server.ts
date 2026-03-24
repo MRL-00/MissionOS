@@ -13,6 +13,7 @@ import type {
   AgentEventLocation,
   AgentRegistration,
   AgentRuntimeState,
+  AgentSnapshotState,
   AgentSpawnRequest,
   MeetingConfig,
   MeetingRequest,
@@ -34,6 +35,7 @@ const DEFAULT_HEADERS = {
 } as const;
 
 const agentStates = new Map<string, AgentRuntimeState>();
+const agentAppearances = new Map<string, AgentAppearance>();
 const activityLog: ActivityLogEntry[] = [];
 const transitionTimers = new Map<string, NodeJS.Timeout>();
 const residentDeskAssignments = new Map<string, number>();
@@ -99,6 +101,14 @@ function isAgentEvent(value: unknown): value is AgentEvent {
     (event.location === undefined || VALID_LOCATIONS.has(event.location as AgentEventLocation)) &&
     typeof event.timestamp === "number"
   );
+}
+
+function isRealtimeAgentStatus(value: unknown): value is RealtimeAgentStatus {
+  return typeof value === "string" && VALID_STATUSES.has(value as RealtimeAgentStatus);
+}
+
+function isAgentEventLocation(value: unknown): value is AgentEventLocation {
+  return typeof value === "string" && VALID_LOCATIONS.has(value as AgentEventLocation);
 }
 
 function isRegistration(value: unknown): value is AgentRegistration {
@@ -219,6 +229,13 @@ function getOrderedStates(): AgentRuntimeState[] {
   return Array.from(agentStates.values()).sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function buildSnapshotStates(): AgentSnapshotState[] {
+  return getOrderedStates().map((state) => ({
+    ...state,
+    appearance: agentAppearances.get(state.id) ?? resolveAppearance(state).appearance,
+  }));
+}
+
 function broadcast(message: ServerMessage): void {
   const payload = JSON.stringify(message);
   websocketServer.clients.forEach((client) => {
@@ -231,7 +248,7 @@ function broadcast(message: ServerMessage): void {
 function broadcastSnapshot(): void {
   broadcast({
     type: "agents-snapshot",
-    agents: getOrderedStates(),
+    agents: buildSnapshotStates(),
   });
 }
 
@@ -273,6 +290,7 @@ function ensureAgentState(agentId: string): AgentRuntimeState {
     timestamp: Date.now(),
   };
   agentStates.set(agentId, fallback);
+  agentAppearances.set(agentId, resolveAppearance(fallback).appearance);
   return fallback;
 }
 
@@ -350,7 +368,7 @@ function resolveDeskIndex(registration: AgentRegistration, existing?: AgentRunti
 
   const availableDesk = getAvailableDeskIndex(registration.id);
   if (availableDesk === undefined) {
-    throw new RequestBodyError("No hot desks available", 409);
+    throw new RequestBodyError("No desks available", 409);
   }
   return availableDesk;
 }
@@ -430,11 +448,26 @@ function readStatusEvent(body: unknown, agentIdFromPath?: string): AgentEvent {
   if (agentIdFromPath && payload.agentId && payload.agentId !== agentIdFromPath) {
     throw new RequestBodyError("Agent id in URL does not match payload");
   }
+  if (!isRealtimeAgentStatus(payload.status)) {
+    throw new RequestBodyError("Invalid agent event payload");
+  }
+  if (typeof payload.timestamp !== "number") {
+    throw new RequestBodyError("Invalid agent event payload");
+  }
+  if (payload.task !== undefined && typeof payload.task !== "string") {
+    throw new RequestBodyError("Invalid agent event payload");
+  }
+  if (payload.message !== undefined && typeof payload.message !== "string") {
+    throw new RequestBodyError("Invalid agent event payload");
+  }
+  if (payload.location !== undefined && !isAgentEventLocation(payload.location)) {
+    throw new RequestBodyError("Invalid agent event payload");
+  }
 
   const normalized: AgentEvent = {
     agentId,
-    status: payload.status as RealtimeAgentStatus,
-    timestamp: payload.timestamp as number,
+    status: payload.status,
+    timestamp: payload.timestamp,
   };
 
   if (payload.task !== undefined) {
@@ -549,6 +582,7 @@ const httpServer = createServer(async (request, response) => {
       }
 
       agentStates.set(body.id, enteringState);
+      agentAppearances.set(body.id, appearance);
       pushActivity("registration", `Registered agent ${body.name} at desk ${deskIndex}.`, body.id);
       broadcast({
         type: "agent-registered",
@@ -693,6 +727,8 @@ const httpServer = createServer(async (request, response) => {
 
       scheduleTransition(agentId, () => {
         agentStates.delete(agentId);
+        residentDeskAssignments.delete(agentId);
+        agentAppearances.delete(agentId);
         broadcast({ type: "agent-removed", agentId });
         pushActivity("agent-status", `Removed agent ${existing.name}.`, agentId);
         broadcastSnapshot();
@@ -774,7 +810,7 @@ websocketServer.on("connection", (socket) => {
   socket.send(
     JSON.stringify({
       type: "agents-snapshot",
-      agents: getOrderedStates(),
+      agents: buildSnapshotStates(),
     } satisfies ServerMessage),
   );
   socket.send(
