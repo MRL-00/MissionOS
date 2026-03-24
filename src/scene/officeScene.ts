@@ -112,6 +112,7 @@ function createKanbanBoard(): THREE.Group {
   addBox(group, [0.05, 1.62, 0.05], [-0.54, 1.9, 0.05], "#cbb9a6");
   addBox(group, [0.05, 1.62, 0.05], [0.54, 1.9, 0.05], "#cbb9a6");
 
+  // Column headers: Todo, In Progress, Done
   [
     { x: -1.08, color: "#d47d63" },
     { x: 0, color: "#e0b75c" },
@@ -120,6 +121,7 @@ function createKanbanBoard(): THREE.Group {
     addBox(group, [0.78, 0.18, 0.04], [x, 2.5, 0.05], color);
   });
 
+  // Placeholder sticky notes in each column
   [
     { x: -1.22, y: 2.12, color: "#f1c96c" },
     { x: -0.92, y: 1.78, color: "#f1c96c" },
@@ -314,6 +316,7 @@ export function createOfficeScene(): OfficeSceneResult {
   meetingWallEast.rotation.y = Math.PI / 2;
   office.add(meetingWallEast);
 
+  const randallDesk = createDesk({ x: 4.45, z: -2.45, chairSide: 1, accent: "#7e8f69", rotation: -Math.PI / 2 });
   const desks = [
     createDesk({ x: -3.9, z: 3.15, chairSide: 1, accent: "#855f46" }),
     createDesk({ x: 0, z: 3.15, chairSide: 1, accent: "#91694e" }),
@@ -323,10 +326,10 @@ export function createOfficeScene(): OfficeSceneResult {
     createDesk({ x: 3.9, z: -0.85, chairSide: 1, accent: "#91694e" }),
     createDesk({ x: -3.9, z: -4.85, chairSide: 1, accent: "#855f46" }),
     createDesk({ x: -1.1, z: -4.85, chairSide: 1, accent: "#91694e" }),
-    createDesk({ x: 4.45, z: -2.45, chairSide: 1, accent: "#7e8f69", rotation: -Math.PI / 2 }),
+    randallDesk,
     createDesk({ x: 9.55, z: 5.95, chairSide: -1, accent: "#6d4d38", rotation: Math.PI / 2, executive: true }),
   ];
-  desks[8]!.scale.y = 1.08;
+  randallDesk.scale.y = 1.08;
   desks.forEach((desk) => office.add(desk));
 
   const table = createMeetingTable();
@@ -432,6 +435,8 @@ export function createOfficeScene(): OfficeSceneResult {
     meetingDoorInner: { position: new THREE.Vector3(5.95, 0, -4.35), links: [] },
     meetingNorthAisle: { position: new THREE.Vector3(8.6, 0, -2.2), links: [] },
     meetingSouthAisle: { position: new THREE.Vector3(8.6, 0, -6.4), links: [] },
+    meetingWestInner: { position: new THREE.Vector3(6.0, 0, -4.35), links: [] },
+    meetingEastInner: { position: new THREE.Vector3(11.2, 0, -4.35), links: [] },
     meetingWestAisle: { position: new THREE.Vector3(6.25, 0, -4.35), links: [] },
     meetingEastAisle: { position: new THREE.Vector3(10.95, 0, -4.35), links: [] },
     cioDoorOuter: { position: new THREE.Vector3(6.05, 0, 5.9), links: [] },
@@ -466,13 +471,20 @@ export function createOfficeScene(): OfficeSceneResult {
   connect(navigation, "deskAisleFarSouthWest", "deskAisleFarSouthCenter");
   connect(navigation, "southHallCenter", "scrumDeskHub");
   connect(navigation, "scrumDeskHub", "southHallEast");
+  connect(navigation, "deskAisleFarSouthCenter", "scrumDeskHub");
   connect(navigation, "southHallWest", "kitchenDoor");
   connect(navigation, "kitchenDoor", "kitchenHub");
   connect(navigation, "southHallEast", "meetingDoorOuter");
   connect(navigation, "meetingDoorOuter", "meetingDoorInner");
+  connect(navigation, "meetingDoorInner", "meetingWestInner");
+  connect(navigation, "meetingWestInner", "meetingNorthAisle");
+  connect(navigation, "meetingWestInner", "meetingSouthAisle");
   connect(navigation, "meetingDoorInner", "meetingWestAisle");
   connect(navigation, "meetingWestAisle", "meetingNorthAisle");
   connect(navigation, "meetingWestAisle", "meetingSouthAisle");
+  connect(navigation, "meetingNorthAisle", "meetingEastInner");
+  connect(navigation, "meetingSouthAisle", "meetingEastInner");
+  connect(navigation, "meetingEastInner", "meetingEastAisle");
   connect(navigation, "meetingNorthAisle", "meetingEastAisle");
   connect(navigation, "meetingSouthAisle", "meetingEastAisle");
   connect(navigation, "northHallEast", "cioDoorOuter");
@@ -491,6 +503,7 @@ export function createOfficeScene(): OfficeSceneResult {
     deskRandall,
     deskCio,
   ] = deskSlots;
+  if (deskSlots.length !== 10) throw new Error("Expected 10 desk slots");
 
   connect(navigation, deskPickle!.nodeId, "deskAisleNorthWest");
   connect(navigation, deskZoe!.nodeId, "deskAisleNorthCenter");
@@ -511,6 +524,7 @@ export function createOfficeScene(): OfficeSceneResult {
 
   const entranceInterior = navigation.entranceInterior!;
   const cioHub = navigation.cioHub!;
+  const NON_BULLPEN_AGENTS = new Set(["pickle", "randall", "cio"]);
 
   const waypoints = {
     entrance: {
@@ -533,7 +547,9 @@ export function createOfficeScene(): OfficeSceneResult {
       nodeId: "cioHub",
       facing: Math.PI / 2,
     },
-    bullpen: deskSlots.filter((desk) => desk.assignedTo && !["pickle", "randall", "cio"].includes(desk.assignedTo)).map((desk) => desk.sit.clone()),
+    bullpen: deskSlots
+      .filter((desk) => desk.assignedTo && !NON_BULLPEN_AGENTS.has(desk.assignedTo))
+      .map((desk) => desk.approach.clone()),
     deskSlots,
     meetingSeats: [
       { nodeId: "meetingNorthAisle", position: new THREE.Vector3(5.8, 0, -2.55), facing: Math.PI, seated: false },
