@@ -7,6 +7,7 @@ import {
   agentStates,
   applyEvent,
   cancelTransitionTimer,
+  defaultAppearances,
   formatStatusActivity,
   resolveAppearance,
   upsertRegistration,
@@ -288,6 +289,7 @@ export async function fetchOpenClawSessions(): Promise<OpenClawSessionInfo[]> {
 
 export async function ensureOpenClawAgentRegistered(officeAgentId: string, openClawAgentId: string): Promise<void> {
   const existing = agentStates.get(officeAgentId);
+  const fallback = defaultAppearances.get(officeAgentId);
   const existingBackendLink = existing?.backendLink;
   const appearance = agentAppearances.get(officeAgentId)
     ?? (existing ? resolveAppearance(existing).appearance : undefined)
@@ -312,9 +314,9 @@ export async function ensureOpenClawAgentRegistered(officeAgentId: string, openC
 
   await upsertRegistration({
     id: officeAgentId,
-    name: existing?.name ?? officeAgentId,
-    role: existing?.role ?? "OpenClaw Agent",
-    emoji: existing?.emoji ?? "🤖",
+    name: existing?.name ?? fallback?.name ?? officeAgentId,
+    role: existing?.role ?? fallback?.role ?? "OpenClaw Agent",
+    emoji: existing?.emoji ?? fallback?.emoji ?? "🤖",
     appearance,
     type: existing?.type ?? "resident",
     deskIndex: existing?.deskIndex ?? getKnownDeskIndex(officeAgentId),

@@ -9,8 +9,6 @@ import type {
   RealtimeAgentStatus,
 } from "../src/types";
 
-try { process.loadEnvFile?.(); } catch { /* .env is optional */ }
-
 export const PORT = 3001;
 export const OPENCLAW_URL = process.env.OPENCLAW_URL?.trim() ?? "";
 export const OPENCLAW_TOKEN = process.env.OPENCLAW_TOKEN ?? "";

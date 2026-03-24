@@ -36,7 +36,7 @@ import {
 } from "./types";
 
 const defaultAppearanceConfigs = defaultAppearancesJson as AgentConfig[];
-const defaultAppearances = new Map(defaultAppearanceConfigs.map((agent) => [agent.id, agent]));
+export const defaultAppearances = new Map(defaultAppearanceConfigs.map((agent) => [agent.id, agent]));
 
 export const agentStates = new Map<string, AgentRuntimeState>();
 export const agentAppearances = new Map<string, AgentAppearance>();

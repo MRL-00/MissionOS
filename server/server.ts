@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
-import type { AgentEvent, AgentRegistration, MeetingState, ServerMessage } from "../src/types";
+import type { AgentEvent, AgentRegistration, ServerMessage } from "../src/types";
 import { handleClaudeAuth } from "./auth/claude";
 import { handleCodexAuth } from "./auth/codex";
 import { activityLog, configureActivityBroadcast, pushActivity, pushAgentMessageActivity } from "./activity";
@@ -31,6 +31,8 @@ import { loadPersistedAgents, queuePersistAgents } from "./persistence";
 import { configureRemoteOfficeMirror, startRemoteOfficeMirror } from "./remote-mirror";
 import { DEFAULT_HEADERS, PORT, RequestBodyError } from "./types";
 import { readJson, sendJson } from "./utils";
+
+try { process.loadEnvFile?.(); } catch { /* .env is optional */ }
 
 let websocketServer: WebSocketServer;
 let meetingStartActivityEmitted = false;
@@ -217,6 +219,24 @@ const httpServer = createServer(async (request, response) => {
       if (!message) {
         throw new RequestBodyError("Missing message");
       }
+      const timestamp = Date.now();
+      const next = {
+        ...state,
+        message,
+        timestamp,
+      };
+      agentStates.set(agentId, next);
+      broadcast({
+        type: "agent-event",
+        event: {
+          agentId,
+          status: next.status,
+          task: next.task,
+          message,
+          location: next.location,
+          timestamp,
+        },
+      });
       const entry = pushAgentMessageActivity("agent-message", state, message);
       sendJson(response, 200, entry);
       return;
