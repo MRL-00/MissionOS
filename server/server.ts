@@ -995,10 +995,10 @@ function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "gateway-client",
+      id: "openclaw-control-ui",
       version: "1.0.0",
       platform: "node",
-      mode: "backend",
+      mode: "ui",
       instanceId: generateId(),
     },
     role: "operator",
