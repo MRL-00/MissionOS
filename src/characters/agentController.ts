@@ -133,10 +133,21 @@ export class AgentController {
     this.parts.legs.rightLeg.rotation.x = sway;
 
     if (visuallySeated) {
-      this.parts.arms.leftArm.rotation.x = -0.82;
-      this.parts.arms.rightArm.rotation.x = -1.02;
+      const seatedLeftArmX = -0.82;
+      const seatedRightArmX = -1.02;
+
+      this.parts.arms.leftArm.rotation.x = seatedLeftArmX;
+      this.parts.arms.rightArm.rotation.x = seatedRightArmX;
       this.parts.legs.leftLeg.rotation.x = 1.5;
       this.parts.legs.rightLeg.rotation.x = 1.5;
+
+      if (this.status === STATUS.working) {
+        const typingWave = elapsed * 14 + this.phase;
+        const typingAmount = 0.1;
+        this.parts.arms.leftArm.rotation.x = seatedLeftArmX + Math.sin(typingWave) * typingAmount;
+        this.parts.arms.rightArm.rotation.x = seatedRightArmX + Math.cos(typingWave) * typingAmount;
+        this.parts.headPivot.rotation.x += Math.sin(typingWave * 0.5) * 0.025;
+      }
     }
 
     this.highlightAmount = THREE.MathUtils.damp(this.highlightAmount, this.highlightTarget, 5, delta);
