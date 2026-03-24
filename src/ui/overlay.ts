@@ -721,9 +721,6 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   }
 
   sidebarToggleButton?.addEventListener("click", () => {
-    if (isMobileLayout) {
-      return;
-    }
     setSidebarCollapsed(!sidebarCollapsed);
   });
   topBarActivityButton?.addEventListener("click", () => toggleActivity());
