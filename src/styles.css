@@ -514,6 +514,13 @@ canvas {
   align-items: flex-start;
 }
 
+.transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .activity-header-actions,
 .activity-row-header,
 .activity-row-meta,
