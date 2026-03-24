@@ -1261,17 +1261,33 @@ canvas {
     right: 12px;
     transform: none;
     width: auto;
-    min-height: 56px;
-    padding: 10px 12px;
-    gap: 8px;
+    min-height: 44px;
+    padding: 8px 10px;
+    gap: 6px;
+    border-radius: 10px;
   }
 
   .top-bar-brand {
     min-width: 0;
+    gap: 6px;
+  }
+
+  .top-bar-label {
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+  }
+
+  .agent-count {
+    font-size: 0.78rem;
+  }
+
+  .top-bar-actions,
+  .top-bar-brand .connection-pill {
+    display: none;
   }
 
   .agent-sidebar {
-    top: 84px;
+    top: 68px;
     left: 12px;
     bottom: auto;
     width: 60px;
@@ -1281,7 +1297,7 @@ canvas {
     border-radius: 18px;
     grid-template-rows: 1fr;
     gap: 0;
-    z-index: 18;
+    z-index: 24;
   }
 
   .agent-sidebar[data-collapsed="true"] {
