@@ -308,6 +308,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   let latestStates: AgentRuntimeState[] = [];
   let latestActivityEntries: ActivityLogEntry[] = [];
   let meetingActive = false;
+  let transcriptDismissedForMeeting = false;
   let activityVisible = false;
   let activityAgentId = "";
   let activityView: ActivityViewFilter = "all";
@@ -321,6 +322,11 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   const mobileMediaQuery = window.matchMedia("(max-width: 767px)");
   let isMobileLayout = mobileMediaQuery.matches;
   let desktopSidebarCollapsed = sidebarCollapsed;
+
+  function updateTranscriptVisibility(turnCount = transcriptLog?.children.length ?? 0, summaryText = transcriptSummary?.textContent ?? ""): void {
+    const hasTranscriptContent = turnCount > 0 || summaryText.length > 0;
+    transcriptPanel.hidden = transcriptDismissedForMeeting || (!meetingActive && !hasTranscriptContent);
+  }
 
   function measureActivityMessages(): void {
     activityMeasurementFrame = 0;
@@ -734,7 +740,8 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   activityBackdrop.addEventListener("click", () => toggleActivity(false));
   activityPanel.querySelector<HTMLButtonElement>('[data-action="close-activity"]')?.addEventListener("click", () => toggleActivity(false));
   transcriptPanel.querySelector<HTMLButtonElement>('[data-action="close-transcript"]')?.addEventListener("click", () => {
-    transcriptPanel.hidden = true;
+    transcriptDismissedForMeeting = true;
+    updateTranscriptVisibility();
   });
   activityPanel.querySelector<HTMLButtonElement>('[data-action="reset-activity-filters"]')?.addEventListener("click", () => {
     activityAgentId = "";
@@ -826,8 +833,11 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       connectionStatus.setAttribute("aria-label", connected ? "Realtime connected" : "Realtime disconnected");
     },
     setMeetingActive(active) {
+      if (active && !meetingActive) {
+        transcriptDismissedForMeeting = false;
+      }
       meetingActive = active;
-      transcriptPanel.hidden = !active && !(transcriptLog?.children.length);
+      updateTranscriptVisibility();
       transcriptPanel.dataset.active = active ? "true" : "false";
     },
     syncAgentStates(states) {
@@ -927,7 +937,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       );
       transcriptLog.scrollTop = transcriptLog.scrollHeight;
       transcriptSummary.textContent = summary ? `Summary: ${summary}` : "";
-      transcriptPanel.hidden = !meetingActive && turns.length === 0 && !summary;
+      updateTranscriptVisibility(turns.length, transcriptSummary.textContent);
     },
     labelLayer,
     speechLayer,
