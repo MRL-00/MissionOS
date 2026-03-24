@@ -412,6 +412,7 @@ function handleServerMessage(message: ServerMessage): void {
 
   if (message.type === "activity-log") {
     pushActivity(message.entry);
+    return;
   }
 }
 

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { FACILITATOR_ROTATION } from "../config/meeting-rules";
 import type { ActivityLogEntry, AgentRuntimeState, LabelState, MeetingTurn, RealtimeAgentStatus } from "../types";
 
 interface HudOptions {
@@ -182,7 +183,7 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
   }
 
   function facilitatorFor(agentIds: string[]): string {
-    return agentIds[0] ?? "pickle";
+    return FACILITATOR_ROTATION.find((agentId) => agentIds.includes(agentId)) ?? agentIds[0] ?? "pickle";
   }
 
   function buildTurns(agentIds: string[], type: "standup" | "strategy" | "review", presenter?: string, topic?: string): MeetingTurn[] {
@@ -262,12 +263,13 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
     latestStates.forEach((state) => {
       const card = document.createElement("div");
       card.className = "admin-agent-card";
-      card.innerHTML = `
-        <div class="admin-agent-head">
-          <strong>${state.name}</strong>
-          <span>${state.role}</span>
-        </div>
-      `;
+      const head = document.createElement("div");
+      head.className = "admin-agent-head";
+      const name = document.createElement("strong");
+      name.textContent = state.name;
+      const role = document.createElement("span");
+      role.textContent = state.role;
+      head.append(name, role);
 
       const statuses: RealtimeAgentStatus[] = ["idle", "working", "meeting"];
       const statusRow = document.createElement("div");
@@ -307,7 +309,7 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
         speechInput.value = "";
       });
 
-      card.append(statusRow, speechInput);
+      card.append(head, statusRow, speechInput);
       adminAgentList.append(card);
     });
 
@@ -362,7 +364,7 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
     if (event.repeat) {
       return;
     }
-    if (event.key === "`" || event.key.toLowerCase() === "a") {
+    if (event.key === "`") {
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
         return;
@@ -442,10 +444,13 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
         ...entries.map((entry) => {
           const row = document.createElement("div");
           row.className = "activity-row";
-          row.innerHTML = `
-            <span class="activity-time">${timeLabel(entry.timestamp)}</span>
-            <span class="activity-message">${entry.message}</span>
-          `;
+          const time = document.createElement("span");
+          time.className = "activity-time";
+          time.textContent = timeLabel(entry.timestamp);
+          const message = document.createElement("span");
+          message.className = "activity-message";
+          message.textContent = entry.message;
+          row.append(time, message);
           return row;
         }),
       );
@@ -460,10 +465,11 @@ export function createHud({ onToggleDemo, onResetCamera, apiBase = "http://local
           const state = latestStates.find((item) => item.id === turn.agentId);
           const row = document.createElement("div");
           row.className = "transcript-row";
-          row.innerHTML = `
-            <strong>${state?.name ?? turn.agentId}</strong>
-            <span>${turn.message}</span>
-          `;
+          const speaker = document.createElement("strong");
+          speaker.textContent = state?.name ?? turn.agentId;
+          const message = document.createElement("span");
+          message.textContent = turn.message;
+          row.append(speaker, message);
           return row;
         }),
       );

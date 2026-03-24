@@ -33,6 +33,7 @@ const DEFAULT_HEADERS = {
 const builtInAgentIds = new Set<string>();
 const agentStates = new Map<string, AgentRuntimeState>();
 const activityLog: ActivityLogEntry[] = [];
+const spawnTimers = new Map<string, NodeJS.Timeout>();
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_LOG_ENTRIES = 60;
 const VALID_STATUSES = new Set<RealtimeAgentStatus>(["idle", "working", "meeting", "entering", "leaving"]);
@@ -312,9 +313,23 @@ function buildLegacyMeetingScript(agentIds: string[]): MeetingScript {
 
 seedBuiltInAgents();
 
+let meetingStartActivityEmitted = false;
+
+function cancelSpawnTimer(agentId: string): void {
+  const timer = spawnTimers.get(agentId);
+  if (!timer) {
+    return;
+  }
+  clearTimeout(timer);
+  spawnTimers.delete(agentId);
+}
+
 const meetingEngine = new MeetingEngine({
   onBroadcast: broadcast,
   onApplyEvent(event) {
+    if (event.status === "meeting" || event.location === "meeting-room") {
+      cancelSpawnTimer(event.agentId);
+    }
     applyEvent(event);
     const state = agentStates.get(event.agentId);
     if (!state) {
@@ -332,15 +347,24 @@ const meetingEngine = new MeetingEngine({
   },
   onMeetingState(state) {
     if (state.active && state.config && state.progress.currentTurn === 0) {
-      pushActivity("meeting-start", `${state.config.type} meeting started.`, state.config.facilitatorId);
+      if (!meetingStartActivityEmitted) {
+        meetingStartActivityEmitted = true;
+        pushActivity("meeting-start", `${state.config.type} meeting started.`, state.config.facilitatorId);
+      }
       return;
     }
     if (!state.active && state.summary) {
+      meetingStartActivityEmitted = false;
       pushActivity("meeting-end", state.summary, state.config?.facilitatorId);
       return;
     }
     if (!state.active && state.stopped) {
+      meetingStartActivityEmitted = false;
       pushActivity("meeting-stop", "Meeting stopped early.");
+      return;
+    }
+    if (!state.active) {
+      meetingStartActivityEmitted = false;
     }
   },
 });
@@ -419,7 +443,9 @@ const httpServer = createServer(async (request, response) => {
       pushActivity("agent-spawn", `${entering.name} spawned on task: ${body.task}.`, body.agentId);
       sendJson(response, 200, entering);
 
-      setTimeout(() => {
+      cancelSpawnTimer(body.agentId);
+      const timer = setTimeout(() => {
+        spawnTimers.delete(body.agentId);
         applyEvent({
           agentId: body.agentId,
           status: "working",
@@ -429,6 +455,7 @@ const httpServer = createServer(async (request, response) => {
           timestamp: Date.now(),
         });
       }, 900);
+      spawnTimers.set(body.agentId, timer);
       return;
     }
 
@@ -469,6 +496,7 @@ const httpServer = createServer(async (request, response) => {
         return;
       }
 
+      cancelSpawnTimer(agentId);
       broadcast({ type: "agent-removed", agentId });
       pushActivity("agent-status", `Removed external agent ${agentId}.`, agentId);
       broadcastSnapshot();
@@ -489,8 +517,10 @@ const httpServer = createServer(async (request, response) => {
         throw new RequestBodyError("Presenter must be a participant");
       }
 
-      const state = await meetingEngine.run(body);
-      sendJson(response, 200, state);
+      void meetingEngine.run(body).catch((error) => {
+        console.error("Meeting run failed", error);
+      });
+      sendJson(response, 200, meetingEngine.getState());
       return;
     }
 
@@ -515,11 +545,13 @@ const httpServer = createServer(async (request, response) => {
       if (!isMeetingRequest(body)) {
         throw new RequestBodyError("Invalid meeting payload");
       }
-      const state = await meetingEngine.run({
+      void meetingEngine.run({
         script: buildLegacyMeetingScript(body.agentIds),
         speed: 2,
+      }).catch((error) => {
+        console.error("Legacy meeting run failed", error);
       });
-      sendJson(response, 200, state);
+      sendJson(response, 200, meetingEngine.getState());
       return;
     }
 
