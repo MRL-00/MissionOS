@@ -56,6 +56,14 @@ for store_path in glob.glob(agents_dir + '/*/sessions/sessions.json'):
                     'agentId': agent_id,
                 })
 
+# Deduplicate: one entry per agent, preferring a descriptive label over "Working".
+seen = {}
+for s in sessions:
+    aid = s['agentId']
+    if aid not in seen or (seen[aid]['displayName'] == 'Working' and s['displayName'] != 'Working'):
+        seen[aid] = s
+sessions = list(seen.values())
+
 print(json.dumps({'sessions': sessions}))
 " "$CUTOFF_MS" "$OPENCLAW_DIR" 2>/dev/null)
 
