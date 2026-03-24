@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
@@ -30,6 +30,7 @@ import type {
 } from "../src/types";
 import { handleClaudeAuth } from "./auth/claude";
 import { handleCodexAuth } from "./auth/codex";
+import { ensureDataDir } from "./auth/storage";
 import { MeetingEngine } from "./meeting";
 
 const PORT = 3001;
@@ -450,11 +451,16 @@ function applyEvent(event: AgentEvent): AgentRuntimeState {
   return next;
 }
 
-function scheduleTransition(agentId: string, callback: () => void, delayMs: number): void {
+function scheduleTransition(agentId: string, callback: () => void | Promise<void>, delayMs: number): void {
   cancelTransitionTimer(agentId);
   const timer = setTimeout(() => {
     transitionTimers.delete(agentId);
-    callback();
+    const pending = callback();
+    if (pending && typeof pending === "object" && "catch" in pending) {
+      void pending.catch((error: unknown) => {
+        console.error(`Transition failed for ${agentId}`, error);
+      });
+    }
   }, delayMs);
   transitionTimers.set(agentId, timer);
 }
@@ -554,10 +560,6 @@ function readStatusEvent(body: unknown, agentIdFromPath?: string): AgentEvent {
   return normalized;
 }
 
-async function ensureDataDir(): Promise<void> {
-  await mkdir(dataDir, { recursive: true });
-}
-
 async function readPersistedAgents(): Promise<PersistedAgentsFile> {
   await ensureDataDir();
 
@@ -591,11 +593,25 @@ function toPersistedRecord(state: AgentRuntimeState): PersistedAgentRecord {
 }
 
 async function persistAgents(): Promise<void> {
-  await ensureDataDir();
   const payload: PersistedAgentsFile = {
     agents: getOrderedStates().map((state) => toPersistedRecord(state)),
   };
-  await writeFile(agentsFilePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  const serialized = `${JSON.stringify(payload, null, 2)}\n`;
+  const tempPath = path.join(dataDir, `agents.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`);
+  await ensureDataDir();
+  await writeFile(tempPath, serialized, "utf8");
+  await rename(tempPath, agentsFilePath);
+}
+
+let persistAgentsQueue: Promise<void> = Promise.resolve();
+
+function queuePersistAgents(): Promise<void> {
+  const runPersist = async () => {
+    await persistAgents();
+  };
+  const pending = persistAgentsQueue.then(runPersist, runPersist);
+  persistAgentsQueue = pending.catch(() => undefined);
+  return pending;
 }
 
 function applyPersistedAgent(record: PersistedAgentRecord): void {
@@ -680,7 +696,7 @@ async function upsertRegistration(body: AgentRegistration, mode: "create" | "upd
 
   agentStates.set(body.id, nextState);
   agentAppearances.set(body.id, appearance);
-  await persistAgents();
+  await queuePersistAgents();
 
   const action = mode === "create" ? "Registered" : "Updated";
   pushActivity("registration", `${action} agent ${body.name} at desk ${deskIndex + 1}.`, body.id);
@@ -929,14 +945,18 @@ const httpServer = createServer(async (request, response) => {
       pushActivity("agent-status", `${existing.name} is leaving the office.`, deleteAgentId);
       sendJson(response, 200, { ok: true });
 
-      scheduleTransition(deleteAgentId, async () => {
-        agentStates.delete(deleteAgentId);
-        residentDeskAssignments.delete(deleteAgentId);
-        agentAppearances.delete(deleteAgentId);
-        await persistAgents();
-        broadcast({ type: "agent-removed", agentId: deleteAgentId });
-        pushActivity("agent-status", `Removed agent ${existing.name}.`, deleteAgentId);
-        broadcastSnapshot();
+      scheduleTransition(deleteAgentId, () => {
+        void (async () => {
+          agentStates.delete(deleteAgentId);
+          residentDeskAssignments.delete(deleteAgentId);
+          agentAppearances.delete(deleteAgentId);
+          await queuePersistAgents();
+          broadcast({ type: "agent-removed", agentId: deleteAgentId });
+          pushActivity("agent-status", `Removed agent ${existing.name}.`, deleteAgentId);
+          broadcastSnapshot();
+        })().catch((error) => {
+          console.error(`Failed to remove agent ${deleteAgentId}`, error);
+        });
       }, 350);
       return;
     }

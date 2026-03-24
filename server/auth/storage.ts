@@ -16,7 +16,7 @@ interface TokenFile {
 const dataDir = path.resolve(process.cwd(), "data");
 const tokenFilePath = path.join(dataDir, "tokens.json");
 
-async function ensureDataDir(): Promise<void> {
+export async function ensureDataDir(): Promise<void> {
   await mkdir(dataDir, { recursive: true });
 }
 

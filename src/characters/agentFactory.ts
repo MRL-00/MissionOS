@@ -274,5 +274,3 @@ export function createAgent(agentConfig: AgentConfig): BuiltAgent {
     },
   };
 }
-
-export const buildAgent = createAgent;

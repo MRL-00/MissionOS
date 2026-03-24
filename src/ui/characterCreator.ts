@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { buildAgent } from "../characters/agentFactory";
+import { createAgent } from "../characters/agentFactory";
 import type { Accessory, AgentAppearance, AgentBackendLink, AgentRuntimeState } from "../types";
 
 type CreatorStep = 0 | 1 | 2 | 3;
@@ -42,6 +42,10 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+function createRandomAgentId(): string {
+  return `office-agent-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function createDefaultDraft(): DraftAgent {
   return {
     id: "",
@@ -71,6 +75,8 @@ function cloneDraft(agent?: AgentRuntimeState): DraftAgent {
     return createDefaultDraft();
   }
 
+  const fallback = createDefaultDraft();
+
   return {
     id: agent.id,
     name: agent.name,
@@ -78,7 +84,8 @@ function cloneDraft(agent?: AgentRuntimeState): DraftAgent {
     emoji: agent.emoji ?? "🙂",
     type: agent.type ?? "visitor",
     appearance: {
-      ...agent.appearance!,
+      ...fallback.appearance,
+      ...(agent.appearance ?? {}),
       accessories: [...(agent.appearance?.accessories ?? [])],
     },
     backendLink: agent.backendLink
@@ -135,6 +142,26 @@ function buildBackendStatus(link: AgentBackendLink): string {
     return `${link.provider === "claude" ? "Claude Code" : "Codex"} connected`;
   }
   return `${link.provider === "claude" ? "Claude Code" : "Codex"} awaiting OAuth`;
+}
+
+function disposeMaterial(material: THREE.Material | THREE.Material[]): void {
+  if (Array.isArray(material)) {
+    material.forEach((entry) => entry.dispose());
+    return;
+  }
+  material.dispose();
+}
+
+function disposeObject3D(object: THREE.Object3D): void {
+  object.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (mesh.geometry) {
+      mesh.geometry.dispose();
+    }
+    if ("material" in mesh && mesh.material) {
+      disposeMaterial(mesh.material);
+    }
+  });
 }
 
 export function createCharacterCreator({ apiBase, getExistingAgents }: CharacterCreatorOptions): CharacterCreatorApi {
@@ -278,6 +305,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
         </section>
       </div>
       <div class="character-creator-footer">
+        <div class="creator-save-status" data-save-status hidden></div>
         <button class="button secondary" type="button" data-action="back">Back</button>
         <div class="creator-footer-actions">
           <button class="button danger" type="button" data-action="remove" hidden>Remove from Office</button>
@@ -315,6 +343,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   const openclawField = modal.querySelector<HTMLElement>("[data-backend-openclaw]");
   const claudeField = modal.querySelector<HTMLElement>("[data-backend-claude]");
   const codexField = modal.querySelector<HTMLElement>("[data-backend-codex]");
+  const saveStatus = modal.querySelector<HTMLElement>("[data-save-status]");
 
   if (
     !dialog ||
@@ -340,7 +369,8 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     !backendAgentIdInput ||
     !openclawField ||
     !claudeField ||
-    !codexField
+    !codexField ||
+    !saveStatus
   ) {
     throw new Error("Failed to initialize character creator");
   }
@@ -368,19 +398,10 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   const openclawFieldEl = openclawField;
   const claudeFieldEl = claudeField;
   const codexFieldEl = codexField;
+  const saveStatusEl = saveStatus;
 
   const previewScene = new THREE.Scene();
   const previewCamera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-  const previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
-  previewRenderer.setSize(280, 280);
-  previewRootEl.append(previewRenderer.domElement);
-  summaryPreviewRootEl.append(previewRenderer.domElement.cloneNode() as HTMLCanvasElement);
-
-  const previewCanvas = previewRenderer.domElement;
-  summaryPreviewRootEl.replaceChildren(previewCanvas);
-
   previewScene.add(new THREE.HemisphereLight("#ffe9c6", "#3f4a63", 1.7));
   const keyLight = new THREE.DirectionalLight("#fff3d9", 1.8);
   keyLight.position.set(3, 6, 5);
@@ -400,13 +421,73 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   previewCamera.lookAt(0, 1.2, 0);
 
   let currentMesh: THREE.Object3D | null = null;
+  let previewRenderer: THREE.WebGLRenderer | null = null;
   let currentStep: CreatorStep = 0;
   let currentMode: CreatorMode = "create";
   let currentAgentId: string | null = null;
   let draft = createDefaultDraft();
   let animationFrame = 0;
+  let windowListenersBound = false;
+
+  const onWindowResize = () => {
+    resizePreview();
+  };
+  const onWindowKeydown = (event: KeyboardEvent) => {
+    if (modal.hidden) {
+      return;
+    }
+    if (event.key === "Escape") {
+      close();
+    }
+  };
+
+  function setSaveStatus(message = ""): void {
+    saveStatusEl.textContent = message;
+    saveStatusEl.hidden = message.length === 0;
+  }
+
+  function ensureRenderer(): THREE.WebGLRenderer {
+    if (previewRenderer) {
+      return previewRenderer;
+    }
+    previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
+    previewRenderer.setSize(280, 280);
+    return previewRenderer;
+  }
+
+  function bindWindowListeners(): void {
+    if (windowListenersBound) {
+      return;
+    }
+    window.addEventListener("resize", onWindowResize);
+    window.addEventListener("keydown", onWindowKeydown);
+    windowListenersBound = true;
+  }
+
+  function unbindWindowListeners(): void {
+    if (!windowListenersBound) {
+      return;
+    }
+    window.removeEventListener("resize", onWindowResize);
+    window.removeEventListener("keydown", onWindowKeydown);
+    windowListenersBound = false;
+  }
+
+  function disposeCurrentMesh(): void {
+    if (!currentMesh) {
+      return;
+    }
+    previewScene.remove(currentMesh);
+    disposeObject3D(currentMesh);
+    currentMesh = null;
+  }
 
   function resizePreview(): void {
+    if (!previewRenderer) {
+      return;
+    }
     const activeRoot = currentStep === 3 ? summaryPreviewRootEl : previewRootEl;
     const width = Math.max(activeRoot.clientWidth || 280, 220);
     const height = Math.max(activeRoot.clientHeight || 280, 220);
@@ -420,23 +501,23 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     if (currentMesh) {
       currentMesh.rotation.y += 0.01;
     }
-    previewRenderer.render(previewScene, previewCamera);
+    previewRenderer?.render(previewScene, previewCamera);
   }
 
   function mountPreview(): void {
+    const renderer = ensureRenderer();
     const root = currentStep === 3 ? summaryPreviewRootEl : previewRootEl;
-    if (previewRenderer.domElement.parentElement !== root) {
-      root.append(previewRenderer.domElement);
+    if (renderer.domElement.parentElement !== root) {
+      root.append(renderer.domElement);
       resizePreview();
     }
   }
 
   function renderPreview(): void {
-    if (currentMesh) {
-      previewScene.remove(currentMesh);
-    }
+    const renderer = ensureRenderer();
+    disposeCurrentMesh();
 
-    const built = buildAgent({
+    const built = createAgent({
       id: draft.id || "preview-agent",
       name: draft.name || "Preview Agent",
       role: draft.role || "Role",
@@ -447,7 +528,36 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     currentMesh.position.y = 0;
     previewScene.add(currentMesh);
     mountPreview();
-    previewRenderer.render(previewScene, previewCamera);
+    renderer.render(previewScene, previewCamera);
+  }
+
+  function renderSummary(): void {
+    const cards: Array<{ title: string; detail: string }> = [
+      {
+        title: `${draft.emoji || "🙂"} ${draft.name || "Unnamed Character"}`,
+        detail: draft.role || "No role yet",
+      },
+      {
+        title: draft.type === "resident" ? "Resident" : "Visitor",
+        detail: buildBackendStatus(draft.backendLink),
+      },
+      {
+        title: "Appearance",
+        detail: `${draft.appearance.headShape} head · ${draft.appearance.hairStyle} hair · ${(draft.appearance.accessories ?? []).join(", ") || "no accessories"}`,
+      },
+    ];
+
+    summaryEl.replaceChildren();
+    cards.forEach(({ title, detail }) => {
+      const card = document.createElement("div");
+      card.className = "creator-summary-card";
+      const strong = document.createElement("strong");
+      strong.textContent = title;
+      const span = document.createElement("span");
+      span.textContent = detail;
+      card.append(strong, span);
+      summaryEl.append(card);
+    });
   }
 
   function updateBackendLinkFromDraft(): void {
@@ -494,20 +604,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     backendStatusEl.textContent = buildBackendStatus(draft.backendLink);
     const connected = draft.backendLink.connected;
     backendStatusEl.parentElement?.setAttribute("data-connected", connected ? "true" : "false");
-    summaryEl.innerHTML = `
-      <div class="creator-summary-card">
-        <strong>${draft.emoji || "🙂"} ${draft.name || "Unnamed Character"}</strong>
-        <span>${draft.role || "No role yet"}</span>
-      </div>
-      <div class="creator-summary-card">
-        <strong>${draft.type === "resident" ? "Resident" : "Visitor"}</strong>
-        <span>${buildBackendStatus(draft.backendLink)}</span>
-      </div>
-      <div class="creator-summary-card">
-        <strong>Appearance</strong>
-        <span>${draft.appearance.headShape} head · ${draft.appearance.hairStyle} hair · ${(draft.appearance.accessories ?? []).join(", ") || "no accessories"}</span>
-      </div>
-    `;
+    renderSummary();
     renderPreview();
   }
 
@@ -527,7 +624,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   }
 
   function makeAgentId(): string {
-    const base = slugify(draft.name) || "office-agent";
+    const base = slugify(draft.name) || createRandomAgentId();
     const existingIds = new Set(getExistingAgents().map((agent) => agent.id));
     if (currentMode === "edit" && currentAgentId) {
       existingIds.delete(currentAgentId);
@@ -549,7 +646,10 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     currentStep = 0;
     draft = cloneDraft(agent);
     updateBackendLinkFromDraft();
+    setSaveStatus();
     modal.hidden = false;
+    bindWindowListeners();
+    ensureRenderer();
     syncFields();
     syncSteps();
     resizePreview();
@@ -565,6 +665,12 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
       window.cancelAnimationFrame(animationFrame);
       animationFrame = 0;
     }
+    unbindWindowListeners();
+    disposeCurrentMesh();
+    previewRenderer?.dispose();
+    previewRenderer?.domElement.remove();
+    previewRenderer = null;
+    setSaveStatus();
   }
 
   function setBackendProvider(provider: AgentBackendLink["provider"]): void {
@@ -589,16 +695,18 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   }
 
   async function save(): Promise<void> {
-    draft.id = currentMode === "edit" && currentAgentId ? currentAgentId : makeAgentId();
     draft.name = nameInputEl.value.trim();
     draft.role = roleInputEl.value.trim();
     draft.emoji = emojiInputEl.value.trim() || "🙂";
 
     if (!draft.name || !draft.role) {
+      setSaveStatus("Name and role are required.");
       currentStep = 0;
       syncSteps();
       return;
     }
+
+    draft.id = currentMode === "edit" && currentAgentId ? currentAgentId : makeAgentId();
 
     const path = currentMode === "edit" ? `${apiBase}/api/agents/${encodeURIComponent(draft.id)}` : `${apiBase}/api/agents/register`;
     const method = currentMode === "edit" ? "PUT" : "POST";
@@ -617,6 +725,9 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
 
   async function remove(): Promise<void> {
     if (!currentAgentId) {
+      return;
+    }
+    if (!window.confirm("Remove this character from the office?")) {
       return;
     }
 
@@ -651,11 +762,19 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   });
 
   submitButtonEl.addEventListener("click", () => {
-    void save();
+    setSaveStatus();
+    void save().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Character save failed";
+      setSaveStatus(message);
+    });
   });
 
   removeButtonEl.addEventListener("click", () => {
-    void remove();
+    setSaveStatus();
+    void remove().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Character removal failed";
+      setSaveStatus(message);
+    });
   });
 
   nameInputEl.addEventListener("input", () => {
@@ -736,16 +855,6 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   });
   modal.querySelector<HTMLButtonElement>('[data-action="oauth-codex"]')?.addEventListener("click", () => {
     window.location.href = `${apiBase}/auth/codex/authorize?redirect=${encodeURIComponent(window.location.origin + window.location.pathname)}`;
-  });
-
-  window.addEventListener("resize", resizePreview);
-  window.addEventListener("keydown", (event) => {
-    if (modal.hidden) {
-      return;
-    }
-    if (event.key === "Escape") {
-      close();
-    }
   });
 
   return {
