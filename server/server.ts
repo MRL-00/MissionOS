@@ -33,7 +33,7 @@ import { handleCodexAuth } from "./auth/codex";
 import { ensureDataDir } from "./auth/storage";
 import { MeetingEngine } from "./meeting";
 
-process.loadEnvFile?.();
+try { process.loadEnvFile?.(); } catch { /* .env is optional */ }
 
 const PORT = 3001;
 const OPENCLAW_URL = process.env.OPENCLAW_URL?.trim() ?? "";
