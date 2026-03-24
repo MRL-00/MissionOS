@@ -25,7 +25,7 @@ export const DEFAULT_HEADERS = {
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_LOG_ENTRIES = 180;
 export const DESK_COUNT = 10;
-export const OPENCLAW_IDLE_GRACE_MS = 60_000;
+export const OPENCLAW_IDLE_GRACE_MS = 15_000;
 
 export const VALID_STATUSES = new Set<RealtimeAgentStatus>(["idle", "working", "meeting", "entering", "leaving"]);
 export const VALID_LOCATIONS = new Set<AgentEventLocation>(["desk", "meeting-room", "door", "cio-office"]);
