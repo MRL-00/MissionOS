@@ -9,6 +9,21 @@ export type RealtimeAgentStatus = "idle" | "working" | "meeting" | "entering" | 
 export type AgentEventLocation = "desk" | "meeting-room" | "door" | "cio-office";
 export type MeetingType = "standup" | "strategy" | "review";
 export type MeetingSpeed = 1 | 2 | 3;
+export type WorkflowStatus = "backlog" | "todo" | "in_progress" | "blocked" | "in_review" | "qa" | "merged_ready" | "done" | "canceled";
+export type WorkflowEventKind =
+  | "item-created"
+  | "item-updated"
+  | "status-changed"
+  | "ownership-changed"
+  | "handoff-requested"
+  | "handoff-accepted"
+  | "handoff-declined"
+  | "comment-added"
+  | "qa-triggered";
+export type WorkflowActorRole = "pickle" | "engineer" | "reviewer" | "qa" | "observer";
+export type WorkflowCommentTarget = "office" | "linear";
+export type WorkflowHandoffStatus = "pending" | "accepted" | "declined";
+export type WorkflowQaStatus = "idle" | "queued" | "running" | "passed" | "failed" | "skipped";
 
 export interface AgentAppearance {
   height?: number;
@@ -158,6 +173,167 @@ export interface MeetingState {
   stopped: boolean;
 }
 
+export interface WorkflowActor {
+  agentId: string;
+  name: string;
+  role: WorkflowActorRole;
+}
+
+export interface WorkflowLinearRef {
+  issueId: string;
+  issueKey: string;
+  url?: string | undefined;
+  projectId?: string | undefined;
+}
+
+export interface WorkflowGithubRef {
+  repository?: string | undefined;
+  branch?: string | undefined;
+  pullRequestNumber?: number | undefined;
+  pullRequestUrl?: string | undefined;
+  headSha?: string | undefined;
+  mergedAt?: number | undefined;
+}
+
+export interface WorkflowOwnership {
+  ownerAgentId?: string | undefined;
+  reviewerAgentId?: string | undefined;
+  qaAgentId?: string | undefined;
+}
+
+export interface WorkflowQaState {
+  status: WorkflowQaStatus;
+  lastTriggeredAt?: number | undefined;
+  lastTriggerReason?: string | undefined;
+  lastTriggeredBy?: WorkflowActor | undefined;
+}
+
+export interface WorkflowItem {
+  id: string;
+  sprintId: string;
+  title: string;
+  summary?: string | undefined;
+  status: WorkflowStatus;
+  linear: WorkflowLinearRef;
+  github: WorkflowGithubRef;
+  ownership: WorkflowOwnership;
+  qa: WorkflowQaState;
+  createdAt: number;
+  updatedAt: number;
+  lastEventAt: number;
+}
+
+export interface WorkflowEventRecord {
+  id: string;
+  itemId: string;
+  sprintId: string;
+  kind: WorkflowEventKind;
+  actor: WorkflowActor;
+  timestamp: number;
+  message: string;
+  fromStatus?: WorkflowStatus | undefined;
+  toStatus?: WorkflowStatus | undefined;
+  metadata?: Record<string, string | number | boolean> | undefined;
+}
+
+export interface WorkflowHandoff {
+  id: string;
+  itemId: string;
+  sprintId: string;
+  from: WorkflowActor;
+  to: WorkflowActor;
+  status: WorkflowHandoffStatus;
+  summary: string;
+  checklist: string[];
+  createdAt: number;
+  respondedAt?: number | undefined;
+}
+
+export interface WorkflowComment {
+  id: string;
+  itemId: string;
+  sprintId: string;
+  actor: WorkflowActor;
+  target: WorkflowCommentTarget;
+  body: string;
+  createdAt: number;
+}
+
+export interface WorkflowQaTrigger {
+  id: string;
+  itemId: string;
+  sprintId: string;
+  status: Exclude<WorkflowQaStatus, "idle">;
+  reason: string;
+  auto: boolean;
+  triggeredBy: WorkflowActor;
+  createdAt: number;
+}
+
+export interface WorkflowSnapshot {
+  currentSprintId: string;
+  items: WorkflowItem[];
+  events: WorkflowEventRecord[];
+  handoffs: WorkflowHandoff[];
+  comments: WorkflowComment[];
+  qaTriggers: WorkflowQaTrigger[];
+}
+
+export interface WorkflowItemCreateRequest {
+  id: string;
+  sprintId: string;
+  title: string;
+  summary?: string | undefined;
+  status?: WorkflowStatus | undefined;
+  linear: WorkflowLinearRef;
+  github?: WorkflowGithubRef | undefined;
+  ownership?: WorkflowOwnership | undefined;
+  actor: WorkflowActor;
+}
+
+export interface WorkflowItemUpdateRequest {
+  sprintId?: string | undefined;
+  title?: string | undefined;
+  summary?: string | undefined;
+  status?: WorkflowStatus | undefined;
+  github?: WorkflowGithubRef | undefined;
+  ownership?: WorkflowOwnership | undefined;
+  actor: WorkflowActor;
+}
+
+export interface WorkflowEventCreateRequest {
+  actor: WorkflowActor;
+  kind: WorkflowEventKind;
+  message: string;
+  fromStatus?: WorkflowStatus | undefined;
+  toStatus?: WorkflowStatus | undefined;
+  metadata?: Record<string, string | number | boolean> | undefined;
+}
+
+export interface WorkflowHandoffCreateRequest {
+  from: WorkflowActor;
+  to: WorkflowActor;
+  summary: string;
+  checklist?: string[] | undefined;
+}
+
+export interface WorkflowHandoffResponseRequest {
+  actor: WorkflowActor;
+  status: Extract<WorkflowHandoffStatus, "accepted" | "declined">;
+}
+
+export interface WorkflowCommentCreateRequest {
+  actor: WorkflowActor;
+  target: WorkflowCommentTarget;
+  body: string;
+}
+
+export interface WorkflowQaTriggerRequest {
+  actor: WorkflowActor;
+  reason: string;
+  auto?: boolean | undefined;
+}
+
 export interface ActivityLogEntry {
   id: string;
   timestamp: number;
@@ -170,7 +346,11 @@ export interface ActivityLogEntry {
     | "meeting-turn"
     | "meeting-end"
     | "meeting-stop"
-    | "registration";
+    | "registration"
+    | "workflow-item"
+    | "workflow-handoff"
+    | "workflow-comment"
+    | "workflow-qa";
   message: string;
   agentId?: string | undefined;
 }
@@ -222,6 +402,18 @@ export type ServerMessage =
   | {
       type: "activity-log";
       entry: ActivityLogEntry;
+    }
+  | {
+      type: "workflow-snapshot";
+      snapshot: WorkflowSnapshot;
+    }
+  | {
+      type: "workflow-item-updated";
+      item: WorkflowItem;
+    }
+  | {
+      type: "workflow-event";
+      event: WorkflowEventRecord;
     };
 
 export interface NavigationNode {

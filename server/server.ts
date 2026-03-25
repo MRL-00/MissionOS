@@ -31,6 +31,30 @@ import { loadPersistedAgents, queuePersistAgents } from "./persistence";
 import { configureRemoteOfficeMirror, startRemoteOfficeMirror } from "./remote-mirror";
 import { DEFAULT_HEADERS, PORT, RequestBodyError } from "./types";
 import { readJson, sendJson } from "./utils";
+import {
+  buildWorkflowSnapshot,
+  configureWorkflowRuntime,
+  createQaTrigger,
+  createWorkflowComment,
+  createWorkflowEvent,
+  createWorkflowHandoff,
+  createWorkflowItem,
+  isWorkflowCommentCreateRequest,
+  isWorkflowEventCreateRequest,
+  isWorkflowHandoffCreateRequest,
+  isWorkflowHandoffResponseRequest,
+  isWorkflowItemCreateRequest,
+  isWorkflowItemUpdateRequest,
+  isWorkflowQaTriggerRequest,
+  listWorkflowComments,
+  listWorkflowEvents,
+  listWorkflowHandoffs,
+  listWorkflowItems,
+  listWorkflowQaTriggers,
+  loadPersistedWorkflow,
+  respondToWorkflowHandoff,
+  updateWorkflowItem,
+} from "./workflow";
 
 try { process.loadEnvFile?.(); } catch { /* .env is optional */ }
 
@@ -63,6 +87,7 @@ configureAgentRuntime({
   broadcastSnapshot,
   queuePersistAgents,
 });
+configureWorkflowRuntime(broadcast);
 configureRemoteOfficeMirror({
   broadcast,
   broadcastSnapshot,
@@ -153,6 +178,133 @@ const httpServer = createServer(async (request, response) => {
 
     if (method === "GET" && url.pathname === "/api/activity") {
       sendJson(response, 200, { entries: activityLog });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/workflow") {
+      sendJson(response, 200, buildWorkflowSnapshot());
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/workflow/items") {
+      sendJson(response, 200, {
+        currentSprintId: buildWorkflowSnapshot().currentSprintId,
+        items: listWorkflowItems(),
+      });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/workflow/events") {
+      sendJson(response, 200, {
+        events: listWorkflowEvents(url.searchParams.get("itemId") ?? undefined),
+      });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/workflow/handoffs") {
+      sendJson(response, 200, {
+        handoffs: listWorkflowHandoffs(url.searchParams.get("itemId") ?? undefined),
+      });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/workflow/comments") {
+      sendJson(response, 200, {
+        comments: listWorkflowComments(url.searchParams.get("itemId") ?? undefined),
+      });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/workflow/qa-triggers") {
+      sendJson(response, 200, {
+        qaTriggers: listWorkflowQaTriggers(url.searchParams.get("itemId") ?? undefined),
+      });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/workflow/items") {
+      const body = await readJson<unknown>(request);
+      if (!isWorkflowItemCreateRequest(body)) {
+        throw new RequestBodyError("Invalid workflow item payload");
+      }
+      const result = await createWorkflowItem(body);
+      sendJson(response, 201, result);
+      return;
+    }
+
+    const workflowItemMatch = (method === "PATCH" || method === "PUT" || method === "POST")
+      ? url.pathname.match(/^\/api\/workflow\/items\/([^/]+)$/)
+      : null;
+    if (workflowItemMatch && (method === "PATCH" || method === "PUT")) {
+      const itemId = decodeURIComponent(workflowItemMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isWorkflowItemUpdateRequest(body)) {
+        throw new RequestBodyError("Invalid workflow item update payload");
+      }
+      const result = await updateWorkflowItem(itemId, body);
+      sendJson(response, 200, result);
+      return;
+    }
+
+    const workflowEventMatch = method === "POST" ? url.pathname.match(/^\/api\/workflow\/items\/([^/]+)\/events$/) : null;
+    if (workflowEventMatch) {
+      const itemId = decodeURIComponent(workflowEventMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isWorkflowEventCreateRequest(body)) {
+        throw new RequestBodyError("Invalid workflow event payload");
+      }
+      const event = await createWorkflowEvent(itemId, body);
+      sendJson(response, 201, { event });
+      return;
+    }
+
+    const workflowHandoffMatch = method === "POST" ? url.pathname.match(/^\/api\/workflow\/items\/([^/]+)\/handoffs$/) : null;
+    if (workflowHandoffMatch) {
+      const itemId = decodeURIComponent(workflowHandoffMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isWorkflowHandoffCreateRequest(body)) {
+        throw new RequestBodyError("Invalid workflow handoff payload");
+      }
+      const result = await createWorkflowHandoff(itemId, body);
+      sendJson(response, 201, result);
+      return;
+    }
+
+    const workflowHandoffResponseMatch = (method === "PATCH" || method === "POST")
+      ? url.pathname.match(/^\/api\/workflow\/handoffs\/([^/]+)$/)
+      : null;
+    if (workflowHandoffResponseMatch && (method === "PATCH" || method === "POST")) {
+      const handoffId = decodeURIComponent(workflowHandoffResponseMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isWorkflowHandoffResponseRequest(body)) {
+        throw new RequestBodyError("Invalid workflow handoff response payload");
+      }
+      const result = await respondToWorkflowHandoff(handoffId, body);
+      sendJson(response, 200, result);
+      return;
+    }
+
+    const workflowCommentMatch = method === "POST" ? url.pathname.match(/^\/api\/workflow\/items\/([^/]+)\/comments$/) : null;
+    if (workflowCommentMatch) {
+      const itemId = decodeURIComponent(workflowCommentMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isWorkflowCommentCreateRequest(body)) {
+        throw new RequestBodyError("Invalid workflow comment payload");
+      }
+      const result = await createWorkflowComment(itemId, body);
+      sendJson(response, 201, result);
+      return;
+    }
+
+    const workflowQaMatch = method === "POST" ? url.pathname.match(/^\/api\/workflow\/items\/([^/]+)\/qa-triggers$/) : null;
+    if (workflowQaMatch) {
+      const itemId = decodeURIComponent(workflowQaMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isWorkflowQaTriggerRequest(body)) {
+        throw new RequestBodyError("Invalid workflow QA trigger payload");
+      }
+      const qaTrigger = await createQaTrigger(itemId, body);
+      sendJson(response, 201, { qaTrigger });
       return;
     }
 
@@ -447,6 +599,7 @@ async function ensureCharlie(): Promise<void> {
 
 export async function start(): Promise<void> {
   await loadPersistedAgents();
+  await loadPersistedWorkflow();
   await ensureCharlie();
 
   websocketServer = new WebSocketServer({ server: httpServer });
@@ -461,6 +614,12 @@ export async function start(): Promise<void> {
       JSON.stringify({
         type: "meeting-status",
         state: meetingEngine.getState(),
+      } satisfies ServerMessage),
+    );
+    socket.send(
+      JSON.stringify({
+        type: "workflow-snapshot",
+        snapshot: buildWorkflowSnapshot(),
       } satisfies ServerMessage),
     );
   });
