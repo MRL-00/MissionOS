@@ -419,8 +419,35 @@ const httpServer = createServer(async (request, response) => {
   }
 });
 
+async function ensureCharlie(): Promise<void> {
+  if (agentStates.has("charlie")) {
+    return;
+  }
+  await upsertRegistration(
+    {
+      id: "charlie",
+      name: "Charlie",
+      role: "Support Agent",
+      emoji: "🐟",
+      type: "resident",
+      appearance: {
+        height: 0.85,
+        headShape: "round",
+        skinColor: "#FF6B35",
+        hairStyle: "none",
+        hairColor: "#FFFFFF",
+        bodyColor: "#FF6B35",
+        pantsColor: "#1A1A1A",
+        accessories: [],
+      },
+    },
+    "create",
+  );
+}
+
 export async function start(): Promise<void> {
   await loadPersistedAgents();
+  await ensureCharlie();
 
   websocketServer = new WebSocketServer({ server: httpServer });
   websocketServer.on("connection", (socket) => {
