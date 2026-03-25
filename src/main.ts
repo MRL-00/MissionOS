@@ -5,6 +5,7 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { buildAgentConfig, createDeterministicAppearance, getDefaultAgentConfig, getKnownDeskIndex } from "./agentDefaults";
 import { getApiBase } from "./config/api";
 import { AgentController, STATUS } from "./characters/agentController";
+import { FishController } from "./characters/fishController";
 import { moveAgentToDestination } from "./demo";
 import { OfficeWebSocketClient } from "./network/websocket";
 import { createOfficeScene } from "./scene/officeScene";
@@ -92,7 +93,9 @@ scene.add(roomGlow);
 const { office, waypoints, updaters, layout } = createOfficeScene();
 scene.add(office);
 
-const agents = new Map<string, AgentController>();
+type CharacterController = AgentController | FishController;
+
+const agents = new Map<string, CharacterController>();
 const agentStates = new Map<string, AgentRuntimeState>();
 const deskAssignments = new Map<string, DeskSlot>();
 const agentAppearances = new Map<string, AgentAppearance>();
@@ -321,6 +324,10 @@ function getPreferredDesk(agentId: string, preferredIndex?: number): DeskSlot | 
 }
 
 function assignDesk(agentId: string, preferredIndex?: number): DeskSlot | null {
+  if (agentId === "charlie") {
+    return null;
+  }
+
   const assignedDesk = deskAssignments.get(agentId);
   if (assignedDesk) {
     if (typeof preferredIndex !== "number") {
@@ -393,14 +400,18 @@ function buildRuntimeConfig(state: Pick<AgentRuntimeState, "id" | "name" | "role
   });
 }
 
-function createController(state: AgentRuntimeState, appearance?: AgentAppearance): AgentController {
-  const desk = assignDesk(state.id, state.deskIndex ?? getKnownDeskIndex(state.id));
+function createController(state: AgentRuntimeState, appearance?: AgentAppearance): CharacterController {
+  const isCharlie = state.id === "charlie";
+  const desk = isCharlie ? null : assignDesk(state.id, state.deskIndex ?? getKnownDeskIndex(state.id));
   const startAtDoor = state.location === "door" || state.status === "entering" || state.status === "leaving";
   const initialPosition = startAtDoor
     ? waypoints.entrance.position.clone()
     : (desk?.sit ?? waypoints.entrance.position).clone();
   const initialFacing = startAtDoor ? waypoints.entrance.facing : (desk?.facing ?? 0);
-  const controller = new AgentController(buildRuntimeConfig(state, appearance), initialPosition, initialFacing);
+  const config = buildRuntimeConfig(state, appearance);
+  const controller = isCharlie
+    ? new FishController(config, initialPosition, initialFacing)
+    : new AgentController(config, initialPosition, initialFacing);
   controller.navNodeId = startAtDoor ? waypoints.entrance.nodeId : (desk?.nodeId ?? waypoints.entrance.nodeId);
   controller.task = state.task;
   controller.message = state.message;
@@ -410,7 +421,7 @@ function createController(state: AgentRuntimeState, appearance?: AgentAppearance
   return controller;
 }
 
-function ensureController(state: AgentRuntimeState, appearance?: AgentAppearance): AgentController {
+function ensureController(state: AgentRuntimeState, appearance?: AgentAppearance): CharacterController {
   cancelRemoval(state.id);
 
   const existing = agents.get(state.id);
@@ -450,7 +461,7 @@ function ensureController(state: AgentRuntimeState, appearance?: AgentAppearance
     existing.task = state.task;
     existing.message = state.message;
     agentColors.set(state.id, config.appearance.bodyColor);
-    if (typeof state.deskIndex === "number") {
+    if (state.id !== "charlie" && typeof state.deskIndex === "number") {
       assignDesk(state.id, state.deskIndex);
     }
     return existing;
@@ -475,7 +486,7 @@ function getMeetingDestination(agentId: string): DestinationWaypoint | null {
   return waypoints.meetingSeats[seatIndex] ?? null;
 }
 
-function moveControllerForEvent(controller: AgentController, event: AgentEvent): void {
+function moveControllerForEvent(controller: CharacterController, event: AgentEvent): void {
   const location = event.location ?? (event.status === "entering" || event.status === "leaving" ? "door" : undefined);
   if (!location) {
     return;
@@ -530,7 +541,7 @@ function upsertAgentState(state: AgentRuntimeState): AgentRuntimeState {
     ...state,
   };
   agentStates.set(state.id, next);
-  if (typeof next.deskIndex === "number") {
+  if (next.id !== "charlie" && typeof next.deskIndex === "number") {
     assignDesk(next.id, next.deskIndex);
   }
   return next;

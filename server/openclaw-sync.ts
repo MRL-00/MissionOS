@@ -39,6 +39,7 @@ export const OPENCLAW_AGENT_MAP = {
   tommy: "tommy",
   randall: "randall",
   jared: "jared",
+  charlie: "charlie",
 } as const satisfies Record<string, string>;
 
 export let openClawWs: WsWebSocket | null = null;
