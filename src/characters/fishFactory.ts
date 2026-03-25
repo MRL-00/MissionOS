@@ -33,9 +33,16 @@ export function createFishAgent(agentConfig: AgentConfig): BuiltAgent {
   bodyGeometry.applyMatrix4(new THREE.Matrix4().makeScale(0.78, 0.6, 1.3));
   const body = addMesh(bodyPivot, bodyGeometry, orange, new THREE.Vector3(0, 0.9, 0));
 
-  const stripeGeometry = new THREE.BoxGeometry(0.72, 0.68, 0.09);
-  addMesh(bodyPivot, stripeGeometry, white, new THREE.Vector3(0, 0.9, 0.16));
-  addMesh(bodyPivot, stripeGeometry, white, new THREE.Vector3(0, 0.9, -0.12));
+  // White stripes: thin ellipsoid bands that follow the body contour
+  const makeStripe = (zPos: number): void => {
+    const bandGeo = new THREE.SphereGeometry(0.42, 20, 12);
+    bandGeo.applyMatrix4(new THREE.Matrix4().makeScale(0.82, 0.64, 0.22));
+    const band = new THREE.Mesh(bandGeo, white);
+    band.position.set(0, 0.9, zPos);
+    bodyPivot.add(band);
+  };
+  makeStripe(0.17);
+  makeStripe(-0.1);
 
   const tailGeometry = new THREE.BoxGeometry(0.48, 0.42, 0.05);
   const tailFin = addMesh(bodyPivot, tailGeometry, orange, new THREE.Vector3(0, 0.9, -0.62));
@@ -51,13 +58,21 @@ export function createFishAgent(agentConfig: AgentConfig): BuiltAgent {
   headPivot.position.set(0, 0.92, 0.38);
   bodyPivot.add(headPivot);
 
-  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 10), white);
-  eye.position.set(0.28, 0.06, 0.05);
-  headPivot.add(eye);
+  // Right eye + pupil
+  const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 10), white);
+  eyeR.position.set(0.28, 0.06, 0.05);
+  headPivot.add(eyeR);
+  const pupilR = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), dark);
+  pupilR.position.set(0.33, 0.06, 0.08);
+  headPivot.add(pupilR);
 
-  const pupil = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.03), dark);
-  pupil.position.set(0.34, 0.06, 0.08);
-  headPivot.add(pupil);
+  // Left eye + pupil
+  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 10), white);
+  eyeL.position.set(-0.28, 0.06, 0.05);
+  headPivot.add(eyeL);
+  const pupilL = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), dark);
+  pupilL.position.set(-0.33, 0.06, 0.08);
+  headPivot.add(pupilL);
 
   root.scale.setScalar(height);
   root.userData.labelOffset = 2.05 * height;
