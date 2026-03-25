@@ -65,7 +65,7 @@ export interface LabelState {
   name: string;
   role: string;
   status: AgentStatus;
-  task?: string | undefined;
+  message?: string | undefined;
   worldPosition: THREE.Vector3;
 }
 

@@ -686,24 +686,32 @@ canvas {
 .speech-layer {
   position: absolute;
   inset: 0;
+  pointer-events: none;
 }
 
 .agent-label {
   position: absolute;
   transform: translate(-50%, -50%);
-  min-width: 92px;
-  padding: 6px 10px;
-  border-radius: 14px;
-  text-align: center;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 12px 30px rgba(54, 41, 29, 0.18);
+  min-width: 88px;
+  max-width: min(180px, 34vw);
+  padding: 5px 9px 6px;
+  border-radius: 12px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 10px 24px rgba(54, 41, 29, 0.16);
   border: 1px solid rgba(97, 71, 46, 0.14);
-  pointer-events: none;
+  pointer-events: auto;
+  transition:
+    max-width 180ms ease,
+    padding 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+  cursor: pointer;
 }
 
 .agent-name {
   display: block;
-  font-size: 0.83rem;
+  font-size: 0.78rem;
   font-weight: 700;
   line-height: 1.1;
 }
@@ -711,18 +719,18 @@ canvas {
 .agent-role {
   display: block;
   margin-top: 2px;
-  font-size: 0.69rem;
+  font-size: 0.64rem;
   opacity: 0.7;
 }
 
 .agent-status {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  margin-top: 4px;
-  font-size: 0.67rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-top: 5px;
+  font-size: 0;
 }
 
 .agent-status::before {
@@ -734,10 +742,29 @@ canvas {
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.04);
 }
 
-.agent-task {
-  margin-top: 4px;
-  font-size: 0.64rem;
-  opacity: 0.78;
+.agent-message {
+  display: none;
+  margin-top: 7px;
+  max-width: min(260px, 44vw);
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: rgba(52, 41, 29, 0.88);
+  overflow-wrap: anywhere;
+}
+
+.agent-label[data-expanded="true"] {
+  max-width: min(280px, 48vw);
+  padding: 8px 11px 10px;
+  box-shadow: 0 16px 34px rgba(54, 41, 29, 0.2);
+}
+
+.agent-label[data-expanded="true"] .agent-message:not([hidden]) {
+  display: block;
+}
+
+.agent-label:focus-visible {
+  outline: 2px solid rgba(156, 95, 42, 0.45);
+  outline-offset: 2px;
 }
 
 .speech-bubble {
