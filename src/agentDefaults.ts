@@ -2,6 +2,7 @@ import type { AgentAppearance, AgentConfig } from "./types";
 import defaultAppearancesJson from "./config/default-appearances.json";
 
 const DEFAULT_APPEARANCES = defaultAppearancesJson as AgentConfig[];
+const DESKLESS_AGENT_IDS = new Set(["charlie"]);
 
 const KNOWN_DESK_INDICES = {
   pickle: 0,
@@ -84,6 +85,10 @@ export function getDefaultAgentConfig(agentId: string): AgentConfig | undefined 
 }
 
 export function getKnownDeskIndex(agentId: string): number | undefined {
+  if (DESKLESS_AGENT_IDS.has(agentId)) {
+    return undefined;
+  }
+
   return KNOWN_DESK_INDICES[agentId as keyof typeof KNOWN_DESK_INDICES];
 }
 

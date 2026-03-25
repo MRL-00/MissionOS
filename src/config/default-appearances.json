@@ -188,5 +188,21 @@
       "pantsColor": "#C4B18A",
       "accessories": []
     }
+  },
+  {
+    "id": "charlie",
+    "name": "Charlie",
+    "role": "Support Agent",
+    "emoji": "🐟",
+    "appearance": {
+      "height": 0.85,
+      "headShape": "round",
+      "skinColor": "#FF6B35",
+      "hairStyle": "none",
+      "hairColor": "#FFFFFF",
+      "bodyColor": "#FF6B35",
+      "pantsColor": "#1A1A1A",
+      "accessories": []
+    }
   }
 ]

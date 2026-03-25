@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { Accessory, AgentAppearance, AgentConfig, BuiltAgent } from "../types";
 import { makeMaterial } from "../scene/materials";
 import { enableShadows } from "../utils";
+import { createFishAgent } from "./fishFactory";
 
 function addMesh(
   parent: THREE.Object3D,
@@ -205,6 +206,10 @@ function createBodyAccessories(accessories: Accessory[], appearance: AgentAppear
 }
 
 export function createAgent(agentConfig: AgentConfig): BuiltAgent {
+  if (agentConfig.id === "charlie") {
+    return createFishAgent(agentConfig);
+  }
+
   const { id, name, role, emoji, appearance } = agentConfig;
   const height = appearance.height ?? 1;
 
