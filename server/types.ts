@@ -63,6 +63,7 @@ export interface OpenClawSessionInfo {
 
 export interface OpenClawSessionListRow {
   key?: string | undefined;
+  agentId?: string | undefined;
   displayName?: string | undefined;
   messages?: unknown[] | undefined;
 }

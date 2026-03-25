@@ -33,6 +33,7 @@ export const OPENCLAW_AGENT_MAP = {
   ink: "ink",
   harry: "harry",
   kevin: "kevin",
+  dan: "dan",
   danny: "danny",
   johnny: "johnny",
   tommy: "tommy",
@@ -119,7 +120,7 @@ export function normalizeToolSessions(result: unknown): OpenClawSessionInfo[] {
     const lastMessage = Array.isArray(session.messages) ? session.messages.at(-1) : undefined;
     return [{
       sessionKey,
-      agentId: extractOpenClawAgentId(sessionKey),
+      agentId: extractOpenClawAgentId(sessionKey, session.agentId),
       status: "active",
       label: session.displayName,
       task: extractOpenClawMessageText(lastMessage),
