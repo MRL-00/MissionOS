@@ -6,7 +6,7 @@
       "label": "Base slab",
       "kind": "box",
       "position": [0, -0.5, 0],
-      "size": [28, 1, 20],
+      "size": [34, 1, 22],
       "color": "#baa27f",
       "removable": false
     },
@@ -15,7 +15,7 @@
       "label": "Main floor",
       "kind": "box",
       "position": [0, 0.09, 0],
-      "size": [26, 0.18, 18],
+      "size": [32, 0.18, 20],
       "color": "#d8c4a7",
       "removable": false
     },
@@ -50,8 +50,8 @@
       "id": "wall-south",
       "label": "South wall",
       "kind": "box",
-      "position": [0, 1.6, -9],
-      "size": [26, 3.2, 0.35],
+      "position": [0, 1.6, -10],
+      "size": [32, 3.2, 0.35],
       "color": "#f3eadf",
       "removable": false
     },
@@ -59,8 +59,8 @@
       "id": "wall-west",
       "label": "West wall",
       "kind": "box",
-      "position": [-13, 1.6, 0],
-      "size": [0.35, 3.2, 18],
+      "position": [-16, 1.6, 0],
+      "size": [0.35, 3.2, 20],
       "color": "#f3eadf",
       "removable": false
     },
@@ -68,7 +68,7 @@
       "id": "wall-north-west",
       "label": "North wall west",
       "kind": "box",
-      "position": [-10.4, 1.6, 9],
+      "position": [-13.4, 1.6, 10],
       "size": [5.2, 3.2, 0.35],
       "color": "#f3eadf",
       "removable": false
@@ -77,8 +77,8 @@
       "id": "wall-north-east",
       "label": "North wall east",
       "kind": "box",
-      "position": [5.6, 1.6, 9],
-      "size": [14.8, 3.2, 0.35],
+      "position": [5.6, 1.6, 10],
+      "size": [20.8, 3.2, 0.35],
       "color": "#f3eadf",
       "removable": false
     },
@@ -86,8 +86,8 @@
       "id": "wall-east-south",
       "label": "East wall south",
       "kind": "box",
-      "position": [13, 1.6, -4.25],
-      "size": [0.35, 3.2, 9.5],
+      "position": [16, 1.6, -4.75],
+      "size": [0.35, 3.2, 10.5],
       "color": "#f3eadf",
       "removable": false
     },
@@ -95,9 +95,27 @@
       "id": "wall-east-north",
       "label": "East wall north",
       "kind": "box",
-      "position": [13, 1.6, 5.65],
-      "size": [0.35, 3.2, 6.7],
+      "position": [16, 1.6, 6.15],
+      "size": [0.35, 3.2, 7.7],
       "color": "#f3eadf",
+      "removable": false
+    },
+    {
+      "id": "advisor-carpet",
+      "label": "Advisor carpet",
+      "kind": "box",
+      "position": [14.15, 0.13, 5.9],
+      "size": [4.6, 0.05, 5.2],
+      "color": "#cfc1ad",
+      "removable": false
+    },
+    {
+      "id": "spare-desk-carpet",
+      "label": "Spare desk carpet",
+      "kind": "box",
+      "position": [14.15, 0.13, -2.1],
+      "size": [4.8, 0.05, 7.9],
+      "color": "#8da2a8",
       "removable": false
     },
     {
@@ -342,6 +360,63 @@
       "removable": false
     },
     {
+      "id": "desk-jared",
+      "label": "Jared desk",
+      "kind": "desk",
+      "position": [14.25, 0, 5.9],
+      "accent": "#7b5a43",
+      "chairSide": 1,
+      "rotationY": -1.5707963267948966,
+      "deskSlot": {
+        "assignedTo": "jared",
+        "chairSide": 1,
+        "connectToNode": "northHallEast"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-spare-1",
+      "label": "Spare desk 1",
+      "kind": "desk",
+      "position": [14.25, 0, 1.5],
+      "accent": "#86614a",
+      "chairSide": 1,
+      "rotationY": -1.5707963267948966,
+      "deskSlot": {
+        "chairSide": 1,
+        "connectToNode": "centerHallEast"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-spare-2",
+      "label": "Spare desk 2",
+      "kind": "desk",
+      "position": [14.25, 0, -1.7],
+      "accent": "#8f694e",
+      "chairSide": 1,
+      "rotationY": -1.5707963267948966,
+      "deskSlot": {
+        "chairSide": 1,
+        "connectToNode": "centerHallEast"
+      },
+      "removable": false
+    },
+    {
+      "id": "desk-spare-3",
+      "label": "Spare desk 3",
+      "kind": "desk",
+      "position": [14.25, 0, -4.9],
+      "accent": "#7f6047",
+      "chairSide": 1,
+      "rotationY": -1.5707963267948966,
+      "deskSlot": {
+        "chairSide": 1,
+        "connectToNode": "southHallEast"
+      },
+      "removable": false
+    },
+    {
       "id": "meeting-table",
       "label": "Meeting table",
       "kind": "meetingTable",
@@ -369,7 +444,7 @@
       "id": "art-cio",
       "label": "CIO art",
       "kind": "abstractArt",
-      "position": [12.15, 2.15, 5.85],
+      "position": [15.15, 2.15, 5.85],
       "rotationY": -1.5707963267948966,
       "artAccent": "#bccb96",
       "artStripe": "#d37b53",
@@ -379,7 +454,7 @@
       "id": "poster-north-west",
       "label": "Queenstown poster",
       "kind": "poster",
-      "position": [-10.95, 2.08, 8.82],
+      "position": [-13.4, 2.08, 9.82],
       "posterLabel": "Queenstown x Bungy",
       "posterAccent": "#d56547",
       "removable": false
@@ -388,7 +463,7 @@
       "id": "poster-north-center",
       "label": "Operations poster",
       "kind": "poster",
-      "position": [-5.1, 2.08, 8.82],
+      "position": [-5.1, 2.08, 9.82],
       "posterLabel": "EpicShot x Operations",
       "posterAccent": "#c6543f",
       "removable": false
@@ -397,7 +472,7 @@
       "id": "poster-west",
       "label": "West wall poster",
       "kind": "poster",
-      "position": [-12.8, 2.05, 4.35],
+      "position": [-15.8, 2.05, 4.35],
       "rotationY": 1.5707963267948966,
       "posterLabel": "Live More x Fear Less",
       "posterAccent": "#cf7f4d",
@@ -421,7 +496,7 @@
       "id": "plant-corner-nw",
       "label": "Plant northwest",
       "kind": "plant",
-      "position": [-11.4, 0, 7.4],
+      "position": [-14.35, 0, 8.35],
       "plantHeight": 1.25,
       "removable": false
     },
@@ -429,7 +504,7 @@
       "id": "plant-corner-ne",
       "label": "Plant northeast",
       "kind": "plant",
-      "position": [11.35, 0, 7.3],
+      "position": [14.45, 0, 8.35],
       "plantHeight": 1.38,
       "removable": false
     },
@@ -437,7 +512,7 @@
       "id": "plant-corner-se",
       "label": "Plant southeast",
       "kind": "plant",
-      "position": [11.7, 0, -7.6],
+      "position": [14.45, 0, -8.35],
       "plantHeight": 1.42,
       "removable": false
     },
@@ -445,7 +520,7 @@
       "id": "plant-corner-sw",
       "label": "Plant southwest",
       "kind": "plant",
-      "position": [-11.4, 0, -7.4],
+      "position": [-14.35, 0, -8.35],
       "plantHeight": 1.24,
       "removable": false
     },
@@ -509,15 +584,15 @@
       "id": "bungy-deck",
       "label": "Bungy deck",
       "kind": "bungyDeck",
-      "position": [14.45, 0.1, 1.05],
+      "position": [17.45, 0.1, 1.05],
       "removable": false
     },
     {
       "id": "trim-south",
       "label": "South trim",
       "kind": "box",
-      "position": [0, 0.14, -8.9],
-      "size": [26.1, 0.22, 0.26],
+      "position": [0, 0.14, -9.9],
+      "size": [32.1, 0.22, 0.26],
       "color": "#7e6550",
       "removable": false
     },
@@ -525,8 +600,8 @@
       "id": "trim-north",
       "label": "North trim",
       "kind": "box",
-      "position": [0, 0.14, 8.9],
-      "size": [26.1, 0.22, 0.26],
+      "position": [0, 0.14, 9.9],
+      "size": [32.1, 0.22, 0.26],
       "color": "#7e6550",
       "removable": false
     },
@@ -534,8 +609,8 @@
       "id": "trim-west",
       "label": "West trim",
       "kind": "box",
-      "position": [-12.9, 0.14, 0],
-      "size": [0.26, 0.22, 18.1],
+      "position": [-15.9, 0.14, 0],
+      "size": [0.26, 0.22, 20.1],
       "color": "#7e6550",
       "removable": false
     },
@@ -543,8 +618,8 @@
       "id": "trim-east",
       "label": "East trim",
       "kind": "box",
-      "position": [12.9, 0.14, 0],
-      "size": [0.26, 0.22, 18.1],
+      "position": [15.9, 0.14, 0],
+      "size": [0.26, 0.22, 20.1],
       "color": "#7e6550",
       "removable": false
     },
@@ -552,7 +627,7 @@
       "id": "deck-window",
       "label": "Deck window",
       "kind": "glassWall",
-      "position": [13.05, 2.1, 1.05],
+      "position": [16.05, 2.1, 1.05],
       "width": 3.2,
       "height": 2.6,
       "depth": 0.12,
