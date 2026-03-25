@@ -684,6 +684,10 @@ canvas {
   transform: rotate(180deg);
 }
 
+.activity-message-toggle[hidden]::after {
+  content: none;
+}
+
 .admin-agent-card {
   cursor: pointer;
 }
