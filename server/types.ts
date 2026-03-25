@@ -5,6 +5,11 @@ import type {
   AgentBackendLink,
   AgentEventLocation,
   AgentRegistration,
+  WorkflowComment,
+  WorkflowEventRecord,
+  WorkflowHandoff,
+  WorkflowItem,
+  WorkflowQaTrigger,
   MeetingType,
   RealtimeAgentStatus,
 } from "../src/types";
@@ -26,6 +31,7 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_LOG_ENTRIES = 180;
 export const DESK_COUNT = 14;
 export const OPENCLAW_IDLE_GRACE_MS = 15_000;
+export const CURRENT_SPRINT_ID = process.env.CURRENT_SPRINT_ID?.trim() || "current";
 
 export const VALID_STATUSES = new Set<RealtimeAgentStatus>(["idle", "working", "meeting", "entering", "leaving"]);
 export const VALID_LOCATIONS = new Set<AgentEventLocation>(["desk", "meeting-room", "door", "cio-office"]);
@@ -37,6 +43,7 @@ export const VALID_ACCESSORIES = new Set<NonNullable<AgentAppearance["accessorie
 
 export const dataDir = path.resolve(process.cwd(), "data");
 export const agentsFilePath = path.join(dataDir, "agents.json");
+export const workflowFilePath = path.join(dataDir, "workflow.json");
 
 export interface PersistedAgentRecord extends AgentRegistration {
   id: string;
@@ -51,6 +58,14 @@ export interface PersistedAgentRecord extends AgentRegistration {
 
 export interface PersistedAgentsFile {
   agents: PersistedAgentRecord[];
+}
+
+export interface PersistedWorkflowFile {
+  items: WorkflowItem[];
+  events: WorkflowEventRecord[];
+  handoffs: WorkflowHandoff[];
+  comments: WorkflowComment[];
+  qaTriggers: WorkflowQaTrigger[];
 }
 
 export interface OpenClawSessionInfo {

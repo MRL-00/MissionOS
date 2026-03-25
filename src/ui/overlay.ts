@@ -75,6 +75,14 @@ function activityKindLabel(kind: ActivityLogEntry["kind"]): string {
       return "Meeting End";
     case "meeting-stop":
       return "Meeting Stop";
+    case "workflow-item":
+      return "Workflow";
+    case "workflow-handoff":
+      return "Handoff";
+    case "workflow-comment":
+      return "Linear Comment";
+    case "workflow-qa":
+      return "QA";
     case "registration":
     default:
       return "Roster";
@@ -94,7 +102,16 @@ function matchesActivityViewFilter(kind: ActivityLogEntry["kind"], filter: Activ
     return kind === "meeting-start" || kind === "meeting-turn" || kind === "meeting-end" || kind === "meeting-stop";
   }
 
-  return kind === "agent-status" || kind === "agent-spawn" || kind === "agent-complete" || kind === "registration";
+  return (
+    kind === "agent-status" ||
+    kind === "agent-spawn" ||
+    kind === "agent-complete" ||
+    kind === "registration" ||
+    kind === "workflow-item" ||
+    kind === "workflow-handoff" ||
+    kind === "workflow-comment" ||
+    kind === "workflow-qa"
+  );
 }
 
 function timeLabel(timestamp: number): string {
