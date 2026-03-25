@@ -155,6 +155,25 @@
     }
   },
   {
+    "id": "jared",
+    "name": "Jared",
+    "role": "Board Tech Advisor",
+    "emoji": "📊",
+    "appearance": {
+      "height": 1.05,
+      "headShape": "oval",
+      "skinColor": "#D6B896",
+      "hairStyle": "short",
+      "hairColor": "#4A3728",
+      "bodyColor": "#1C3A5E",
+      "pantsColor": "#2C2C3A",
+      "accessories": [
+        "glasses",
+        "tie"
+      ]
+    }
+  },
+  {
     "id": "randall",
     "name": "Randall",
     "role": "Scrum Master",
