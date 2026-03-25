@@ -351,16 +351,23 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       const overflowing = naturalHeight > clampedHeight + 1;
       if (!overflowing) {
         toggle.hidden = true;
-        toggle.textContent = "Show more";
+        toggle.textContent = "Show more \u25bc";
         toggle.setAttribute("aria-expanded", "false");
+        toggle.setAttribute("aria-hidden", "true");
+        if (expanded) {
+          message.classList.remove("activity-message-clamped");
+        } else {
+          message.classList.add("activity-message-clamped");
+        }
         return;
       }
 
       toggle.hidden = false;
+      toggle.setAttribute("aria-hidden", "false");
       if (!expanded) {
         message.classList.add("activity-message-clamped");
       }
-      toggle.textContent = expanded ? "Show less" : "Show more";
+      toggle.textContent = expanded ? "Show less \u25b2" : "Show more \u25bc";
       toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
     });
   }
@@ -382,6 +389,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   if (activityLog) {
     activityLogResizeObserver?.observe(activityLog);
   }
+  window.addEventListener("resize", scheduleActivityMessageMeasurement);
 
   function getAgentName(agentId?: string): string | undefined {
     if (!agentId) {
@@ -545,13 +553,14 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
         toggle.type = "button";
         toggle.className = "activity-message-toggle";
         toggle.hidden = true;
-        toggle.textContent = "Show more";
+        toggle.textContent = "Show more \u25bc";
         toggle.setAttribute("aria-controls", messageId);
         toggle.setAttribute("aria-expanded", "false");
+        toggle.setAttribute("aria-hidden", "true");
         toggle.setAttribute("aria-label", `Show more for message from ${agentLabel}`);
         toggle.addEventListener("click", () => {
           const expanded = !message.classList.toggle("activity-message-clamped");
-          toggle.textContent = expanded ? "Show less" : "Show more";
+          toggle.textContent = expanded ? "Show less \u25b2" : "Show more \u25bc";
           toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
           toggle.setAttribute(
             "aria-label",
