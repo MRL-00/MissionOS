@@ -17,7 +17,7 @@ export interface ChairOptions {
 }
 
 export const CHAIR_SEAT_HEIGHT = 0.66;
-export const CHAIR_OFFSET = 1.1;
+export const CHAIR_OFFSET = 1.48;
 export const CHAIR_SIT_INSET = 0;
 
 export function createDesk({

@@ -328,6 +328,12 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     transcriptPanel.hidden = transcriptDismissedForMeeting || (!meetingActive && !hasTranscriptContent);
   }
 
+  function setActivityMessageToggleState(toggle: HTMLButtonElement, expanded: boolean, agentLabel: string): void {
+    toggle.textContent = expanded ? "Show less" : "Show more";
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    toggle.setAttribute("aria-label", `${expanded ? "Show less" : "Show more"} for message from ${agentLabel}`);
+  }
+
   function measureActivityMessages(): void {
     activityMeasurementFrame = 0;
     if (!activityLog) {
@@ -343,6 +349,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       }
 
       const expanded = !message.classList.contains("activity-message-clamped");
+      const agentLabel = toggle.dataset.agentLabel ?? "system";
       message.classList.remove("activity-message-clamped");
       const naturalHeight = message.scrollHeight;
       const computedStyle = window.getComputedStyle(message);
@@ -351,8 +358,12 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       const overflowing = naturalHeight > clampedHeight + 1;
       if (!overflowing) {
         toggle.hidden = true;
-        toggle.textContent = "Show more";
-        toggle.setAttribute("aria-expanded", "false");
+        setActivityMessageToggleState(toggle, false, agentLabel);
+        if (expanded) {
+          message.classList.remove("activity-message-clamped");
+        } else {
+          message.classList.add("activity-message-clamped");
+        }
         return;
       }
 
@@ -360,8 +371,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       if (!expanded) {
         message.classList.add("activity-message-clamped");
       }
-      toggle.textContent = expanded ? "Show less" : "Show more";
-      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+      setActivityMessageToggleState(toggle, expanded, agentLabel);
     });
   }
 
@@ -376,7 +386,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
 
   const activityLogResizeObserver = activityLog
     ? new ResizeObserver(() => {
-        measureActivityMessages();
+        scheduleActivityMessageMeasurement();
       })
     : undefined;
   if (activityLog) {
@@ -545,18 +555,12 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
         toggle.type = "button";
         toggle.className = "activity-message-toggle";
         toggle.hidden = true;
-        toggle.textContent = "Show more";
+        toggle.dataset.agentLabel = agentLabel;
         toggle.setAttribute("aria-controls", messageId);
-        toggle.setAttribute("aria-expanded", "false");
-        toggle.setAttribute("aria-label", `Show more for message from ${agentLabel}`);
+        setActivityMessageToggleState(toggle, false, agentLabel);
         toggle.addEventListener("click", () => {
           const expanded = !message.classList.toggle("activity-message-clamped");
-          toggle.textContent = expanded ? "Show less" : "Show more";
-          toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-          toggle.setAttribute(
-            "aria-label",
-            `${expanded ? "Show less" : "Show more"} for message from ${agentLabel}`,
-          );
+          setActivityMessageToggleState(toggle, expanded, agentLabel);
         });
 
         row.append(header, message, toggle);
