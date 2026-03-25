@@ -24,7 +24,9 @@ interface LabelRefs {
   name: HTMLSpanElement;
   role: HTMLSpanElement;
   status: HTMLSpanElement;
-  task: HTMLSpanElement;
+  message: HTMLSpanElement;
+  hoverTimer: number | null;
+  expanded: boolean;
 }
 
 interface AgentListRefs {
@@ -952,11 +954,26 @@ export class LabelRenderer {
   container: HTMLDivElement;
   nodes: Map<string, LabelRefs>;
   screenPosition: THREE.Vector3;
+  hoverExpandDelay: number;
 
   constructor(container: HTMLDivElement) {
     this.container = container;
     this.nodes = new Map();
     this.screenPosition = new THREE.Vector3();
+    this.hoverExpandDelay = 1000;
+  }
+
+  private clearHoverTimer(refs: LabelRefs): void {
+    if (refs.hoverTimer !== null) {
+      window.clearTimeout(refs.hoverTimer);
+      refs.hoverTimer = null;
+    }
+  }
+
+  private setExpanded(refs: LabelRefs, expanded: boolean): void {
+    refs.expanded = expanded;
+    refs.node.dataset.expanded = expanded ? "true" : "false";
+    refs.node.setAttribute("aria-expanded", expanded ? "true" : "false");
   }
 
   sync(labels: LabelState[], camera: THREE.Camera, viewport: { width: number; height: number }): void {
@@ -968,28 +985,68 @@ export class LabelRenderer {
       if (!refs) {
         const node = document.createElement("div");
         node.className = "agent-label";
+        node.tabIndex = 0;
+        node.setAttribute("role", "button");
+        node.dataset.expanded = "false";
+        node.setAttribute("aria-expanded", "false");
         node.innerHTML = `
           <span class="agent-name"></span>
           <span class="agent-role"></span>
           <span class="agent-status"></span>
-          <span class="agent-task"></span>
+          <span class="agent-message"></span>
         `;
         this.container.append(node);
         const name = node.querySelector<HTMLSpanElement>(".agent-name");
         const role = node.querySelector<HTMLSpanElement>(".agent-role");
         const status = node.querySelector<HTMLSpanElement>(".agent-status");
-        const task = node.querySelector<HTMLSpanElement>(".agent-task");
-        if (!name || !role || !status || !task) {
+        const message = node.querySelector<HTMLSpanElement>(".agent-message");
+        if (!name || !role || !status || !message) {
           node.remove();
           return;
         }
-        refs = { node, name, role, status, task };
+        const nextRefs: LabelRefs = {
+          node,
+          name,
+          role,
+          status,
+          message,
+          hoverTimer: null,
+          expanded: false,
+        };
+        node.addEventListener("pointerenter", () => {
+          this.clearHoverTimer(nextRefs);
+          nextRefs.hoverTimer = window.setTimeout(() => {
+            this.setExpanded(nextRefs, true);
+            nextRefs.hoverTimer = null;
+          }, this.hoverExpandDelay);
+        });
+        node.addEventListener("pointerleave", () => {
+          this.clearHoverTimer(nextRefs);
+          this.setExpanded(nextRefs, false);
+        });
+        node.addEventListener("click", () => {
+          this.clearHoverTimer(nextRefs);
+          this.setExpanded(nextRefs, true);
+        });
+        node.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+          event.preventDefault();
+          this.clearHoverTimer(nextRefs);
+          this.setExpanded(nextRefs, true);
+        });
+        refs = nextRefs;
         this.nodes.set(label.id, refs);
       }
 
       this.screenPosition.copy(label.worldPosition).project(camera);
       const visible = this.screenPosition.z > -1 && this.screenPosition.z < 1;
       refs.node.style.display = visible ? "block" : "none";
+      if (!visible) {
+        this.clearHoverTimer(refs);
+        this.setExpanded(refs, false);
+      }
 
       if (visible) {
         const x = (this.screenPosition.x * 0.5 + 0.5) * viewport.width;
@@ -1002,13 +1059,22 @@ export class LabelRenderer {
       refs.role.textContent = label.role;
       refs.status.dataset.status = label.status;
       refs.status.textContent = formatRealtimeStatus(label.status === "in-meeting" ? "meeting" : label.status);
-      refs.task.textContent = label.task ?? "";
-      refs.task.style.display = label.task ? "block" : "none";
+      refs.status.setAttribute("aria-label", refs.status.textContent);
+      refs.message.textContent = label.message ?? "";
+      refs.message.hidden = !label.message;
+      refs.node.dataset.hasMessage = label.message ? "true" : "false";
+      refs.node.setAttribute(
+        "aria-label",
+        label.message
+          ? `${label.name}, ${label.role}, ${refs.status.textContent}. Last message: ${label.message}`
+          : `${label.name}, ${label.role}, ${refs.status.textContent}`,
+      );
     });
 
-    this.nodes.forEach(({ node }, id) => {
+    this.nodes.forEach((refs, id) => {
       if (!seen.has(id)) {
-        node.remove();
+        this.clearHoverTimer(refs);
+        refs.node.remove();
         this.nodes.delete(id);
       }
     });

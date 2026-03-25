@@ -29,6 +29,7 @@ export class AgentController {
   turnSpeed: number;
   status: AgentStatus;
   task?: string | undefined;
+  message?: string | undefined;
   phase: number;
   seated: boolean;
   walking: boolean;
@@ -59,6 +60,7 @@ export class AgentController {
     this.turnSpeed = 6;
     this.status = STATUS.idle;
     this.task = undefined;
+    this.message = undefined;
     this.phase = Math.random() * Math.PI * 2;
     this.seated = false;
     this.walking = false;
@@ -173,7 +175,7 @@ export class AgentController {
       name: `${this.emoji} ${this.name}`,
       role: this.role,
       status: this.status,
-      task: this.task,
+      message: this.message,
       worldPosition: this.labelWorldPosition,
     };
   }

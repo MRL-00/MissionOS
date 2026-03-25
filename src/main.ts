@@ -402,6 +402,8 @@ function createController(state: AgentRuntimeState, appearance?: AgentAppearance
   const initialFacing = startAtDoor ? waypoints.entrance.facing : (desk?.facing ?? 0);
   const controller = new AgentController(buildRuntimeConfig(state, appearance), initialPosition, initialFacing);
   controller.navNodeId = startAtDoor ? waypoints.entrance.nodeId : (desk?.nodeId ?? waypoints.entrance.nodeId);
+  controller.task = state.task;
+  controller.message = state.message;
   scene.add(controller.mesh);
   agents.set(state.id, controller);
   agentColors.set(state.id, resolveAppearance(state.id, appearance).bodyColor);
@@ -421,6 +423,7 @@ function ensureController(state: AgentRuntimeState, appearance?: AgentAppearance
       const navNodeId = existing.navNodeId;
       const status = existing.status;
       const task = existing.task;
+      const message = existing.message;
       const highlightTarget = existing.highlightTarget;
 
       scene.remove(existing.mesh);
@@ -434,6 +437,7 @@ function ensureController(state: AgentRuntimeState, appearance?: AgentAppearance
       replacement.navNodeId = navNodeId;
       replacement.status = status;
       replacement.task = task;
+      replacement.message = message;
       replacement.highlightTarget = highlightTarget;
       replacement.highlightAmount = highlightTarget;
       return replacement;
@@ -443,6 +447,8 @@ function ensureController(state: AgentRuntimeState, appearance?: AgentAppearance
     existing.role = config.role;
     existing.emoji = config.emoji;
     existing.bodyColor = config.appearance.bodyColor;
+    existing.task = state.task;
+    existing.message = state.message;
     agentColors.set(state.id, config.appearance.bodyColor);
     if (typeof state.deskIndex === "number") {
       assignDesk(state.id, state.deskIndex);
@@ -607,6 +613,7 @@ function handleAgentEvent(event: AgentEvent): void {
   const controller = ensureController(next);
   controller.status = getControllerStatus(event.status);
   controller.task = event.task ?? previous?.task;
+  controller.message = event.message ?? previous?.message;
   moveControllerForEvent(controller, event);
 
   if (event.message) {
@@ -634,6 +641,7 @@ function handleSnapshot(message: Extract<ServerMessage, { type: "agents-snapshot
     const controller = ensureController(next, snapshotState.appearance);
     controller.status = getControllerStatus(next.status);
     controller.task = next.task;
+    controller.message = next.message;
     moveControllerForEvent(controller, {
       agentId: next.id,
       status: next.status,
