@@ -41,7 +41,7 @@ interface LayoutCatalogTemplate extends LayoutCatalogItem {
 }
 
 const LAYOUT_STORAGE_KEY = "the-office.layout.v1";
-const NON_BULLPEN_AGENTS = new Set(["pickle", "randall", "cio"]);
+const NON_BULLPEN_AGENTS = new Set(["pickle", "randall", "cio", "jared"]);
 const DEFAULT_LAYOUT = defaultLayoutConfig as unknown as OfficeLayoutConfig;
 
 function addBox(
