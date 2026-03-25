@@ -14,6 +14,7 @@ const KNOWN_DESK_INDICES = {
   tommy: 7,
   randall: 8,
   cio: 9,
+  jared: 10,
 } as const satisfies Record<string, number>;
 
 const HEAD_SHAPES = ["round", "oval", "square"] as const;
