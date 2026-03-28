@@ -10,6 +10,8 @@ import { moveAgentToDestination } from "./demo";
 import { OfficeWebSocketClient } from "./network/websocket";
 import { createOfficeScene } from "./scene/officeScene";
 import { createLayoutEditor, type LayoutTransformMode } from "./ui/layoutEditor";
+import { applyOpsView, type OpsViewHandle } from "./ui/opsViewController";
+import { OFFICE_OPS_VIEW_CONFIG } from "./ui/opsViewConfig";
 import { createHud, LabelRenderer } from "./ui/overlay";
 import { SpeechBubbleRenderer } from "./ui/speechBubble";
 import type {
@@ -44,7 +46,7 @@ app.append(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#e9d5b4");
-scene.fog = new THREE.Fog("#ead7b7", 28, 52);
+scene.fog = new THREE.Fog("#ead7b7", 35, 60);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 120);
 const defaultCameraPosition = new THREE.Vector3(-17, 14, 17);
@@ -66,6 +68,7 @@ const cameraForward = new THREE.Vector3();
 const cameraRight = new THREE.Vector3();
 const worldUp = new THREE.Vector3(0, 1, 0);
 const CAMERA_MOVE_SPEED = 10;
+const SUPPORTED_CAMERA_MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
 
 const ambient = new THREE.HemisphereLight("#fff5de", "#b98f60", 1.9);
 scene.add(ambient);
@@ -130,11 +133,37 @@ let selectedLayoutItemId: string | null = null;
 let selectionHelper: THREE.BoxHelper | null = null;
 let selectionPointerDown = false;
 let layoutDragMoved = false;
+let opsViewHandle: OpsViewHandle | null = null;
+let opsViewActive = true;
+
+function enableOpsView(): void {
+  if (!opsViewActive || layoutEditorEnabled || opsViewHandle) {
+    return;
+  }
+
+  opsViewHandle = applyOpsView(controls, camera, OFFICE_OPS_VIEW_CONFIG);
+  cameraMoveKeys.clear();
+}
+
+function disableOpsView(): void {
+  if (!opsViewHandle) {
+    return;
+  }
+
+  opsViewHandle.dispose();
+  opsViewHandle = null;
+  cameraMoveKeys.clear();
+}
 
 const layoutEditor = createLayoutEditor({
   getExportText: () => layout.exportLayout(),
   onEnabledChange(enabled) {
     layoutEditorEnabled = enabled;
+    if (enabled) {
+      disableOpsView();
+    } else {
+      enableOpsView();
+    }
     if (!enabled) {
       clearLayoutSelection();
     }
@@ -188,6 +217,7 @@ if (topBarActions) {
   layoutEditor.attachLauncher(layoutButton);
 }
 
+enableOpsView();
 void hydrateOverlay();
 syncHudState();
 syncLayoutEditor();
@@ -801,6 +831,11 @@ const websocketClient = new OfficeWebSocketClient({
 websocketClient.connect();
 
 function resetCamera(): void {
+  if (opsViewHandle) {
+    opsViewHandle.reset();
+    return;
+  }
+
   camera.position.copy(defaultCameraPosition);
   controls.target.copy(defaultTarget);
   controls.update();
@@ -961,8 +996,13 @@ function handleCameraMoveKey(event: KeyboardEvent, pressed: boolean): void {
     return;
   }
 
-  const supportedKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]);
-  if (!supportedKeys.has(event.code)) {
+  if (!SUPPORTED_CAMERA_MOVE_KEYS.has(event.code)) {
+    return;
+  }
+
+  if (opsViewHandle) {
+    event.preventDefault();
+    cameraMoveKeys.clear();
     return;
   }
 
@@ -1107,6 +1147,7 @@ renderer.setAnimationLoop(() => {
   const elapsed = clock.elapsedTime;
 
   updateKeyboardCamera(delta);
+  opsViewHandle?.clampTarget();
   controls.update();
   updaters.forEach((updater) => updater(delta, elapsed));
 

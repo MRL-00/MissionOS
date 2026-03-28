@@ -70,6 +70,20 @@ export function configureWorkflowRuntime(callback: (message: ServerMessage) => v
   broadcast = callback;
 }
 
+function clearWorkflowState(): void {
+  workflowItems.clear();
+  workflowEvents.splice(0, workflowEvents.length);
+  workflowHandoffs.splice(0, workflowHandoffs.length);
+  workflowComments.splice(0, workflowComments.length);
+  workflowQaTriggers.splice(0, workflowQaTriggers.length);
+}
+
+export function resetWorkflowStateForTests(): void {
+  clearWorkflowState();
+  broadcast = null;
+  persistWorkflowQueue = Promise.resolve();
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -313,6 +327,7 @@ function queuePersistWorkflow(): Promise<void> {
 
 export async function loadPersistedWorkflow(): Promise<void> {
   await ensureDataDir();
+  clearWorkflowState();
 
   try {
     const raw = await readFile(workflowFilePath, "utf8");
