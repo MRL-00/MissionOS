@@ -44,12 +44,18 @@ export interface AgentConfig {
   appearance: AgentAppearance;
 }
 
+export interface AgentRuntimeTarget {
+  baseUrl: string;
+  launchProfile?: string | undefined;
+}
+
 export interface AgentBackendLink {
   provider: AgentBackendProvider;
   agentId?: string | undefined;
   connected: boolean;
   tokenId?: string | undefined;
   connectedAt?: number | undefined;
+  runtimeTarget?: AgentRuntimeTarget | undefined;
 }
 
 export interface AgentParts {

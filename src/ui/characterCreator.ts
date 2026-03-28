@@ -9,6 +9,7 @@ const PREVIEW_MAX_PIXEL_RATIO = 1.5;
 const PREVIEW_TARGET_FRAME_RATE = 30;
 const PREVIEW_FRAME_INTERVAL_MS = 1000 / PREVIEW_TARGET_FRAME_RATE;
 const PREVIEW_ROTATION_SPEED = 0.6;
+const DEFAULT_RUNTIME_BRIDGE_PORT = 3012;
 
 interface CharacterCreatorOptions {
   apiBase: string;
@@ -39,6 +40,56 @@ export interface CharacterCreatorApi {
 
 const ACCESSORIES: Accessory[] = ["glasses", "hat", "tie", "beard"];
 const OAUTH_STORAGE_KEY = "office.oauth.result";
+
+function providerLabel(provider: AgentBackendLink["provider"]): string {
+  if (provider === "claude") {
+    return "Claude Code";
+  }
+  if (provider === "codex") {
+    return "Codex";
+  }
+  if (provider === "openclaw") {
+    return "OpenClaw";
+  }
+  return "Unlinked";
+}
+
+function normalizeRuntimeBridgeUrl(rawValue: string): string | null {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const hasProtocol = /^[a-z]+:\/\//i.test(trimmed);
+  const candidate = hasProtocol ? trimmed : `http://${trimmed}`;
+
+  try {
+    const url = new URL(candidate);
+    if (!hasProtocol && !url.port) {
+      url.port = String(DEFAULT_RUNTIME_BRIDGE_PORT);
+    }
+    url.hash = "";
+    url.search = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function runtimeTargetLabel(link: AgentBackendLink): string | undefined {
+  const baseUrl = link.runtimeTarget?.baseUrl?.trim();
+  if (!baseUrl) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(baseUrl);
+    const label = url.host || baseUrl;
+    return link.runtimeTarget?.launchProfile ? `${label} · ${link.runtimeTarget.launchProfile}` : label;
+  } catch {
+    return link.runtimeTarget?.launchProfile ? `${baseUrl} · ${link.runtimeTarget.launchProfile}` : baseUrl;
+  }
+}
 
 function slugify(value: string): string {
   return value
@@ -139,16 +190,20 @@ function getOauthResult(provider: "claude" | "codex"): OauthSessionResult | null
 }
 
 function buildBackendStatus(link: AgentBackendLink): string {
+  const targetLabel = runtimeTargetLabel(link);
+  const targetSuffix = targetLabel ? ` via ${targetLabel}` : "";
   if (link.provider === "unlinked") {
     return "Unlinked";
   }
   if (link.provider === "openclaw") {
-    return link.connected ? `OpenClaw linked${link.agentId ? ` · ${link.agentId}` : ""}` : "OpenClaw not linked";
+    return link.connected
+      ? `OpenClaw linked${link.agentId ? ` · ${link.agentId}` : ""}${targetSuffix}`
+      : `OpenClaw not linked${targetSuffix}`;
   }
   if (link.connected) {
-    return `${link.provider === "claude" ? "Claude Code" : "Codex"} connected`;
+    return `${providerLabel(link.provider)} connected${targetSuffix}`;
   }
-  return `${link.provider === "claude" ? "Claude Code" : "Codex"} awaiting OAuth`;
+  return `${providerLabel(link.provider)} awaiting OAuth${targetSuffix}`;
 }
 
 function disposeMaterial(material: THREE.Material | THREE.Material[]): void {
@@ -313,6 +368,14 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
             <span>Codex</span>
             <button class="button" type="button" data-action="oauth-codex">Connect with Codex</button>
           </div>
+          <label class="creator-field" data-backend-runtime hidden>
+            <span>PC Bridge URL</span>
+            <input class="admin-input" name="backend-runtime-url" placeholder="http://192.168.1.42:3012" />
+          </label>
+          <label class="creator-field" data-backend-launch-profile hidden>
+            <span>Launch Profile</span>
+            <input class="admin-input" name="backend-launch-profile" placeholder="zoe-codex" />
+          </label>
           <div class="creator-status">
             <span class="creator-status-dot"></span>
             <strong data-backend-status></strong>
@@ -364,9 +427,13 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   const deskIndexInput = modal.querySelector<HTMLSelectElement>('select[name="desk-index"]');
   const backendProviderInput = modal.querySelector<HTMLSelectElement>('select[name="backend-provider"]');
   const backendAgentIdInput = modal.querySelector<HTMLInputElement>('input[name="backend-agent-id"]');
+  const backendRuntimeUrlInput = modal.querySelector<HTMLInputElement>('input[name="backend-runtime-url"]');
+  const backendLaunchProfileInput = modal.querySelector<HTMLInputElement>('input[name="backend-launch-profile"]');
   const openclawField = modal.querySelector<HTMLElement>("[data-backend-openclaw]");
   const claudeField = modal.querySelector<HTMLElement>("[data-backend-claude]");
   const codexField = modal.querySelector<HTMLElement>("[data-backend-codex]");
+  const runtimeField = modal.querySelector<HTMLElement>("[data-backend-runtime]");
+  const launchProfileField = modal.querySelector<HTMLElement>("[data-backend-launch-profile]");
   const saveStatus = modal.querySelector<HTMLElement>("[data-save-status]");
 
   if (
@@ -392,9 +459,13 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     !deskIndexInput ||
     !backendProviderInput ||
     !backendAgentIdInput ||
+    !backendRuntimeUrlInput ||
+    !backendLaunchProfileInput ||
     !openclawField ||
     !claudeField ||
     !codexField ||
+    !runtimeField ||
+    !launchProfileField ||
     !saveStatus
   ) {
     throw new Error("Failed to initialize character creator");
@@ -421,9 +492,13 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   const pantsColorInputEl = pantsColorInput;
   const backendProviderInputEl = backendProviderInput;
   const backendAgentIdInputEl = backendAgentIdInput;
+  const backendRuntimeUrlInputEl = backendRuntimeUrlInput;
+  const backendLaunchProfileInputEl = backendLaunchProfileInput;
   const openclawFieldEl = openclawField;
   const claudeFieldEl = claudeField;
   const codexFieldEl = codexField;
+  const runtimeFieldEl = runtimeField;
+  const launchProfileFieldEl = launchProfileField;
   const saveStatusEl = saveStatus;
 
   const previewScene = new THREE.Scene();
@@ -603,6 +678,25 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     });
   }
 
+  function updateRuntimeTargetDraft(): void {
+    const baseUrl = backendRuntimeUrlInputEl.value.trim();
+    const launchProfile = backendLaunchProfileInputEl.value.trim();
+    if (!baseUrl && !launchProfile) {
+      if ("runtimeTarget" in draft.backendLink) {
+        delete draft.backendLink.runtimeTarget;
+      }
+      return;
+    }
+
+    draft.backendLink = {
+      ...draft.backendLink,
+      runtimeTarget: {
+        baseUrl,
+        launchProfile: launchProfile || undefined,
+      },
+    };
+  }
+
   function updateBackendLinkFromDraft(): void {
     if (draft.backendLink.provider === "claude" || draft.backendLink.provider === "codex") {
       const oauth = getOauthResult(draft.backendLink.provider);
@@ -612,6 +706,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
           connected: true,
           tokenId: oauth.tokenId,
           connectedAt: Date.now(),
+          runtimeTarget: draft.backendLink.runtimeTarget,
         };
       }
     }
@@ -642,9 +737,13 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     });
     backendProviderInputEl.value = draft.backendLink.provider;
     backendAgentIdInputEl.value = draft.backendLink.agentId ?? "";
+    backendRuntimeUrlInputEl.value = draft.backendLink.runtimeTarget?.baseUrl ?? "";
+    backendLaunchProfileInputEl.value = draft.backendLink.runtimeTarget?.launchProfile ?? "";
     openclawFieldEl.hidden = draft.backendLink.provider !== "openclaw";
     claudeFieldEl.hidden = draft.backendLink.provider !== "claude";
     codexFieldEl.hidden = draft.backendLink.provider !== "codex";
+    runtimeFieldEl.hidden = draft.backendLink.provider === "unlinked";
+    launchProfileFieldEl.hidden = draft.backendLink.provider === "unlinked";
     backendStatusEl.textContent = buildBackendStatus(draft.backendLink);
     const connected = draft.backendLink.connected;
     backendStatusEl.parentElement?.setAttribute("data-connected", connected ? "true" : "false");
@@ -720,6 +819,8 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   }
 
   function setBackendProvider(provider: AgentBackendLink["provider"]): void {
+    updateRuntimeTargetDraft();
+    const runtimeTarget = draft.backendLink.runtimeTarget;
     if (provider === "unlinked") {
       draft.backendLink = { provider, connected: false };
     } else if (provider === "openclaw") {
@@ -727,6 +828,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
         provider,
         agentId: backendAgentIdInputEl.value.trim() || draft.backendLink.agentId,
         connected: Boolean((backendAgentIdInputEl.value.trim() || draft.backendLink.agentId)?.trim()),
+        runtimeTarget,
       };
     } else {
       const oauth = getOauthResult(provider);
@@ -735,6 +837,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
         connected: Boolean(oauth),
         tokenId: oauth?.tokenId,
         connectedAt: oauth ? Date.now() : undefined,
+        runtimeTarget,
       };
     }
     syncFields();
@@ -745,12 +848,37 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     draft.role = roleInputEl.value.trim();
     draft.emoji = emojiInputEl.value.trim() || "🙂";
     draft.deskIndex = deskIndexInputEl.value === "auto" ? undefined : Number(deskIndexInputEl.value);
+    updateRuntimeTargetDraft();
 
     if (!draft.name || !draft.role) {
       setSaveStatus("Name and role are required.");
       currentStep = 0;
       syncSteps();
       return;
+    }
+
+    const rawRuntimeBaseUrl = draft.backendLink.runtimeTarget?.baseUrl?.trim();
+    if (rawRuntimeBaseUrl) {
+      const normalizedRuntimeBaseUrl = normalizeRuntimeBridgeUrl(rawRuntimeBaseUrl);
+      if (!normalizedRuntimeBaseUrl) {
+        setSaveStatus("Enter a valid PC bridge URL or IP.");
+        currentStep = 2;
+        syncSteps();
+        return;
+      }
+
+      draft.backendLink = {
+        ...draft.backendLink,
+        runtimeTarget: {
+          baseUrl: normalizedRuntimeBaseUrl,
+          launchProfile: draft.backendLink.runtimeTarget?.launchProfile?.trim() || undefined,
+        },
+      };
+    } else if (draft.backendLink.provider !== "unlinked") {
+      draft.backendLink = {
+        ...draft.backendLink,
+        runtimeTarget: undefined,
+      };
     }
 
     draft.id = currentMode === "edit" && currentAgentId ? currentAgentId : makeAgentId();
@@ -897,13 +1025,29 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   });
   backendAgentIdInputEl.addEventListener("input", () => {
     if (draft.backendLink.provider === "openclaw") {
+      updateRuntimeTargetDraft();
       draft.backendLink = {
         provider: "openclaw",
         agentId: backendAgentIdInputEl.value.trim(),
         connected: Boolean(backendAgentIdInputEl.value.trim()),
+        runtimeTarget: draft.backendLink.runtimeTarget,
       };
       syncFields();
     }
+  });
+  backendRuntimeUrlInputEl.addEventListener("input", () => {
+    if (draft.backendLink.provider === "unlinked") {
+      return;
+    }
+    updateRuntimeTargetDraft();
+    syncFields();
+  });
+  backendLaunchProfileInputEl.addEventListener("input", () => {
+    if (draft.backendLink.provider === "unlinked") {
+      return;
+    }
+    updateRuntimeTargetDraft();
+    syncFields();
   });
   modal.querySelector<HTMLButtonElement>('[data-action="oauth-claude"]')?.addEventListener("click", () => {
     window.location.href = `${apiBase}/auth/claude/authorize?redirect=${encodeURIComponent(window.location.origin + window.location.pathname)}`;
