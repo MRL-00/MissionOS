@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { DEPLOY_VERSION } from "../config/buildInfo";
 import { clearApiBaseOverride, getApiBase, getApiBaseLabel, setApiBaseOverride } from "../config/api";
 import { FACILITATOR_ROTATION } from "../config/meeting-rules";
 import { createCharacterCreator } from "./characterCreator";
@@ -279,11 +280,18 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   speechLayer.className = "speech-layer";
   hud.append(speechLayer);
 
+  const deployVersion = document.createElement("div");
+  deployVersion.className = "deploy-version";
+  deployVersion.textContent = DEPLOY_VERSION;
+  deployVersion.setAttribute("aria-label", `Deployment version ${DEPLOY_VERSION}`);
+  hud.append(deployVersion);
+
   document.body.append(hud);
 
   const sidebarCollapsedKey = "sidebar-collapsed";
   const storedCollapsed = window.localStorage.getItem(sidebarCollapsedKey);
   let sidebarCollapsed = storedCollapsed === null ? true : storedCollapsed === "true";
+  hud.dataset.sidebarCollapsed = String(sidebarCollapsed);
   sidebar.dataset.collapsed = String(sidebarCollapsed);
   sidebar.innerHTML = `
     <div class="agent-sidebar-header">
@@ -423,6 +431,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
 
   function setSidebarCollapsed(next: boolean, persist = true): void {
     sidebarCollapsed = next;
+    hud.dataset.sidebarCollapsed = String(next);
     sidebar.dataset.collapsed = String(next);
     sidebarBackdrop.hidden = !(isMobileLayout && !next);
     sidebarToggleButton?.setAttribute("aria-label", next ? "Expand agent sidebar" : "Collapse agent sidebar");

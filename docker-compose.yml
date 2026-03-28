@@ -1,6 +1,9 @@
 services:
   the-office:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_DEPLOY_VERSION: ${VITE_DEPLOY_VERSION:-vlocal}
     container_name: the-office
     restart: unless-stopped
     ports:
