@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { getApiBase } from "../config/api";
 import { DEPLOY_VERSION } from "../config/buildInfo";
+import { clearApiBaseOverride, getApiBase, getApiBaseLabel, setApiBaseOverride } from "../config/api";
 import { FACILITATOR_ROTATION } from "../config/meeting-rules";
 import { createCharacterCreator } from "./characterCreator";
 import type { ActivityLogEntry, AgentRuntimeState, LabelState, MeetingTurn, RealtimeAgentStatus } from "../types";
@@ -134,6 +134,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       </span>
     </div>
     <div class="top-bar-section top-bar-actions">
+      <button class="button secondary top-bar-button" type="button" data-action="configure-server">Server</button>
       <button class="button secondary top-bar-button" type="button" data-action="toggle-activity">Activity</button>
       <button class="button top-bar-button" type="button" data-action="add-agent">Add Agent</button>
     </div>
@@ -314,6 +315,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   const agentList = sidebar.querySelector<HTMLUListElement>(".agent-list");
   const sidebarToggleButton = sidebar.querySelector<HTMLButtonElement>('[data-action="toggle-sidebar"]');
   const sidebarToggleIcon = sidebar.querySelector<HTMLSpanElement>(".sidebar-toggle-icon");
+  const configureServerButton = topBar.querySelector<HTMLButtonElement>('[data-action="configure-server"]');
   const topBarActivityButton = topBar.querySelector<HTMLButtonElement>('[data-action="toggle-activity"]');
   const addAgentButton = topBar.querySelector<HTMLButtonElement>('[data-action="add-agent"]');
   const resetButtons = hud.querySelectorAll<HTMLButtonElement>('[data-action="reset"]');
@@ -479,6 +481,13 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       mobileActivityToggle.hidden = true;
     }
     syncActivityToggleState();
+  }
+
+  function syncServerButtonState(): void {
+    if (!configureServerButton) {
+      return;
+    }
+    configureServerButton.title = `Office API: ${getApiBaseLabel()}`;
   }
 
   function syncActivityAgentOptions(): void {
@@ -805,6 +814,27 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   addAgentButton?.addEventListener("click", () => {
     characterCreator.openCreate();
   });
+  configureServerButton?.addEventListener("click", () => {
+    const nextValue = window.prompt(
+      "Office API URL or host. Leave blank to use the current page host.",
+      getApiBase(),
+    );
+    if (nextValue === null) {
+      return;
+    }
+
+    try {
+      if (nextValue.trim()) {
+        setApiBaseOverride(nextValue);
+      } else {
+        clearApiBaseOverride();
+      }
+      window.location.reload();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid office API URL";
+      window.alert(message);
+    }
+  });
   resetButtons.forEach((button) => {
     button.addEventListener("click", () => onResetCamera());
   });
@@ -855,6 +885,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   }
 
   applyMobileLayout(isMobileLayout);
+  syncServerButtonState();
 
   return {
     setRealtimeConnected(connected) {
