@@ -304,6 +304,7 @@ export async function ensureOpenClawAgentRegistered(officeAgentId: string, openC
     connected: true,
     agentId: openClawAgentId,
     connectedAt,
+    runtimeTarget: existingBackendLink?.runtimeTarget,
   };
 
   if (

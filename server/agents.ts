@@ -10,6 +10,7 @@ import type {
   AgentEvent,
   AgentEventLocation,
   AgentRegistration,
+  AgentRuntimeTarget,
   AgentRuntimeState,
   AgentSnapshotState,
   AgentSpawnRequest,
@@ -102,7 +103,20 @@ export function isBackendLink(value: unknown): value is AgentBackendLink {
     typeof link.connected === "boolean" &&
     (link.agentId === undefined || typeof link.agentId === "string") &&
     (link.tokenId === undefined || typeof link.tokenId === "string") &&
-    (link.connectedAt === undefined || typeof link.connectedAt === "number")
+    (link.connectedAt === undefined || typeof link.connectedAt === "number") &&
+    (link.runtimeTarget === undefined || isRuntimeTarget(link.runtimeTarget))
+  );
+}
+
+export function isRuntimeTarget(value: unknown): value is AgentRuntimeTarget {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const target = value as Partial<AgentRuntimeTarget>;
+  return (
+    typeof target.baseUrl === "string" &&
+    (target.launchProfile === undefined || typeof target.launchProfile === "string")
   );
 }
 
@@ -277,6 +291,18 @@ export function normalizeBackendLink(
     agentId: base.agentId,
     tokenId: base.tokenId,
     connectedAt: base.connectedAt ?? (base.connected ? Date.now() : undefined),
+    runtimeTarget: normalizeRuntimeTarget(base.runtimeTarget),
+  };
+}
+
+export function normalizeRuntimeTarget(incoming?: AgentRuntimeTarget): AgentRuntimeTarget | undefined {
+  if (!incoming?.baseUrl?.trim()) {
+    return undefined;
+  }
+
+  return {
+    baseUrl: incoming.baseUrl.trim(),
+    launchProfile: incoming.launchProfile?.trim() || undefined,
   };
 }
 

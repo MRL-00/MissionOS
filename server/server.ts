@@ -29,6 +29,7 @@ import { MeetingEngine } from "./meeting";
 import { normalizeToolSessions, openClawStates, applyOpenClawSessions, startOpenClawSync } from "./openclaw-sync";
 import { loadPersistedAgents, queuePersistAgents } from "./persistence";
 import { configureRemoteOfficeMirror, startRemoteOfficeMirror } from "./remote-mirror";
+import { launchAgentOnRuntimeTarget } from "./runtime-launcher";
 import { DEFAULT_HEADERS, PORT, RequestBodyError } from "./types";
 import { readJson, sendJson } from "./utils";
 import {
@@ -409,6 +410,11 @@ const httpServer = createServer(async (request, response) => {
       }
 
       ensureKnownAgents([body.agentId]);
+      const registeredState = agentStates.get(body.agentId);
+      if (!registeredState) {
+        throw new RequestBodyError(`Unknown agent id: ${body.agentId}`);
+      }
+      const launch = await launchAgentOnRuntimeTarget(registeredState, body);
       const enteringEvent: AgentEvent = {
         agentId: body.agentId,
         status: "entering",
@@ -419,8 +425,11 @@ const httpServer = createServer(async (request, response) => {
       };
       const entering = applyEvent(enteringEvent);
       pushActivity("agent-spawn", `${entering.name} spawned on task: ${body.task}.`, body.agentId);
+      if (launch) {
+        pushActivity("agent-status", `${entering.name} launch forwarded to ${launch.targetLabel}.`, body.agentId);
+      }
       pushAgentMessageActivity("agent-message", entering, body.message);
-      sendJson(response, 200, entering);
+      sendJson(response, 200, { agent: entering, launch });
 
       scheduleTransition(body.agentId, () => {
         applyEvent({
