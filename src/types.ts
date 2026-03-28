@@ -1,9 +1,10 @@
 import type * as THREE from "three";
+import type { MissionControlSnapshot } from "./mission/types";
 
 export type HeadShape = "round" | "oval" | "square";
 export type HairStyle = "none" | "short" | "long" | "mohawk" | "messy" | "slicked" | "buzz" | "curly";
 export type Accessory = "glasses" | "hat" | "tie" | "beard";
-export type AgentBackendProvider = "openclaw" | "claude" | "codex" | "unlinked";
+export type AgentBackendProvider = "openclaw" | "hermes" | "claude" | "codex" | "unlinked";
 export type AgentStatus = "idle" | "working" | "in-meeting";
 export type RealtimeAgentStatus = "idle" | "working" | "meeting" | "entering" | "leaving";
 export type AgentEventLocation = "desk" | "meeting-room" | "door" | "cio-office";
@@ -420,6 +421,10 @@ export type ServerMessage =
   | {
       type: "workflow-event";
       event: WorkflowEventRecord;
+    }
+  | {
+      type: "mission-snapshot";
+      snapshot: MissionControlSnapshot;
     };
 
 export interface NavigationNode {

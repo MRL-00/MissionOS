@@ -1,9 +1,19 @@
 import * as THREE from "three";
-import { DEPLOY_VERSION } from "../config/buildInfo";
+import { DEPLOY_BADGE_LABEL } from "../config/buildInfo";
 import { clearApiBaseOverride, getApiBase, getApiBaseLabel, setApiBaseOverride } from "../config/api";
 import { FACILITATOR_ROTATION } from "../config/meeting-rules";
 import { createCharacterCreator } from "./characterCreator";
-import type { ActivityLogEntry, AgentRuntimeState, LabelState, MeetingTurn, RealtimeAgentStatus } from "../types";
+import type {
+  ActivityLogEntry,
+  AgentRuntimeState,
+  LabelState,
+  MeetingTurn,
+  RealtimeAgentStatus,
+  WorkflowHandoff,
+  WorkflowQaTrigger,
+  WorkflowSnapshot,
+  WorkflowStatus,
+} from "../types";
 
 interface HudOptions {
   onResetCamera(): void;
@@ -16,6 +26,7 @@ interface HudApi {
   syncAgentStates(states: AgentRuntimeState[]): void;
   syncActivityLog(entries: ActivityLogEntry[]): void;
   syncMeetingTranscript(turns: MeetingTurn[], summary?: string): void;
+  syncWorkflowSnapshot(snapshot: WorkflowSnapshot): void;
   labelLayer: HTMLDivElement;
   speechLayer: HTMLDivElement;
 }
@@ -41,6 +52,27 @@ interface AgentListRefs {
 }
 
 type ActivityViewFilter = "all" | "messages" | "status" | "meetings";
+
+const WORKFLOW_STATUS_ORDER: WorkflowStatus[] = [
+  "backlog",
+  "todo",
+  "in_progress",
+  "blocked",
+  "in_review",
+  "qa",
+  "merged_ready",
+  "done",
+  "canceled",
+];
+
+const PRIMARY_WORKFLOW_STATUS_ORDER: WorkflowStatus[] = [
+  "todo",
+  "in_progress",
+  "blocked",
+  "in_review",
+  "qa",
+  "merged_ready",
+];
 
 function formatRealtimeStatus(status: RealtimeAgentStatus): string {
   switch (status) {
@@ -88,6 +120,56 @@ function activityKindLabel(kind: ActivityLogEntry["kind"]): string {
     default:
       return "Roster";
   }
+}
+
+function formatWorkflowStatus(status: WorkflowStatus): string {
+  switch (status) {
+    case "in_progress":
+      return "In Progress";
+    case "in_review":
+      return "In Review";
+    case "merged_ready":
+      return "Merged Ready";
+    default:
+      return status.charAt(0).toUpperCase() + status.slice(1);
+  }
+}
+
+function countWorkflowItemsByStatus(items: WorkflowSnapshot["items"]): Map<WorkflowStatus, number> {
+  const counts = new Map<WorkflowStatus, number>();
+  WORKFLOW_STATUS_ORDER.forEach((status) => counts.set(status, 0));
+  items.forEach((item) => {
+    counts.set(item.status, (counts.get(item.status) ?? 0) + 1);
+  });
+  return counts;
+}
+
+function formatCompactTime(timestamp?: number): string {
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return "n/a";
+  }
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function findAgentName(states: AgentRuntimeState[], agentId?: string): string {
+  if (!agentId) {
+    return "Unassigned";
+  }
+  return states.find((state) => state.id === agentId)?.name ?? agentId;
+}
+
+function resolveFocusAgent(states: AgentRuntimeState[], preferredAgentId: string): AgentRuntimeState | null {
+  if (preferredAgentId) {
+    return states.find((state) => state.id === preferredAgentId) ?? null;
+  }
+
+  const activeStates = states
+    .filter((state) => state.status !== "idle")
+    .sort((left, right) => right.timestamp - left.timestamp);
+  return activeStates[0] ?? states[0] ?? null;
 }
 
 function matchesActivityViewFilter(kind: ActivityLogEntry["kind"], filter: ActivityViewFilter): boolean {
@@ -272,6 +354,68 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   `;
   hud.append(transcriptPanel);
 
+  const dashboardPanel = document.createElement("aside");
+  dashboardPanel.className = "ops-dashboard";
+  dashboardPanel.innerHTML = `
+    <div class="ops-dashboard-header">
+      <div>
+        <span class="eyebrow">Office Brain</span>
+        <strong>Ops Dashboard</strong>
+      </div>
+      <span class="ops-dashboard-pill">Live</span>
+    </div>
+    <div class="ops-dashboard-scroll">
+      <section class="ops-card">
+        <div class="ops-card-header">
+          <div>
+            <span class="eyebrow">Office Pulse</span>
+            <strong>Live Overview</strong>
+          </div>
+        </div>
+        <div class="ops-metric-grid"></div>
+      </section>
+      <section class="ops-card">
+        <div class="ops-card-header">
+          <div>
+            <span class="eyebrow">Focus</span>
+            <strong>Selected Agent</strong>
+          </div>
+        </div>
+        <div class="ops-focus-card"></div>
+      </section>
+      <section class="ops-card">
+        <div class="ops-card-header">
+          <div>
+            <span class="eyebrow">Workflow</span>
+            <strong>Sprint Board</strong>
+          </div>
+          <span class="ops-card-meta">Current sprint</span>
+        </div>
+        <div class="ops-status-grid"></div>
+        <div class="ops-list ops-workflow-list"></div>
+      </section>
+      <section class="ops-card">
+        <div class="ops-card-header">
+          <div>
+            <span class="eyebrow">Handoffs</span>
+            <strong>Pending Queue</strong>
+          </div>
+        </div>
+        <div class="ops-list ops-handoff-list"></div>
+      </section>
+      <section class="ops-card">
+        <div class="ops-card-header">
+          <div>
+            <span class="eyebrow">QA</span>
+            <strong>Verification Queue</strong>
+          </div>
+        </div>
+        <div class="ops-list ops-qa-list"></div>
+      </section>
+    </div>
+  `;
+  hud.append(dashboardPanel);
+
   const labelLayer = document.createElement("div");
   labelLayer.className = "label-layer";
   hud.append(labelLayer);
@@ -282,8 +426,8 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
 
   const deployVersion = document.createElement("div");
   deployVersion.className = "deploy-version";
-  deployVersion.textContent = DEPLOY_VERSION;
-  deployVersion.setAttribute("aria-label", `Deployment version ${DEPLOY_VERSION}`);
+  deployVersion.textContent = DEPLOY_BADGE_LABEL;
+  deployVersion.setAttribute("aria-label", `Build date ${DEPLOY_BADGE_LABEL}`);
   hud.append(deployVersion);
 
   document.body.append(hud);
@@ -333,9 +477,24 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
   const activitySearch = activityPanel.querySelector<HTMLInputElement>(".activity-search");
   const transcriptLog = transcriptPanel.querySelector<HTMLDivElement>(".transcript-log");
   const transcriptSummary = transcriptPanel.querySelector<HTMLDivElement>(".transcript-summary");
+  const dashboardMetricGrid = dashboardPanel.querySelector<HTMLDivElement>(".ops-metric-grid");
+  const dashboardFocusCard = dashboardPanel.querySelector<HTMLDivElement>(".ops-focus-card");
+  const dashboardStatusGrid = dashboardPanel.querySelector<HTMLDivElement>(".ops-status-grid");
+  const dashboardWorkflowList = dashboardPanel.querySelector<HTMLDivElement>(".ops-workflow-list");
+  const dashboardHandoffList = dashboardPanel.querySelector<HTMLDivElement>(".ops-handoff-list");
+  const dashboardQaList = dashboardPanel.querySelector<HTMLDivElement>(".ops-qa-list");
+  const dashboardSprintMeta = dashboardPanel.querySelector<HTMLSpanElement>(".ops-card-meta");
   const agentNodes = new Map<string, AgentListRefs>();
   let latestStates: AgentRuntimeState[] = [];
   let latestActivityEntries: ActivityLogEntry[] = [];
+  let latestWorkflowSnapshot: WorkflowSnapshot = {
+    currentSprintId: "current",
+    items: [],
+    events: [],
+    handoffs: [],
+    comments: [],
+    qaTriggers: [],
+  };
   let meetingActive = false;
   let transcriptDismissedForMeeting = false;
   let activityVisible = false;
@@ -514,6 +673,213 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
     activityAgentFilter.value = activityAgentId;
   }
 
+  function createListEmptyState(message: string): HTMLParagraphElement {
+    const empty = document.createElement("p");
+    empty.className = "ops-empty";
+    empty.textContent = message;
+    return empty;
+  }
+
+  function createMetricTile(
+    label: string,
+    value: string,
+    tone: "default" | "good" | "warn" | "danger" = "default",
+  ): HTMLElement {
+    const tile = document.createElement("article");
+    tile.className = "ops-metric";
+    tile.dataset.tone = tone;
+
+    const valueNode = document.createElement("strong");
+    valueNode.textContent = value;
+
+    const labelNode = document.createElement("span");
+    labelNode.textContent = label;
+
+    tile.append(valueNode, labelNode);
+    return tile;
+  }
+
+  function createDashboardListRow(
+    title: string,
+    subtitle: string,
+    badgeText?: string,
+    badgeTone: "default" | "good" | "warn" | "danger" = "default",
+  ): HTMLElement {
+    const row = document.createElement("article");
+    row.className = "ops-list-row";
+
+    const body = document.createElement("div");
+    body.className = "ops-list-row-body";
+
+    const titleNode = document.createElement("strong");
+    titleNode.textContent = title;
+
+    const subtitleNode = document.createElement("span");
+    subtitleNode.textContent = subtitle;
+
+    body.append(titleNode, subtitleNode);
+    row.append(body);
+
+    if (badgeText) {
+      const badge = document.createElement("span");
+      badge.className = "ops-badge";
+      badge.dataset.tone = badgeTone;
+      badge.textContent = badgeText;
+      row.append(badge);
+    }
+
+    return row;
+  }
+
+  function renderOpsDashboard(): void {
+    if (
+      !dashboardMetricGrid ||
+      !dashboardFocusCard ||
+      !dashboardStatusGrid ||
+      !dashboardWorkflowList ||
+      !dashboardHandoffList ||
+      !dashboardQaList
+    ) {
+      return;
+    }
+
+    const states = latestStates;
+    const workflow = latestWorkflowSnapshot;
+    const items = [...workflow.items].sort((left, right) => right.lastEventAt - left.lastEventAt);
+    const pendingHandoffs = workflow.handoffs
+      .filter((handoff) => handoff.status === "pending")
+      .sort((left, right) => right.createdAt - left.createdAt);
+    const activeQaTriggers = workflow.qaTriggers
+      .filter((trigger) => trigger.status === "queued" || trigger.status === "running" || trigger.status === "failed")
+      .sort((left, right) => right.createdAt - left.createdAt);
+    const counts = countWorkflowItemsByStatus(workflow.items);
+    const workingAgents = states.filter((state) => state.status === "working").length;
+    const meetingAgents = states.filter((state) => state.status === "meeting").length;
+    const idleAgents = states.filter((state) => state.status === "idle").length;
+    const blockedItems = counts.get("blocked") ?? 0;
+    const focusAgent = resolveFocusAgent(states, activityAgentId);
+
+    dashboardMetricGrid.replaceChildren(
+      createMetricTile("Agents", String(states.length), "good"),
+      createMetricTile("Working", String(workingAgents), workingAgents > 0 ? "good" : "default"),
+      createMetricTile("Meeting", meetingActive ? String(meetingAgents || 1) : String(meetingAgents), meetingActive ? "warn" : "default"),
+      createMetricTile("Idle", String(idleAgents)),
+      createMetricTile("Blocked", String(blockedItems), blockedItems > 0 ? "danger" : "default"),
+      createMetricTile("Handoffs", String(pendingHandoffs.length), pendingHandoffs.length > 0 ? "warn" : "default"),
+      createMetricTile("QA Queue", String(activeQaTriggers.length), activeQaTriggers.length > 0 ? "warn" : "default"),
+      createMetricTile("Sprint", workflow.currentSprintId, "default"),
+    );
+
+    dashboardFocusCard.replaceChildren();
+    if (focusAgent) {
+      const title = document.createElement("strong");
+      title.className = "ops-focus-title";
+      title.textContent = focusAgent.name;
+
+      const role = document.createElement("span");
+      role.className = "ops-focus-role";
+      role.textContent = `${focusAgent.role} · ${formatRealtimeStatus(focusAgent.status)}`;
+
+      const task = document.createElement("p");
+      task.className = "ops-focus-detail";
+      task.textContent = focusAgent.task?.trim() || "No active task.";
+
+      const message = document.createElement("p");
+      message.className = "ops-focus-detail muted";
+      message.textContent = focusAgent.message?.trim() || "No recent message.";
+
+      const meta = document.createElement("span");
+      meta.className = "ops-focus-meta";
+      meta.textContent = activityAgentId === focusAgent.id
+        ? "Focused from roster/activity filter"
+        : `Last update ${formatCompactTime(focusAgent.timestamp)}`;
+
+      dashboardFocusCard.append(title, role, task, message, meta);
+    } else {
+      dashboardFocusCard.append(
+        createListEmptyState("Select an agent from the roster or start a workflow to populate the focus card."),
+      );
+    }
+
+    if (dashboardSprintMeta) {
+      dashboardSprintMeta.textContent = `Sprint ${workflow.currentSprintId}`;
+    }
+
+    dashboardStatusGrid.replaceChildren(
+      ...PRIMARY_WORKFLOW_STATUS_ORDER.map((status) => {
+        const cell = document.createElement("article");
+        cell.className = "ops-status-cell";
+        cell.dataset.status = status;
+
+        const value = document.createElement("strong");
+        value.textContent = String(counts.get(status) ?? 0);
+
+        const label = document.createElement("span");
+        label.textContent = formatWorkflowStatus(status);
+
+        cell.append(value, label);
+        return cell;
+      }),
+    );
+
+    dashboardWorkflowList.replaceChildren(
+      ...(items.length > 0
+        ? items.slice(0, 5).map((item) =>
+            createDashboardListRow(
+              `${item.linear.issueKey} · ${item.title}`,
+              `${findAgentName(states, item.ownership.ownerAgentId)} · updated ${formatCompactTime(item.lastEventAt)}`,
+              formatWorkflowStatus(item.status),
+              item.status === "blocked"
+                ? "danger"
+                : item.status === "qa" || item.status === "in_review"
+                  ? "warn"
+                  : item.status === "done"
+                    ? "good"
+                    : "default",
+            ),
+          )
+        : [createListEmptyState("No workflow items in the current sprint mirror yet.")]),
+    );
+
+    dashboardHandoffList.replaceChildren(
+      ...(pendingHandoffs.length > 0
+        ? pendingHandoffs.slice(0, 4).map((handoff: WorkflowHandoff) => {
+            const item = workflow.items.find((entry) => entry.id === handoff.itemId);
+            const title = item
+              ? `${item.linear.issueKey} · ${handoff.from.name} -> ${handoff.to.name}`
+              : `${handoff.from.name} -> ${handoff.to.name}`;
+            return createDashboardListRow(
+              title,
+              handoff.summary,
+              formatCompactTime(handoff.createdAt),
+              "warn",
+            );
+          })
+        : [createListEmptyState("No pending handoffs. Coordination load is clear.")]),
+    );
+
+    dashboardQaList.replaceChildren(
+      ...(activeQaTriggers.length > 0
+        ? activeQaTriggers.slice(0, 4).map((trigger: WorkflowQaTrigger) => {
+            const item = workflow.items.find((entry) => entry.id === trigger.itemId);
+            const title = item
+              ? `${item.linear.issueKey} · ${item.title}`
+              : `Workflow item ${trigger.itemId}`;
+            return createDashboardListRow(
+              title,
+              trigger.reason,
+              trigger.status.toUpperCase(),
+              trigger.status === "failed"
+                ? "danger"
+                : trigger.status === "running"
+                  ? "good"
+                  : "warn",
+            );
+          })
+        : [createListEmptyState("QA queue is empty. New verification work will appear here.")]),
+    );
+  }
+
   function renderActivityLog(): void {
     if (!activityLog || !activitySummary || !activityEmpty) {
       return;
@@ -613,6 +979,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       activityAgentFilter.value = activityAgentId;
     }
     renderActivityLog();
+    renderOpsDashboard();
     toggleActivity(true);
   }
 
@@ -798,10 +1165,12 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       activitySearch.value = "";
     }
     renderActivityLog();
+    renderOpsDashboard();
   });
   activityAgentFilter?.addEventListener("change", () => {
     activityAgentId = activityAgentFilter.value;
     renderActivityLog();
+    renderOpsDashboard();
   });
   activityKindFilter?.addEventListener("change", () => {
     activityView = (activityKindFilter.value as ActivityViewFilter) || "all";
@@ -886,6 +1255,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
 
   applyMobileLayout(isMobileLayout);
   syncServerButtonState();
+  renderOpsDashboard();
 
   return {
     setRealtimeConnected(connected) {
@@ -902,6 +1272,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       meetingActive = active;
       updateTranscriptVisibility();
       transcriptPanel.dataset.active = active ? "true" : "false";
+      renderOpsDashboard();
     },
     syncAgentStates(states) {
       latestStates = [...states];
@@ -975,6 +1346,7 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
         }
       });
       renderActivityLog();
+      renderOpsDashboard();
     },
     syncActivityLog(entries) {
       latestActivityEntries = [...entries];
@@ -1001,6 +1373,17 @@ export function createHud({ onResetCamera, apiBase = getApiBase() }: HudOptions)
       transcriptLog.scrollTop = transcriptLog.scrollHeight;
       transcriptSummary.textContent = summary ? `Summary: ${summary}` : "";
       updateTranscriptVisibility(turns.length, transcriptSummary.textContent);
+    },
+    syncWorkflowSnapshot(snapshot) {
+      latestWorkflowSnapshot = {
+        currentSprintId: snapshot.currentSprintId,
+        items: [...snapshot.items],
+        events: [...snapshot.events],
+        handoffs: [...snapshot.handoffs],
+        comments: [...snapshot.comments],
+        qaTriggers: [...snapshot.qaTriggers],
+      };
+      renderOpsDashboard();
     },
     labelLayer,
     speechLayer,

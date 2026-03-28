@@ -31,6 +31,7 @@ import { loadPersistedAgents, queuePersistAgents } from "./persistence";
 import { configureRemoteOfficeMirror, startRemoteOfficeMirror } from "./remote-mirror";
 import { launchAgentOnRuntimeTarget } from "./runtime-launcher";
 import { DEFAULT_HEADERS, PORT, RequestBodyError } from "./types";
+import type { MissionProvider } from "../src/mission/types";
 import { readJson, sendJson } from "./utils";
 import {
   buildWorkflowSnapshot,
@@ -56,8 +57,28 @@ import {
   respondToWorkflowHandoff,
   updateWorkflowItem,
 } from "./workflow";
-
-try { process.loadEnvFile?.(); } catch { /* .env is optional */ }
+import {
+  addMissionTaskComment,
+  configureMissionControlRuntime,
+  createMissionTaskHandoff,
+  getMissionControlSnapshot,
+  getMissionTaskDetail,
+  isMissionTaskCommentCreateRequest,
+  isMissionTaskHandoffCreateRequest,
+  isMissionTaskHandoffResponseRequest,
+  isMissionTaskUpdateRequest,
+  isProviderConnectorUpdateRequest,
+  listMissionConnectors,
+  listMissionSchedules,
+  listMissionTasks,
+  listProviderAgents,
+  respondMissionTaskHandoff,
+  startMissionControl,
+  syncMissionConnector,
+  testMissionConnector,
+  updateMissionConnector,
+  updateMissionTask,
+} from "./mission-control";
 
 let websocketServer: WebSocketServer;
 let meetingStartActivityEmitted = false;
@@ -89,6 +110,7 @@ configureAgentRuntime({
   queuePersistAgents,
 });
 configureWorkflowRuntime(broadcast);
+configureMissionControlRuntime(broadcast);
 configureRemoteOfficeMirror({
   broadcast,
   broadcastSnapshot,
@@ -179,6 +201,119 @@ const httpServer = createServer(async (request, response) => {
 
     if (method === "GET" && url.pathname === "/api/activity") {
       sendJson(response, 200, { entries: activityLog });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/mission") {
+      sendJson(response, 200, getMissionControlSnapshot());
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/mission/connectors") {
+      sendJson(response, 200, { connectors: listMissionConnectors() });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/mission/schedules") {
+      sendJson(response, 200, { schedules: listMissionSchedules() });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/mission/provider-agents") {
+      sendJson(response, 200, { agents: listProviderAgents() });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/mission/tasks") {
+      sendJson(response, 200, { tasks: listMissionTasks() });
+      return;
+    }
+
+    const connectorMatch = (method === "PATCH" || method === "PUT" || method === "POST")
+      ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)$/)
+      : null;
+    if (connectorMatch && (method === "PATCH" || method === "PUT")) {
+      const provider = decodeURIComponent(connectorMatch[1] ?? "") as MissionProvider;
+      const body = await readJson<unknown>(request);
+      if (!isProviderConnectorUpdateRequest(body)) {
+        throw new RequestBodyError("Invalid connector update payload");
+      }
+
+      const connector = await updateMissionConnector(provider, body);
+      sendJson(response, 200, { connector });
+      return;
+    }
+
+    const connectorTestMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)\/test$/) : null;
+    if (connectorTestMatch) {
+      const provider = decodeURIComponent(connectorTestMatch[1] ?? "") as MissionProvider;
+      const connector = await testMissionConnector(provider);
+      sendJson(response, 200, { connector });
+      return;
+    }
+
+    const connectorSyncMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)\/sync$/) : null;
+    if (connectorSyncMatch) {
+      const provider = decodeURIComponent(connectorSyncMatch[1] ?? "") as MissionProvider;
+      const connector = await syncMissionConnector(provider);
+      sendJson(response, 200, { connector });
+      return;
+    }
+
+    const missionTaskMatch = (method === "GET" || method === "PATCH" || method === "PUT")
+      ? url.pathname.match(/^\/api\/mission\/tasks\/([^/]+)$/)
+      : null;
+    if (missionTaskMatch && method === "GET") {
+      const taskId = decodeURIComponent(missionTaskMatch[1] ?? "");
+      sendJson(response, 200, await getMissionTaskDetail(taskId));
+      return;
+    }
+    if (missionTaskMatch && (method === "PATCH" || method === "PUT")) {
+      const taskId = decodeURIComponent(missionTaskMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isMissionTaskUpdateRequest(body)) {
+        throw new RequestBodyError("Invalid mission task update payload");
+      }
+      const task = await updateMissionTask(taskId, body);
+      sendJson(response, 200, { ok: true, task });
+      return;
+    }
+
+    const missionTaskCommentMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/tasks\/([^/]+)\/comments$/) : null;
+    if (missionTaskCommentMatch) {
+      const taskId = decodeURIComponent(missionTaskCommentMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isMissionTaskCommentCreateRequest(body)) {
+        throw new RequestBodyError("Invalid mission comment payload");
+      }
+      const detail = await addMissionTaskComment(taskId, body);
+      sendJson(response, 201, detail);
+      return;
+    }
+
+    const missionTaskHandoffMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/tasks\/([^/]+)\/handoffs$/) : null;
+    if (missionTaskHandoffMatch) {
+      const taskId = decodeURIComponent(missionTaskHandoffMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isMissionTaskHandoffCreateRequest(body)) {
+        throw new RequestBodyError("Invalid mission handoff payload");
+      }
+      const handoff = await createMissionTaskHandoff(taskId, body);
+      sendJson(response, 201, { handoff });
+      return;
+    }
+
+    const missionHandoffResponseMatch = (method === "PATCH" || method === "POST")
+      ? url.pathname.match(/^\/api\/mission\/handoffs\/([^/]+)$/)
+      : null;
+    if (missionHandoffResponseMatch && (method === "PATCH" || method === "POST")) {
+      const handoffId = decodeURIComponent(missionHandoffResponseMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (!isMissionTaskHandoffResponseRequest(body)) {
+        throw new RequestBodyError("Invalid mission handoff response payload");
+      }
+      const handoff = await respondMissionTaskHandoff(handoffId, body);
+      sendJson(response, 200, { handoff });
       return;
     }
 
@@ -610,6 +745,7 @@ export async function start(): Promise<void> {
   await loadPersistedAgents();
   await loadPersistedWorkflow();
   await ensureCharlie();
+  await startMissionControl();
 
   websocketServer = new WebSocketServer({ server: httpServer });
   websocketServer.on("connection", (socket) => {
@@ -629,6 +765,12 @@ export async function start(): Promise<void> {
       JSON.stringify({
         type: "workflow-snapshot",
         snapshot: buildWorkflowSnapshot(),
+      } satisfies ServerMessage),
+    );
+    socket.send(
+      JSON.stringify({
+        type: "mission-snapshot",
+        snapshot: getMissionControlSnapshot(),
       } satisfies ServerMessage),
     );
   });

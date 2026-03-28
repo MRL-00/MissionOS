@@ -1,0 +1,97 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-mission-950 font-body text-linear-ink antialiased;
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+@layer components {
+  .mission-shell {
+    @apply relative min-h-screen overflow-hidden bg-mission-950 text-linear-ink;
+    background-image:
+      radial-gradient(circle at top left, rgba(114, 168, 255, 0.06), transparent 24%),
+      linear-gradient(180deg, #0b0e14 0%, #080a0f 100%);
+  }
+
+  .mission-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    background-size: 60px 60px;
+    mask-image: radial-gradient(circle at center, black 35%, transparent 100%);
+    opacity: 0.12;
+    pointer-events: none;
+  }
+
+  .mission-panel {
+    @apply rounded-xl border border-linear-line bg-linear-panel shadow-mission backdrop-blur-sm;
+  }
+
+  .mission-muted {
+    @apply text-[12px] text-linear-muted;
+  }
+
+  .mission-badge {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-linear-line bg-linear-surface px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-linear-muted;
+  }
+
+  .mission-input {
+    @apply w-full rounded-lg border border-linear-line bg-mission-950 px-3 py-2 text-[13px] text-white outline-none transition focus:border-linear-teal/50;
+  }
+
+  .mission-button {
+    @apply rounded-lg bg-white px-3 py-1.5 text-[13px] font-semibold text-mission-950 transition hover:bg-linear-teal disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .mission-button-muted {
+    @apply rounded-lg border border-linear-line bg-linear-surface px-3 py-1.5 text-[13px] font-semibold text-white transition hover:border-linear-lineStrong hover:bg-linear-surfaceHover disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .mission-list-item {
+    @apply rounded-lg border border-linear-line bg-linear-surface px-3 py-2.5 transition hover:border-linear-lineStrong hover:bg-linear-surfaceHover;
+  }
+
+  .mission-section-label {
+    @apply text-[10px] font-semibold uppercase tracking-[0.14em] text-linear-muted;
+  }
+
+  .mission-table {
+    @apply overflow-hidden rounded-lg border border-linear-line bg-linear-panel;
+  }
+
+  .mission-table-head {
+    @apply grid items-center gap-3 border-b border-linear-line bg-linear-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-linear-muted;
+  }
+
+  .mission-table-row {
+    @apply grid items-center gap-3 border-b border-linear-line px-3 py-2 text-left transition hover:bg-linear-surface;
+  }
+
+  .mission-table-row:last-child {
+    border-bottom: none;
+  }
+}

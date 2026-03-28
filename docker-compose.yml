@@ -15,6 +15,13 @@ services:
     environment:
       - OPENCLAW_URL=${OPENCLAW_URL:-}
       - OPENCLAW_TOKEN=${OPENCLAW_TOKEN:-}
+      - HERMES_URL=${HERMES_URL:-}
+      - HERMES_WS_URL=${HERMES_WS_URL:-}
+      - HERMES_RUNTIME_URL=${HERMES_RUNTIME_URL:-}
+      - HERMES_TOKEN=${HERMES_TOKEN:-}
+      - LINEAR_API_URL=${LINEAR_API_URL:-https://api.linear.app/graphql}
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
+      - LINEAR_SYNC_INTERVAL_MS=${LINEAR_SYNC_INTERVAL_MS:-30000}
     volumes:
       - office-data:/app/data
 volumes:

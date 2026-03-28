@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 process.loadEnvFile?.();
 
-type RuntimeProvider = "openclaw" | "claude" | "codex";
+type RuntimeProvider = "openclaw" | "hermes" | "claude" | "codex";
 
 interface RuntimeSpawnRequest {
   officeAgentId: string;
@@ -22,6 +22,7 @@ const PORT = Math.max(1, Number(process.env.AGENT_BRIDGE_PORT ?? "3012") || 3012
 const CWD = process.env.AGENT_BRIDGE_CWD?.trim() || process.cwd();
 const PROVIDER_COMMANDS: Record<RuntimeProvider, string> = {
   openclaw: process.env.AGENT_BRIDGE_OPENCLAW_COMMAND?.trim() || "",
+  hermes: process.env.AGENT_BRIDGE_HERMES_COMMAND?.trim() || "",
   claude: process.env.AGENT_BRIDGE_CLAUDE_COMMAND?.trim() || "",
   codex: process.env.AGENT_BRIDGE_CODEX_COMMAND?.trim() || "",
 };
@@ -73,7 +74,7 @@ function isRuntimeSpawnRequest(value: unknown): value is RuntimeSpawnRequest {
     typeof payload.officeAgentId === "string" &&
     typeof payload.officeAgentName === "string" &&
     typeof payload.officeAgentRole === "string" &&
-    (payload.provider === "openclaw" || payload.provider === "claude" || payload.provider === "codex") &&
+    (payload.provider === "openclaw" || payload.provider === "hermes" || payload.provider === "claude" || payload.provider === "codex") &&
     (payload.linkedAgentId === undefined || typeof payload.linkedAgentId === "string") &&
     (payload.tokenId === undefined || typeof payload.tokenId === "string") &&
     typeof payload.task === "string" &&
@@ -124,6 +125,9 @@ function launch(payload: RuntimeSpawnRequest): { pid: number | undefined } {
 function providerCommandVarName(provider: RuntimeProvider): string {
   if (provider === "openclaw") {
     return "AGENT_BRIDGE_OPENCLAW_COMMAND";
+  }
+  if (provider === "hermes") {
+    return "AGENT_BRIDGE_HERMES_COMMAND";
   }
   if (provider === "claude") {
     return "AGENT_BRIDGE_CLAUDE_COMMAND";

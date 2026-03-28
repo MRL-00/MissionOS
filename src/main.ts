@@ -28,6 +28,7 @@ import type {
   MeetingTurn,
   RealtimeAgentStatus,
   ServerMessage,
+  WorkflowSnapshot,
 } from "./types";
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -749,6 +750,11 @@ function handleServerMessage(message: ServerMessage): void {
     return;
   }
 
+  if (message.type === "workflow-snapshot") {
+    hud.syncWorkflowSnapshot(message.snapshot);
+    return;
+  }
+
   if (message.type === "meeting-start") {
     meetingTranscript = [];
     currentMeeting = {
@@ -1087,23 +1093,29 @@ function updateKeyboardCamera(delta: number): void {
 
 async function hydrateOverlay(): Promise<void> {
   try {
-    const [activityResponse, transcriptResponse] = await Promise.all([
+    const [activityResult, transcriptResult, workflowResult] = await Promise.allSettled([
       fetch(`${getApiBase()}/api/activity`),
       fetch(`${getApiBase()}/api/meeting/transcript`),
+      fetch(`${getApiBase()}/api/workflow`),
     ]);
 
-    if (activityResponse.ok) {
-      const payload = (await activityResponse.json()) as { entries: ActivityLogEntry[] };
+    if (activityResult.status === "fulfilled" && activityResult.value.ok) {
+      const payload = (await activityResult.value.json()) as { entries: ActivityLogEntry[] };
       activityEntries.splice(0, activityEntries.length, ...payload.entries);
       hud.syncActivityLog(activityEntries);
     }
 
-    if (transcriptResponse.ok) {
-      const payload = (await transcriptResponse.json()) as { transcript: { turns: MeetingTurn[]; summary: string } | null };
+    if (transcriptResult.status === "fulfilled" && transcriptResult.value.ok) {
+      const payload = (await transcriptResult.value.json()) as { transcript: { turns: MeetingTurn[]; summary: string } | null };
       if (payload.transcript) {
         meetingTranscript = payload.transcript.turns;
         hud.syncMeetingTranscript(meetingTranscript, payload.transcript.summary);
       }
+    }
+
+    if (workflowResult.status === "fulfilled" && workflowResult.value.ok) {
+      const payload = (await workflowResult.value.json()) as WorkflowSnapshot;
+      hud.syncWorkflowSnapshot(payload);
     }
   } catch {
     hud.syncActivityLog(activityEntries);

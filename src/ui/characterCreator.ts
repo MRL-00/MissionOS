@@ -830,6 +830,12 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
         connected: Boolean((backendAgentIdInputEl.value.trim() || draft.backendLink.agentId)?.trim()),
         runtimeTarget,
       };
+    } else if (provider === "hermes") {
+      draft.backendLink = {
+        provider,
+        connected: true,
+        runtimeTarget,
+      };
     } else {
       const oauth = getOauthResult(provider);
       draft.backendLink = {
