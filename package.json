@@ -11,7 +11,8 @@
     "dev:sync": "tsx scripts/office-sync.ts",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p server/tsconfig.json --noEmit",
+    "test:server": "node --import tsx --test server/workflow.test.ts"
   },
   "dependencies": {
     "three": "^0.179.1",
