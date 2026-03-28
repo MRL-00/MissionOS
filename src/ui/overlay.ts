@@ -24,8 +24,8 @@ interface LabelRefs {
   name: HTMLSpanElement;
   role: HTMLSpanElement;
   status: HTMLSpanElement;
+  statusDetail: HTMLSpanElement;
   message: HTMLSpanElement;
-  hoverTimer: number | null;
   expanded: boolean;
 }
 
@@ -971,26 +971,31 @@ export class LabelRenderer {
   container: HTMLDivElement;
   nodes: Map<string, LabelRefs>;
   screenPosition: THREE.Vector3;
-  hoverExpandDelay: number;
+  hoveredId: string | null;
 
   constructor(container: HTMLDivElement) {
     this.container = container;
     this.nodes = new Map();
     this.screenPosition = new THREE.Vector3();
-    this.hoverExpandDelay = 1000;
+    this.hoveredId = null;
   }
 
-  private clearHoverTimer(refs: LabelRefs): void {
-    if (refs.hoverTimer !== null) {
-      window.clearTimeout(refs.hoverTimer);
-      refs.hoverTimer = null;
-    }
-  }
-
-  private setExpanded(refs: LabelRefs, expanded: boolean): void {
+  private setExpanded(labelId: string, refs: LabelRefs, expanded: boolean): void {
     refs.expanded = expanded;
-    refs.node.dataset.expanded = expanded ? "true" : "false";
-    refs.node.setAttribute("aria-expanded", expanded ? "true" : "false");
+    const shouldExpand = expanded || this.hoveredId === labelId;
+    refs.node.dataset.expanded = shouldExpand ? "true" : "false";
+    refs.node.setAttribute("aria-expanded", shouldExpand ? "true" : "false");
+  }
+
+  setHoveredLabel(agentId: string | null): void {
+    if (this.hoveredId === agentId) {
+      return;
+    }
+
+    this.hoveredId = agentId;
+    this.nodes.forEach((refs, labelId) => {
+      this.setExpanded(labelId, refs, refs.expanded);
+    });
   }
 
   sync(labels: LabelState[], camera: THREE.Camera, viewport: { width: number; height: number }): void {
@@ -1007,51 +1012,55 @@ export class LabelRenderer {
         node.dataset.expanded = "false";
         node.setAttribute("aria-expanded", "false");
         node.innerHTML = `
-          <span class="agent-name"></span>
+          <span class="agent-label-chip">
+            <span class="agent-status" aria-hidden="true"></span>
+            <span class="agent-name"></span>
+          </span>
           <span class="agent-role"></span>
-          <span class="agent-status"></span>
+          <span class="agent-status-detail"></span>
           <span class="agent-message"></span>
         `;
         this.container.append(node);
         const name = node.querySelector<HTMLSpanElement>(".agent-name");
         const role = node.querySelector<HTMLSpanElement>(".agent-role");
         const status = node.querySelector<HTMLSpanElement>(".agent-status");
+        const statusDetail = node.querySelector<HTMLSpanElement>(".agent-status-detail");
         const message = node.querySelector<HTMLSpanElement>(".agent-message");
-        if (!name || !role || !status || !message) {
+        if (!name || !role || !status || !statusDetail || !message) {
           node.remove();
           return;
         }
+        const labelId = label.id;
         const nextRefs: LabelRefs = {
           node,
           name,
           role,
           status,
+          statusDetail,
           message,
-          hoverTimer: null,
           expanded: false,
         };
         node.addEventListener("pointerenter", () => {
-          this.clearHoverTimer(nextRefs);
-          nextRefs.hoverTimer = window.setTimeout(() => {
-            this.setExpanded(nextRefs, true);
-            nextRefs.hoverTimer = null;
-          }, this.hoverExpandDelay);
+          this.setExpanded(labelId, nextRefs, true);
         });
         node.addEventListener("pointerleave", () => {
-          this.clearHoverTimer(nextRefs);
-          this.setExpanded(nextRefs, false);
+          this.setExpanded(labelId, nextRefs, false);
+        });
+        node.addEventListener("focus", () => {
+          this.setExpanded(labelId, nextRefs, true);
+        });
+        node.addEventListener("blur", () => {
+          this.setExpanded(labelId, nextRefs, false);
         });
         node.addEventListener("click", () => {
-          this.clearHoverTimer(nextRefs);
-          this.setExpanded(nextRefs, true);
+          node.focus({ preventScroll: true });
         });
         node.addEventListener("keydown", (event) => {
           if (event.key !== "Enter" && event.key !== " ") {
             return;
           }
           event.preventDefault();
-          this.clearHoverTimer(nextRefs);
-          this.setExpanded(nextRefs, true);
+          node.focus({ preventScroll: true });
         });
         refs = nextRefs;
         this.nodes.set(label.id, refs);
@@ -1061,8 +1070,7 @@ export class LabelRenderer {
       const visible = this.screenPosition.z > -1 && this.screenPosition.z < 1;
       refs.node.style.display = visible ? "block" : "none";
       if (!visible) {
-        this.clearHoverTimer(refs);
-        this.setExpanded(refs, false);
+        this.setExpanded(label.id, refs, false);
       }
 
       if (visible) {
@@ -1075,22 +1083,20 @@ export class LabelRenderer {
       refs.name.textContent = label.name;
       refs.role.textContent = label.role;
       refs.status.dataset.status = label.status;
-      refs.status.textContent = formatRealtimeStatus(label.status === "in-meeting" ? "meeting" : label.status);
-      refs.status.setAttribute("aria-label", refs.status.textContent);
+      refs.statusDetail.textContent = formatRealtimeStatus(label.status === "in-meeting" ? "meeting" : label.status);
       refs.message.textContent = label.message ?? "";
       refs.message.hidden = !label.message;
       refs.node.dataset.hasMessage = label.message ? "true" : "false";
       refs.node.setAttribute(
         "aria-label",
         label.message
-          ? `${label.name}, ${label.role}, ${refs.status.textContent}. Last message: ${label.message}`
-          : `${label.name}, ${label.role}, ${refs.status.textContent}`,
+          ? `${label.name}, ${label.role}, ${refs.statusDetail.textContent}. Last message: ${label.message}`
+          : `${label.name}, ${label.role}, ${refs.statusDetail.textContent}`,
       );
     });
 
     this.nodes.forEach((refs, id) => {
       if (!seen.has(id)) {
-        this.clearHoverTimer(refs);
         refs.node.remove();
         this.nodes.delete(id);
       }
