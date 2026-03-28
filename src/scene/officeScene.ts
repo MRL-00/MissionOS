@@ -8,6 +8,7 @@ import {
   createKitchenCounter,
   createMeetingTable,
   createPlant,
+  getDeskSeatOffsetX,
 } from "./furniture";
 import { makeGlass, makeMaterial } from "./materials";
 import type {
@@ -241,9 +242,10 @@ function createDeskSlotForItem(item: LayoutItemConfig, slotId: string): DeskSlot
   const origin = new THREE.Vector3(x, 0, z);
   const rotation = item.rotationY ?? 0;
   const chairSide = item.deskSlot?.chairSide ?? item.chairSide ?? 1;
+  const seatOffsetX = getDeskSeatOffsetX(item.executive ?? false);
   const sitDistance = CHAIR_OFFSET - CHAIR_SIT_INSET;
-  const chairOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * sitDistance), rotation);
-  const approachOffset = rotateYOffset(new THREE.Vector3(0, 0, chairSide * (CHAIR_OFFSET + 1.02)), rotation);
+  const chairOffset = rotateYOffset(new THREE.Vector3(seatOffsetX, 0, chairSide * sitDistance), rotation);
+  const approachOffset = rotateYOffset(new THREE.Vector3(seatOffsetX, 0, chairSide * (CHAIR_OFFSET + 1.02)), rotation);
 
   const slot: DeskSlot = {
     nodeId: slotId,

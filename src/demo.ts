@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import { STATUS } from "./characters/agentController";
-import type { AgentController } from "./characters/agentController";
 import type { AgentTargetOptions, DemoContext, DestinationWaypoint, NavigationNode } from "./types";
 
 type MoveableDestination = DestinationWaypoint & {
@@ -9,11 +8,13 @@ type MoveableDestination = DestinationWaypoint & {
   sit?: THREE.Vector3;
 };
 
-function getOrderedAgents(agents: DemoContext["agents"]): AgentController[] {
-  return Array.from(agents.values()) as AgentController[];
+type MoveableAgent = DemoContext["agents"] extends Map<string, infer Agent> ? Agent : never;
+
+function getOrderedAgents(agents: DemoContext["agents"]): MoveableAgent[] {
+  return Array.from(agents.values());
 }
 
-function getDesk(context: DemoContext, agent: AgentController, index: number) {
+function getDesk(context: DemoContext, agent: MoveableAgent, index: number) {
   return context.deskAssignments.get(agent.id) ?? context.waypoints.deskSlots[index] ?? null;
 }
 
@@ -81,7 +82,7 @@ function buildNodePath(navigation: DemoContext["waypoints"]["navigation"], start
 
 function moveAgent(
   context: DemoContext,
-  agent: AgentController,
+  agent: MoveableAgent,
   destination: MoveableDestination,
   options: AgentTargetOptions,
 ): void {
@@ -112,7 +113,7 @@ function moveAgent(
   });
 }
 
-function moveToDesk(context: DemoContext, agent: AgentController, index: number): void {
+function moveToDesk(context: DemoContext, agent: MoveableAgent, index: number): void {
   const desk = getDesk(context, agent, index);
   if (!desk) {
     return;
@@ -125,7 +126,7 @@ function moveToDesk(context: DemoContext, agent: AgentController, index: number)
   });
 }
 
-function moveToMeeting(context: DemoContext, agent: AgentController, index: number): void {
+function moveToMeeting(context: DemoContext, agent: MoveableAgent, index: number): void {
   const seat = getMeetingSeat(context.waypoints, index);
   if (!seat) {
     return;
@@ -138,7 +139,7 @@ function moveToMeeting(context: DemoContext, agent: AgentController, index: numb
   });
 }
 
-function moveToWaypoint(context: DemoContext, agent: AgentController, waypoint: MoveableDestination, status = STATUS.idle): void {
+function moveToWaypoint(context: DemoContext, agent: MoveableAgent, waypoint: MoveableDestination, status = STATUS.idle): void {
   moveAgent(context, agent, waypoint, {
     facing: waypoint.facing,
     status,
@@ -207,7 +208,7 @@ const STEPS: Array<{ duration: number; apply(context: DemoContext): void }> = [
 
 export function moveAgentToDestination(
   context: DemoContext,
-  agent: AgentController,
+  agent: MoveableAgent,
   destination: MoveableDestination,
   options: AgentTargetOptions,
 ): void {

@@ -38,6 +38,7 @@ export class AgentController {
   labelWorldPosition: THREE.Vector3;
   highlightAmount: number;
   highlightTarget: number;
+  workPoseAmount: number;
 
   constructor(agentConfig: AgentConfig, initialPosition: THREE.Vector3, initialFacing = 0) {
     const built = createAgent(agentConfig);
@@ -69,6 +70,7 @@ export class AgentController {
     this.labelWorldPosition = new THREE.Vector3();
     this.highlightAmount = 0;
     this.highlightTarget = 0;
+    this.workPoseAmount = 0;
   }
 
   setTarget(position: THREE.Vector3, options: AgentTargetOptions = {}): void {
@@ -122,36 +124,66 @@ export class AgentController {
     this.mesh.position.y = THREE.MathUtils.damp(this.mesh.position.y, this.targetPosition.y, 8, delta);
 
     const bob = this.walking ? Math.sin(elapsed * 8 + this.phase) * 0.05 : Math.sin(elapsed * 1.8 + this.phase) * 0.03;
-    const sway = this.walking ? Math.sin(elapsed * 8 + this.phase) * 0.65 : 0;
+    const sway = this.walking ? Math.sin(elapsed * 8 + this.phase) * 0.45 : 0;
     const visuallySeated = this.seated && !this.walking;
     this.seatAmount = THREE.MathUtils.damp(this.seatAmount, visuallySeated ? 1 : 0, 6, delta);
+    this.workPoseAmount = THREE.MathUtils.damp(
+      this.workPoseAmount,
+      visuallySeated && this.status === STATUS.working ? 1 : 0,
+      5,
+      delta,
+    );
 
-    this.parts.bodyPivot.position.set(0, 0.08 + bob - this.seatAmount * 0.4, this.seatAmount * 0.15);
-    this.parts.bodyPivot.rotation.x = this.seatAmount * 0.15;
-    this.parts.headPivot.rotation.x = Math.sin(elapsed * 1.5 + this.phase) * 0.03;
-    this.parts.arms.leftArm.rotation.x = sway;
-    this.parts.arms.rightArm.rotation.x = -sway;
-    this.parts.legs.leftLeg.rotation.x = -sway;
-    this.parts.legs.rightLeg.rotation.x = sway;
+    const typingWave = elapsed * 10.5 + this.phase;
+    const seatedBob = Math.sin(elapsed * 2 + this.phase) * 0.012;
+    const bodyY = THREE.MathUtils.lerp(0.08 + bob, 0.04 + seatedBob, this.seatAmount);
+    const bodyZ = THREE.MathUtils.lerp(0, 0.1 + this.workPoseAmount * 0.05, this.seatAmount);
+    const bodyRotX = THREE.MathUtils.lerp(0, 0.16 + this.workPoseAmount * 0.04, this.seatAmount);
+    const headTilt =
+      Math.sin(elapsed * 1.5 + this.phase) * 0.03
+      - this.seatAmount * 0.05
+      + this.workPoseAmount * (Math.sin(typingWave * 0.5) * 0.018 - 0.01);
 
-    if (visuallySeated) {
-      const seatedLeftArmX = -0.82;
-      const seatedRightArmX = -1.02;
+    this.parts.bodyPivot.position.set(0, bodyY, bodyZ);
+    this.parts.bodyPivot.rotation.set(bodyRotX, 0, 0);
+    this.parts.headPivot.rotation.set(headTilt, 0, 0);
 
-      this.parts.arms.leftArm.rotation.x = seatedLeftArmX;
-      this.parts.arms.rightArm.rotation.x = seatedRightArmX;
-      this.parts.legs.leftLeg.rotation.x = 1.5;
-      this.parts.legs.rightLeg.rotation.x = 1.5;
+    const leftArmStandX = sway;
+    const rightArmStandX = -sway;
+    const leftLegStandX = -sway * 0.85;
+    const rightLegStandX = sway * 0.85;
 
-      if (this.status === STATUS.working) {
-        const typingWave = elapsed * 14 + this.phase;
-        const typingAmount = 0.1;
-        this.parts.arms.leftArm.rotation.x = seatedLeftArmX + Math.sin(typingWave) * typingAmount;
-        this.parts.arms.rightArm.rotation.x = seatedRightArmX + Math.cos(typingWave) * typingAmount;
-        this.parts.headPivot.rotation.x =
-          Math.sin(elapsed * 1.5 + this.phase) * 0.03 + Math.sin(typingWave * 0.5) * 0.025;
-      }
-    }
+    const leftArmSeatX = -1.08 + Math.sin(typingWave) * 0.08 * this.workPoseAmount;
+    const rightArmSeatX = -1 + Math.cos(typingWave + 0.35) * 0.07 * this.workPoseAmount;
+    const leftArmSeatY = -0.12 + Math.sin(typingWave * 0.35) * 0.025 * this.workPoseAmount;
+    const rightArmSeatY = 0.12 - Math.cos(typingWave * 0.35) * 0.025 * this.workPoseAmount;
+    const leftArmSeatZ = 0.18 + Math.cos(typingWave * 0.5) * 0.03 * this.workPoseAmount;
+    const rightArmSeatZ = -0.18 - Math.sin(typingWave * 0.5) * 0.03 * this.workPoseAmount;
+    const leftLegSeatX = 0.34;
+    const rightLegSeatX = 0.3;
+    const leftLegSeatZ = 0.05;
+    const rightLegSeatZ = -0.05;
+
+    this.parts.arms.leftArm.rotation.set(
+      THREE.MathUtils.lerp(leftArmStandX, leftArmSeatX, this.seatAmount),
+      THREE.MathUtils.lerp(0, leftArmSeatY, this.seatAmount),
+      THREE.MathUtils.lerp(0, leftArmSeatZ, this.seatAmount),
+    );
+    this.parts.arms.rightArm.rotation.set(
+      THREE.MathUtils.lerp(rightArmStandX, rightArmSeatX, this.seatAmount),
+      THREE.MathUtils.lerp(0, rightArmSeatY, this.seatAmount),
+      THREE.MathUtils.lerp(0, rightArmSeatZ, this.seatAmount),
+    );
+    this.parts.legs.leftLeg.rotation.set(
+      THREE.MathUtils.lerp(leftLegStandX, leftLegSeatX, this.seatAmount),
+      0,
+      THREE.MathUtils.lerp(0, leftLegSeatZ, this.seatAmount),
+    );
+    this.parts.legs.rightLeg.rotation.set(
+      THREE.MathUtils.lerp(rightLegStandX, rightLegSeatX, this.seatAmount),
+      0,
+      THREE.MathUtils.lerp(0, rightLegSeatZ, this.seatAmount),
+    );
 
     this.highlightAmount = THREE.MathUtils.damp(this.highlightAmount, this.highlightTarget, 5, delta);
     this.mesh.scale.setScalar(1 + this.highlightAmount * 0.08);
