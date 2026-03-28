@@ -18,7 +18,11 @@ export interface ChairOptions {
 
 export const CHAIR_SEAT_HEIGHT = 0.66;
 export const CHAIR_OFFSET = 1.48;
-export const CHAIR_SIT_INSET = 0;
+export const CHAIR_SIT_INSET = 0.2;
+
+export function getDeskSeatOffsetX(executive = false): number {
+  return executive ? 0.34 : 0.2;
+}
 
 export function createDesk({
   x,
@@ -38,6 +42,7 @@ export function createDesk({
   const deskDepth = executive ? 1.6 : 1.4;
   const monitorX = executive ? 0.58 : 0.42;
   const monitorZ = executive ? -0.18 : -0.08;
+  const seatOffsetX = getDeskSeatOffsetX(executive);
 
   const top = new THREE.Mesh(new THREE.BoxGeometry(deskWidth, 0.18, deskDepth), wood);
   top.position.y = 1.16;
@@ -105,6 +110,13 @@ export function createDesk({
   const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.22, 10), makeMaterial("#f7efe4"));
   mug.position.set(-0.2, 1.28, -0.2);
   group.add(mug);
+
+  const chair = createChair({
+    color: executive ? "#51606f" : "#5d7086",
+    rotation: chairSide > 0 ? Math.PI : 0,
+  });
+  chair.position.set(seatOffsetX, 0, chairSide * CHAIR_OFFSET);
+  group.add(chair);
 
   group.position.set(x, 0, z);
   group.rotation.y = rotation;

@@ -16,6 +16,20 @@ function addMesh(
   return mesh;
 }
 
+function addPivotedLimb(
+  parent: THREE.Object3D,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  pivotPosition: THREE.Vector3,
+  meshOffset: THREE.Vector3,
+): THREE.Group {
+  const pivot = new THREE.Group();
+  pivot.position.copy(pivotPosition);
+  parent.add(pivot);
+  addMesh(pivot, geometry, material, meshOffset);
+  return pivot;
+}
+
 function createHead(shape: AgentAppearance["headShape"], color: string): THREE.Mesh {
   let geometry: THREE.BufferGeometry;
 
@@ -221,8 +235,21 @@ export function createAgent(agentConfig: AgentConfig): BuiltAgent {
 
   const legs = new THREE.Group();
   const pants = makeMaterial(appearance.pantsColor);
-  const leftLeg = addMesh(legs, new THREE.BoxGeometry(0.22, 0.7, 0.22), pants, new THREE.Vector3(-0.14, 0.36, 0));
-  const rightLeg = addMesh(legs, new THREE.BoxGeometry(0.22, 0.7, 0.22), pants, new THREE.Vector3(0.14, 0.36, 0));
+  const legGeometry = new THREE.BoxGeometry(0.22, 0.7, 0.22);
+  const leftLeg = addPivotedLimb(
+    legs,
+    legGeometry,
+    pants,
+    new THREE.Vector3(-0.14, 0.72, 0),
+    new THREE.Vector3(0, -0.35, 0),
+  );
+  const rightLeg = addPivotedLimb(
+    legs,
+    legGeometry,
+    pants,
+    new THREE.Vector3(0.14, 0.72, 0),
+    new THREE.Vector3(0, -0.35, 0),
+  );
   bodyPivot.add(legs);
 
   const torso = new THREE.Group();
@@ -235,17 +262,20 @@ export function createAgent(agentConfig: AgentConfig): BuiltAgent {
     makeMaterial(appearance.bodyColor),
     new THREE.Vector3(0, 0, 0),
   );
-  const leftArm = addMesh(
+  const armGeometry = new THREE.BoxGeometry(0.18, 0.68, 0.18);
+  const leftArm = addPivotedLimb(
     torso,
-    new THREE.BoxGeometry(0.18, 0.68, 0.18),
+    armGeometry,
     makeMaterial(appearance.bodyColor),
-    new THREE.Vector3(-0.48, -0.05, 0),
+    new THREE.Vector3(-0.48, 0.28, 0),
+    new THREE.Vector3(0, -0.34, 0),
   );
-  const rightArm = addMesh(
+  const rightArm = addPivotedLimb(
     torso,
-    new THREE.BoxGeometry(0.18, 0.68, 0.18),
+    armGeometry,
     makeMaterial(appearance.bodyColor),
-    new THREE.Vector3(0.48, -0.05, 0),
+    new THREE.Vector3(0.48, 0.28, 0),
+    new THREE.Vector3(0, -0.34, 0),
   );
   torso.add(createBodyAccessories(appearance.accessories ?? [], appearance));
 

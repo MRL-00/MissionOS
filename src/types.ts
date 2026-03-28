@@ -44,24 +44,30 @@ export interface AgentConfig {
   appearance: AgentAppearance;
 }
 
+export interface AgentRuntimeTarget {
+  baseUrl: string;
+  launchProfile?: string | undefined;
+}
+
 export interface AgentBackendLink {
   provider: AgentBackendProvider;
   agentId?: string | undefined;
   connected: boolean;
   tokenId?: string | undefined;
   connectedAt?: number | undefined;
+  runtimeTarget?: AgentRuntimeTarget | undefined;
 }
 
 export interface AgentParts {
   bodyPivot: THREE.Group;
   headPivot: THREE.Group;
   legs: {
-    leftLeg: THREE.Mesh;
-    rightLeg: THREE.Mesh;
+    leftLeg: THREE.Object3D;
+    rightLeg: THREE.Object3D;
   };
   arms: {
-    leftArm: THREE.Mesh;
-    rightArm: THREE.Mesh;
+    leftArm: THREE.Object3D;
+    rightArm: THREE.Object3D;
   };
   body: THREE.Mesh;
 }
