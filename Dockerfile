@@ -2,6 +2,8 @@
 FROM node:22-slim AS build
 RUN corepack enable && corepack prepare pnpm@10.17.0 --activate
 WORKDIR /app
+ARG VITE_DEPLOY_VERSION=local
+ENV VITE_DEPLOY_VERSION=$VITE_DEPLOY_VERSION
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
