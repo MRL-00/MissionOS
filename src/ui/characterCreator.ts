@@ -5,6 +5,11 @@ import type { Accessory, AgentAppearance, AgentBackendLink, AgentRuntimeState } 
 type CreatorStep = 0 | 1 | 2 | 3;
 type CreatorMode = "create" | "edit";
 
+const PREVIEW_MAX_PIXEL_RATIO = 1.5;
+const PREVIEW_TARGET_FRAME_RATE = 30;
+const PREVIEW_FRAME_INTERVAL_MS = 1000 / PREVIEW_TARGET_FRAME_RATE;
+const PREVIEW_ROTATION_SPEED = 0.6;
+
 interface CharacterCreatorOptions {
   apiBase: string;
   getExistingAgents(): AgentRuntimeState[];
@@ -448,6 +453,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   let currentAgentId: string | null = null;
   let draft = createDefaultDraft();
   let animationFrame = 0;
+  let lastPreviewFrameAt = 0;
   let windowListenersBound = false;
 
   const onWindowResize = () => {
@@ -471,8 +477,12 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     if (previewRenderer) {
       return previewRenderer;
     }
-    previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    previewRenderer = new THREE.WebGLRenderer({
+      antialias: window.devicePixelRatio <= 1.25,
+      alpha: true,
+      powerPreference: "low-power",
+    });
+    previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, PREVIEW_MAX_PIXEL_RATIO));
     previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
     previewRenderer.setSize(280, 280);
     return previewRenderer;
@@ -517,10 +527,22 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     previewRenderer.setSize(width, height);
   }
 
-  function animatePreview(): void {
+  function animatePreview(now = performance.now()): void {
     animationFrame = window.requestAnimationFrame(animatePreview);
+    if (document.hidden) {
+      lastPreviewFrameAt = now;
+      return;
+    }
+    if (lastPreviewFrameAt === 0) {
+      lastPreviewFrameAt = now;
+    }
+    const deltaMs = now - lastPreviewFrameAt;
+    if (deltaMs < PREVIEW_FRAME_INTERVAL_MS) {
+      return;
+    }
+    lastPreviewFrameAt = now;
     if (currentMesh) {
-      currentMesh.rotation.y += 0.01;
+      currentMesh.rotation.y += (deltaMs / 1000) * PREVIEW_ROTATION_SPEED;
     }
     previewRenderer?.render(previewScene, previewCamera);
   }
@@ -677,6 +699,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     resizePreview();
 
     if (!animationFrame) {
+      lastPreviewFrameAt = 0;
       animatePreview();
     }
   }
@@ -687,6 +710,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
       window.cancelAnimationFrame(animationFrame);
       animationFrame = 0;
     }
+    lastPreviewFrameAt = 0;
     unbindWindowListeners();
     disposeCurrentMesh();
     previewRenderer?.dispose();

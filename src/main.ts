@@ -36,11 +36,19 @@ if (!app) {
   throw new Error("Missing #app root element");
 }
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const MAX_RENDER_PIXEL_RATIO = 1.5;
+const TARGET_FRAME_RATE = 30;
+const FRAME_INTERVAL_MS = 1000 / TARGET_FRAME_RATE;
+const MAX_FRAME_DELTA_SECONDS = 0.1;
+
+const renderer = new THREE.WebGLRenderer({
+  antialias: window.devicePixelRatio <= 1.25,
+  powerPreference: "low-power",
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_RENDER_PIXEL_RATIO));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 app.append(renderer.domElement);
 
@@ -76,7 +84,7 @@ scene.add(ambient);
 const sun = new THREE.DirectionalLight("#fff4d6", 2.2);
 sun.position.set(12, 18, 10);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024);
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 50;
 sun.shadow.camera.left = -20;
@@ -1192,11 +1200,32 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   clearLayoutSelection();
 });
 
-const clock = new THREE.Clock();
+const renderLoopStartedAt = performance.now();
+let previousFrameAt = renderLoopStartedAt;
+let accumulatedFrameMs = FRAME_INTERVAL_MS;
+
+document.addEventListener("visibilitychange", () => {
+  previousFrameAt = performance.now();
+  accumulatedFrameMs = FRAME_INTERVAL_MS;
+});
 
 renderer.setAnimationLoop(() => {
-  const delta = clock.getDelta();
-  const elapsed = clock.elapsedTime;
+  const now = performance.now();
+  const tickDeltaMs = now - previousFrameAt;
+  previousFrameAt = now;
+
+  if (document.hidden) {
+    return;
+  }
+
+  accumulatedFrameMs += tickDeltaMs;
+  if (accumulatedFrameMs < FRAME_INTERVAL_MS) {
+    return;
+  }
+
+  const delta = Math.min(accumulatedFrameMs / 1000, MAX_FRAME_DELTA_SECONDS);
+  accumulatedFrameMs %= FRAME_INTERVAL_MS;
+  const elapsed = (now - renderLoopStartedAt) / 1000;
 
   updateKeyboardCamera(delta);
   opsViewHandle?.clampTarget();
