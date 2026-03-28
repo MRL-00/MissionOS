@@ -135,6 +135,7 @@ let selectionPointerDown = false;
 let layoutDragMoved = false;
 let opsViewHandle: OpsViewHandle | null = null;
 let opsViewActive = true;
+let hoveredAgentId: string | null = null;
 
 function enableOpsView(): void {
   if (!opsViewActive || layoutEditorEnabled || opsViewHandle) {
@@ -442,6 +443,7 @@ function createController(state: AgentRuntimeState, appearance?: AgentAppearance
   const controller = isCharlie
     ? new FishController(config, initialPosition, initialFacing)
     : new AgentController(config, initialPosition, initialFacing);
+  controller.mesh.userData.agentId = state.id;
   controller.navNodeId = startAtDoor ? waypoints.entrance.nodeId : (desk?.nodeId ?? waypoints.entrance.nodeId);
   controller.task = state.task;
   controller.message = state.message;
@@ -587,6 +589,10 @@ function removeAgentImmediately(agentId: string): void {
   releaseDesk(agentId);
   agentColors.delete(agentId);
   speechBubbleRenderer.hide(agentId);
+  if (hoveredAgentId === agentId) {
+    hoveredAgentId = null;
+    labelRenderer.setHoveredLabel(null);
+  }
 }
 
 function scheduleAgentRemoval(agentId: string, delayMs = 900): void {
@@ -839,6 +845,25 @@ function resetCamera(): void {
   camera.position.copy(defaultCameraPosition);
   controls.target.copy(defaultTarget);
   controls.update();
+}
+
+function setHoveredAgent(agentId: string | null): void {
+  if (hoveredAgentId === agentId) {
+    return;
+  }
+  hoveredAgentId = agentId;
+  labelRenderer.setHoveredLabel(agentId);
+}
+
+function getAgentIdFromObject(object: THREE.Object3D | null): string | null {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (typeof current.userData.agentId === "string") {
+      return current.userData.agentId;
+    }
+    current = current.parent;
+  }
+  return null;
 }
 
 function getDeskScreenMaterial(deskId: string): THREE.MeshStandardMaterial | null {
@@ -1109,6 +1134,33 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
   }
   selectionPointerDown = true;
   layoutDragMoved = false;
+});
+
+renderer.domElement.addEventListener("pointermove", (event) => {
+  if (layoutEditorEnabled) {
+    setHoveredAgent(null);
+    return;
+  }
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+
+  const hoveredId =
+    raycaster
+      .intersectObjects(
+        Array.from(agents.values(), (controller) => controller.mesh),
+        true,
+      )
+      .map((intersection) => getAgentIdFromObject(intersection.object))
+      .find((agentId): agentId is string => Boolean(agentId)) ?? null;
+
+  setHoveredAgent(hoveredId);
+});
+
+renderer.domElement.addEventListener("pointerleave", () => {
+  setHoveredAgent(null);
 });
 
 renderer.domElement.addEventListener("pointerup", (event) => {

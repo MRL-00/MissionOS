@@ -730,75 +730,125 @@ canvas {
 
 .agent-label {
   position: absolute;
-  transform: translate(-50%, -50%);
-  min-width: 88px;
-  max-width: min(180px, 34vw);
-  padding: 5px 9px 6px;
-  border-radius: 12px;
+  transform: translate(-50%, calc(-100% - 10px));
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-width: min(156px, 26vw);
+  padding: 0;
+  border-radius: 14px;
   text-align: left;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 10px 24px rgba(54, 41, 29, 0.16);
-  border: 1px solid rgba(97, 71, 46, 0.14);
+  background: transparent;
+  box-shadow: none;
+  border: 1px solid transparent;
   pointer-events: auto;
   transition:
     max-width 180ms ease,
     padding 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease,
     box-shadow 180ms ease,
     transform 180ms ease;
   cursor: pointer;
 }
 
-.agent-name {
-  display: block;
-  font-size: 0.78rem;
-  font-weight: 700;
-  line-height: 1.1;
+.agent-label-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 10px 24px rgba(54, 41, 29, 0.16);
+  border: 1px solid rgba(97, 71, 46, 0.14);
+  backdrop-filter: blur(10px);
+  transition:
+    padding 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease;
 }
 
-.agent-role {
+.agent-name {
   display: block;
-  margin-top: 2px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   font-size: 0.64rem;
-  opacity: 0.7;
+  font-weight: 700;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-role,
+.agent-status-detail,
+.agent-message {
+  display: none;
 }
 
 .agent-status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
-  margin-top: 5px;
+  width: 10px;
+  height: 10px;
+  margin-top: 0;
   font-size: 0;
+  flex: 0 0 10px;
 }
 
 .agent-status::before {
   content: "";
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
   background: var(--status-idle);
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.04);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16);
 }
 
-.agent-message {
-  display: none;
-  margin-top: 7px;
+.agent-label[data-expanded="true"] {
+  gap: 5px;
+  max-width: min(260px, 44vw);
+  padding: 8px 10px 10px;
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(97, 71, 46, 0.14);
+  box-shadow: 0 16px 34px rgba(54, 41, 29, 0.2);
+}
+
+.agent-label[data-expanded="true"] .agent-label-chip {
+  align-self: flex-start;
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.agent-label[data-expanded="true"] .agent-name {
+  font-size: 0.8rem;
+  line-height: 1.1;
+  white-space: normal;
+}
+
+.agent-label[data-expanded="true"] .agent-role,
+.agent-label[data-expanded="true"] .agent-status-detail {
+  display: block;
+  font-size: 0.64rem;
+  line-height: 1.25;
+  color: rgba(52, 41, 29, 0.7);
+}
+
+.agent-label[data-expanded="true"] .agent-message:not([hidden]) {
+  display: block;
+  margin-top: 2px;
   max-width: min(260px, 44vw);
   font-size: 0.68rem;
   line-height: 1.35;
   color: rgba(52, 41, 29, 0.88);
   overflow-wrap: anywhere;
-}
-
-.agent-label[data-expanded="true"] {
-  max-width: min(280px, 48vw);
-  padding: 8px 11px 10px;
-  box-shadow: 0 16px 34px rgba(54, 41, 29, 0.2);
-}
-
-.agent-label[data-expanded="true"] .agent-message:not([hidden]) {
-  display: block;
 }
 
 .agent-label:focus-visible {
@@ -1492,8 +1542,15 @@ canvas {
   }
 
   .agent-label {
-    min-width: 80px;
-    padding: 5px 8px;
+    max-width: min(140px, 40vw);
+  }
+
+  .agent-label-chip {
+    padding: 4px 7px;
+  }
+
+  .agent-label[data-expanded="true"] {
+    max-width: min(220px, 68vw);
   }
 
   .character-creator-dialog {
