@@ -355,9 +355,6 @@ function buildPath(
     if (Math.hypot(center.x - startX, center.y - startY) > POSITION_EPSILON) {
       pushPoint(path, center.x, center.y);
     }
-    if (Math.hypot(targetX - center.x, targetY - center.y) > POSITION_EPSILON) {
-      pushPoint(path, targetX, targetY);
-    }
     return path;
   }
 
@@ -427,10 +424,6 @@ function buildPath(
     const center = cellCenter(map, cell.col, cell.row);
     pushPoint(path, center.x, center.y);
   });
-
-  if (Math.hypot(targetX - (path.at(-1)?.x ?? startX), targetY - (path.at(-1)?.y ?? startY)) > POSITION_EPSILON) {
-    pushPoint(path, targetX, targetY);
-  }
 
   return path;
 }
@@ -826,7 +819,7 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
   }
 
   const game = new Phaser.Game({
-    type: Phaser.AUTO,
+    type: Phaser.CANVAS,
     parent: options.parent,
     width: options.map.pixelWidth,
     height: options.map.pixelHeight,
