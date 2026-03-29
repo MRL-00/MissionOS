@@ -1,208 +1,82 @@
 [
   {
-    "id": "pickle",
-    "name": "Pickle",
-    "role": "Orchestrator",
-    "emoji": "🥒",
+    "id": "lead-engineer",
+    "name": "Lead Engineer",
+    "role": "Lead Engineer",
+    "emoji": "🧠",
     "appearance": {
-      "height": 1,
+      "height": 1.08,
       "headShape": "square",
-      "skinColor": "#A8D5A2",
-      "hairStyle": "none",
-      "hairColor": "#6C8C68",
-      "bodyColor": "#4A90D9",
-      "pantsColor": "#31536B",
-      "accessories": []
-    }
-  },
-  {
-    "id": "zoe",
-    "name": "Matt",
-    "role": "Engineer Lead",
-    "emoji": "🟣",
-    "appearance": {
-      "height": 1,
-      "headShape": "oval",
-      "skinColor": "#D6AA9A",
+      "skinColor": "#D7B394",
       "hairStyle": "short",
-      "hairColor": "#6C2A82",
-      "bodyColor": "#7B2D8E",
-      "pantsColor": "#372045",
-      "accessories": [
-        "tie"
-      ]
+      "hairColor": "#3A2A22",
+      "bodyColor": "#6E56CF",
+      "pantsColor": "#1E2130",
+      "accessories": ["tie"]
     }
   },
   {
-    "id": "ink",
-    "name": "Ink",
-    "role": "Research Analyst",
-    "emoji": "🖋️",
-    "appearance": {
-      "height": 0.9,
-      "headShape": "round",
-      "skinColor": "#D7A88B",
-      "hairStyle": "short",
-      "hairColor": "#7D4F2A",
-      "bodyColor": "#D4956A",
-      "pantsColor": "#70533E",
-      "accessories": [
-        "glasses"
-      ]
-    }
-  },
-  {
-    "id": "cio",
-    "name": "Dan Waugh",
-    "role": "Chief Information Officer",
-    "emoji": "🕴️",
-    "appearance": {
-      "height": 1.15,
-      "headShape": "square",
-      "skinColor": "#D1B29A",
-      "hairStyle": "none",
-      "hairColor": "#3C312A",
-      "bodyColor": "#2C3E50",
-      "pantsColor": "#1B2633",
-      "accessories": [
-        "tie",
-        "beard"
-      ]
-    }
-  },
-  {
-    "id": "harry",
-    "name": "Harry",
-    "role": "Full-stack Developer",
-    "emoji": "💻",
-    "appearance": {
-      "height": 1.1,
-      "headShape": "oval",
-      "skinColor": "#E8C4A0",
-      "hairStyle": "messy",
-      "hairColor": "#D4A843",
-      "bodyColor": "#2D5A27",
-      "pantsColor": "#4A6FA5",
-      "accessories": []
-    }
-  },
-  {
-    "id": "kevin",
-    "name": "Kevin",
-    "role": "Full-stack Developer",
-    "emoji": "💻",
-    "appearance": {
-      "height": 1,
-      "headShape": "square",
-      "skinColor": "#D9B89C",
-      "hairStyle": "short",
-      "hairColor": "#B44A2A",
-      "bodyColor": "#2C3E6B",
-      "pantsColor": "#4A4A4A",
-      "accessories": [
-        "beard"
-      ]
-    }
-  },
-  {
-    "id": "danny",
-    "name": "Danny",
-    "role": "iOS/Swift Developer",
+    "id": "ios-dev",
+    "name": "iOS Dev",
+    "role": "iOS Developer",
     "emoji": "📱",
     "appearance": {
-      "height": 0.95,
+      "height": 0.98,
       "headShape": "oval",
-      "skinColor": "#D4A878",
+      "skinColor": "#D9B08A",
       "hairStyle": "slicked",
-      "hairColor": "#1A1A1A",
-      "bodyColor": "#1A1A1A",
-      "pantsColor": "#2C2C2C",
-      "accessories": [
-        "glasses"
-      ]
+      "hairColor": "#151515",
+      "bodyColor": "#111827",
+      "pantsColor": "#2D3748",
+      "accessories": ["glasses"]
     }
   },
   {
-    "id": "johnny",
-    "name": "Johnny",
-    "role": "QA/UAT Tester",
+    "id": "fullstack-dev",
+    "name": "Full-stack Dev",
+    "role": "Full-stack Developer",
+    "emoji": "💻",
+    "appearance": {
+      "height": 1.02,
+      "headShape": "oval",
+      "skinColor": "#E2BC97",
+      "hairStyle": "messy",
+      "hairColor": "#6B4423",
+      "bodyColor": "#0F766E",
+      "pantsColor": "#1F2937",
+      "accessories": []
+    }
+  },
+  {
+    "id": "qa",
+    "name": "QA",
+    "role": "QA Engineer",
     "emoji": "🧪",
     "appearance": {
-      "height": 1,
-      "headShape": "square",
-      "skinColor": "#D9B89C",
+      "height": 0.96,
+      "headShape": "round",
+      "skinColor": "#D4AA84",
       "hairStyle": "buzz",
-      "hairColor": "#6B4226",
-      "bodyColor": "#FFFFFF",
-      "pantsColor": "#5C6B4E",
+      "hairColor": "#5B3A29",
+      "bodyColor": "#F8FAFC",
+      "pantsColor": "#475569",
       "accessories": []
     }
   },
   {
-    "id": "tommy",
-    "name": "Tommy",
-    "role": "QA/UAT Tester",
-    "emoji": "🧪",
+    "id": "support",
+    "name": "Support",
+    "role": "Support Specialist",
+    "emoji": "🎧",
     "appearance": {
-      "height": 0.9,
+      "height": 0.94,
       "headShape": "round",
-      "skinColor": "#C4956A",
+      "skinColor": "#CFA27F",
       "hairStyle": "curly",
-      "hairColor": "#2A1A0E",
-      "bodyColor": "#CC3333",
-      "pantsColor": "#3A3A3A",
-      "accessories": []
-    }
-  },
-  {
-    "id": "jared",
-    "name": "Jared",
-    "role": "Board Tech Advisor",
-    "emoji": "📊",
-    "appearance": {
-      "height": 1.05,
-      "headShape": "oval",
-      "skinColor": "#D6B896",
-      "hairStyle": "short",
-      "hairColor": "#4A3728",
-      "bodyColor": "#1C3A5E",
-      "pantsColor": "#2C2C3A",
-      "accessories": [
-        "glasses",
-        "tie"
-      ]
-    }
-  },
-  {
-    "id": "randall",
-    "name": "Randall",
-    "role": "Scrum Master",
-    "emoji": "📋",
-    "appearance": {
-      "height": 1.15,
-      "headShape": "oval",
-      "skinColor": "#D1B29A",
-      "hairStyle": "short",
-      "hairColor": "#A0A0A0",
-      "bodyColor": "#2A8B8B",
-      "pantsColor": "#C4B18A",
-      "accessories": []
-    }
-  },
-  {
-    "id": "charlie",
-    "name": "Charlie",
-    "role": "Support Agent",
-    "emoji": "🐟",
-    "appearance": {
-      "height": 0.85,
-      "headShape": "round",
-      "skinColor": "#FF6B35",
-      "hairStyle": "none",
-      "hairColor": "#FFFFFF",
-      "bodyColor": "#FF6B35",
-      "pantsColor": "#1A1A1A",
-      "accessories": []
+      "hairColor": "#2B1D16",
+      "bodyColor": "#EF4444",
+      "pantsColor": "#1F2937",
+      "accessories": ["glasses"]
     }
   }
 ]

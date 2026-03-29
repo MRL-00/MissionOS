@@ -741,36 +741,117 @@ const httpServer = createServer(async (request, response) => {
   }
 });
 
-async function ensureCharlie(): Promise<void> {
-  if (agentStates.has("charlie")) {
-    return;
-  }
-  await upsertRegistration(
-    {
-      id: "charlie",
-      name: "Charlie",
-      role: "Support Agent",
-      emoji: "🐟",
-      type: "resident",
-      appearance: {
-        height: 0.85,
-        headShape: "round",
-        skinColor: "#FF6B35",
-        hairStyle: "none",
-        hairColor: "#FFFFFF",
-        bodyColor: "#FF6B35",
-        pantsColor: "#1A1A1A",
-        accessories: [],
-      },
+const CORE_MISSION_TEAM = [
+  {
+    id: "lead-engineer",
+    name: "Lead Engineer",
+    role: "Lead Engineer",
+    emoji: "🧠",
+    appearance: {
+      height: 1.08,
+      headShape: "square",
+      skinColor: "#D7B394",
+      hairStyle: "short",
+      hairColor: "#3A2A22",
+      bodyColor: "#6E56CF",
+      pantsColor: "#1E2130",
+      accessories: ["tie"],
     },
-    "create",
-  );
+  },
+  {
+    id: "ios-dev",
+    name: "iOS Dev",
+    role: "iOS Developer",
+    emoji: "📱",
+    appearance: {
+      height: 0.98,
+      headShape: "oval",
+      skinColor: "#D9B08A",
+      hairStyle: "slicked",
+      hairColor: "#151515",
+      bodyColor: "#111827",
+      pantsColor: "#2D3748",
+      accessories: ["glasses"],
+    },
+  },
+  {
+    id: "fullstack-dev",
+    name: "Full-stack Dev",
+    role: "Full-stack Developer",
+    emoji: "💻",
+    appearance: {
+      height: 1.02,
+      headShape: "oval",
+      skinColor: "#E2BC97",
+      hairStyle: "messy",
+      hairColor: "#6B4423",
+      bodyColor: "#0F766E",
+      pantsColor: "#1F2937",
+      accessories: [],
+    },
+  },
+  {
+    id: "qa",
+    name: "QA",
+    role: "QA Engineer",
+    emoji: "🧪",
+    appearance: {
+      height: 0.96,
+      headShape: "round",
+      skinColor: "#D4AA84",
+      hairStyle: "buzz",
+      hairColor: "#5B3A29",
+      bodyColor: "#F8FAFC",
+      pantsColor: "#475569",
+      accessories: [],
+    },
+  },
+  {
+    id: "support",
+    name: "Support",
+    role: "Support Specialist",
+    emoji: "🎧",
+    appearance: {
+      height: 0.94,
+      headShape: "round",
+      skinColor: "#CFA27F",
+      hairStyle: "curly",
+      hairColor: "#2B1D16",
+      bodyColor: "#EF4444",
+      pantsColor: "#1F2937",
+      accessories: ["glasses"],
+    },
+  },
+] satisfies Array<{
+  id: string;
+  name: string;
+  role: string;
+  emoji: string;
+  appearance: {
+    height: number;
+    headShape: "round" | "oval" | "square";
+    skinColor: string;
+    hairStyle: "none" | "short" | "long" | "mohawk" | "messy" | "slicked" | "buzz" | "curly";
+    hairColor: string;
+    bodyColor: string;
+    pantsColor: string;
+    accessories: Array<"glasses" | "hat" | "tie" | "beard">;
+  };
+}>;
+
+async function ensureCoreMissionTeam(): Promise<void> {
+  for (const member of CORE_MISSION_TEAM) {
+    await upsertRegistration({
+      ...member,
+      type: "resident",
+    }, agentStates.has(member.id) ? "update" : "create");
+  }
 }
 
 export async function start(): Promise<void> {
   await loadPersistedAgents();
   await loadPersistedWorkflow();
-  await ensureCharlie();
+  await ensureCoreMissionTeam();
   await startMissionControl();
 
   websocketServer = new WebSocketServer({ server: httpServer });

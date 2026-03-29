@@ -208,11 +208,16 @@ function createSheetFrames(scene: PhaserScene, sourceKey: string, prefix: string
   }
 }
 
-function nearestNode(runtime: MissionOfficeRuntimeModel, x: number, y: number): string | undefined {
+function nearestNode(runtime: MissionOfficeRuntimeModel, x: number, y: number, candidates?: string[]): string | undefined {
+  const candidateSet = candidates ? new Set(candidates) : null;
   let bestId: string | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
 
   runtime.nodes.forEach((node) => {
+    if (candidateSet && !candidateSet.has(node.id)) {
+      return;
+    }
+
     const dx = node.x - x;
     const dy = node.y - y;
     const distance = dx * dx + dy * dy;
@@ -428,6 +433,58 @@ function buildPath(
   return path;
 }
 
+function shortestNodePath(runtime: MissionOfficeRuntimeModel, startId: string, targetId: string): string[] {
+  if (startId === targetId) {
+    return [startId];
+  }
+
+  const queue: string[] = [startId];
+  const visited = new Set<string>([startId]);
+  const cameFrom = new Map<string, string>();
+
+  while (queue.length > 0) {
+    const currentId = queue.shift();
+    if (!currentId) {
+      break;
+    }
+
+    if (currentId === targetId) {
+      break;
+    }
+
+    const current = runtime.nodes.get(currentId);
+    if (!current) {
+      continue;
+    }
+
+    current.links.forEach((nextId) => {
+      if (!runtime.nodes.has(nextId) || visited.has(nextId)) {
+        return;
+      }
+      visited.add(nextId);
+      cameFrom.set(nextId, currentId);
+      queue.push(nextId);
+    });
+  }
+
+  if (!visited.has(targetId)) {
+    return [startId];
+  }
+
+  const path = [targetId];
+  let cursor = targetId;
+  while (cursor !== startId) {
+    const previous = cameFrom.get(cursor);
+    if (!previous) {
+      break;
+    }
+    path.push(previous);
+    cursor = previous;
+  }
+
+  return path.reverse();
+}
+
 function targetPath(
   map: MissionTileMap,
   runtime: MissionOfficeRuntimeModel,
@@ -448,9 +505,32 @@ function targetPath(
     }
   }
 
-  const path = buildPath(map, startX, startY, approachX, approachY);
+  const corridorPath: Array<{ x: number; y: number }> = [];
+  const startNodeId = nearestNode(runtime, startX, startY);
+  const targetNodeId = destination.approachNodeId && runtime.nodes.has(destination.approachNodeId)
+    ? destination.approachNodeId
+    : (typeof approachX === "number" && typeof approachY === "number"
+      ? nearestNode(runtime, approachX, approachY)
+      : undefined);
 
-  if (seated && path.length > 0) {
+  if (startNodeId && targetNodeId) {
+    const nodePath = shortestNodePath(runtime, startNodeId, targetNodeId);
+    nodePath.slice(1).forEach((nodeId) => {
+      const node = runtime.nodes.get(nodeId);
+      if (node) {
+        pushPoint(corridorPath, node.x, node.y);
+      }
+    });
+  }
+
+  const path = corridorPath.length > 0
+    ? corridorPath
+    : buildPath(map, startX, startY, approachX, approachY);
+
+  if (typeof approachX === "number" && typeof approachY === "number") {
+    pushPoint(path, approachX, approachY);
+  }
+  if (seated || destination.kind === "support" || destination.kind === "lead") {
     pushPoint(path, destination.x, destination.y);
   }
 
@@ -676,7 +756,7 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
         cropTexture(this, key, "office-bg", occluder.cropX, occluder.cropY, occluder.cropWidth, occluder.cropHeight);
         add.image(occluder.x, occluder.y, key)
           .setOrigin(0, 0)
-          .setDepth(5000);
+          .setDepth(occluder.y + occluder.height + 8);
       });
 
       this.applyState(this.latestState);

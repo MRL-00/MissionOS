@@ -786,7 +786,7 @@ export function App() {
               <div>
                 <div className="mission-badge">Task sync {mission.missionSnapshot.taskSync.state}</div>
                 <h2 className="mt-2 font-display text-xl font-semibold text-white">
-                  {mission.activeView === "mission" ? "Live Mission Overview" : mission.activeView === "schedules" ? "Schedules" : "Connector Settings"}
+                  {mission.activeView === "mission" ? "Hermes Mission Control" : mission.activeView === "schedules" ? "Schedules" : "Connector Settings"}
                 </h2>
                 <p className="mission-muted mt-2">
                   {mission.missionSnapshot.taskSync.message || formatRelativeUpdate(mission.missionSnapshot.taskSync.updatedAt)}
@@ -814,16 +814,16 @@ export function App() {
               <div className="flex flex-col gap-5">
                 <SectionCard
                   title="Command map"
-                  subtitle="Authored office floorplan with bullpen desks, collaboration rooms, and agent slots defined from map data."
-                  action={<span className="mission-badge">{mission.agents.filter((agent) => agent.status === "working").length} working</span>}
+                  subtitle="A Linear-style command center for your five specialist Hermes agents and the subagents they dispatch."
+                  action={<span className="mission-badge">{mission.agents.filter((agent) => agent.status === "working").length} actively executing</span>}
                   className="flex-1"
                 >
                   <div className="grid gap-4">
                     <div className="grid gap-4 md:grid-cols-4">
-                      <MetricCard label="Tasks" value={mission.missionSnapshot.tasks.length} />
-                      <MetricCard label="Discovered" value={discoveredAgents} />
-                      <MetricCard label="Linked agents" value={mission.missionSnapshot.rosterImport.linked} tone="good" />
-                      <MetricCard label="Staged imports" value={mission.missionSnapshot.rosterImport.staged} tone={mission.missionSnapshot.rosterImport.staged > 0 ? "warn" : "default"} />
+                      <MetricCard label="Cycle tasks" value={mission.missionSnapshot.tasks.length} />
+                      <MetricCard label="Office agents" value={mission.agents.length} hint="Lead Engineer, iOS Dev, Full-stack Dev, QA, Support" tone="good" />
+                      <MetricCard label="Discovered runtimes" value={discoveredAgents} />
+                      <MetricCard label="Queued imports" value={mission.missionSnapshot.rosterImport.staged} tone={mission.missionSnapshot.rosterImport.staged > 0 ? "warn" : "default"} />
                     </div>
                     <div className="overflow-hidden rounded-[28px] border border-linear-line bg-gradient-to-b from-mission-900/70 to-mission-950/90">
                       <Suspense
@@ -869,8 +869,8 @@ export function App() {
                   </SectionCard>
 
                   <ProviderRosterPanel
-                    title="Provider roster"
-                    subtitle="Discovered provider agents. Only linked agents are rendered in the mission map."
+                    title="Runtime roster"
+                    subtitle="Detected provider agents and external runtimes. Linked residents are visualized in the office scene."
                     connectors={mission.missionSnapshot.connectors}
                     agents={mission.missionSnapshot.providerAgents}
                     compact
