@@ -44,6 +44,7 @@ export interface ProviderConnectorUpdateRequest {
   runtimeBaseUrl?: string | undefined;
   syncIntervalMs?: number | undefined;
   authMode?: "none" | "bearer" | undefined;
+  token?: string | undefined;
 }
 
 export interface ProviderAgentRecord {

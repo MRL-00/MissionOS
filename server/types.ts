@@ -94,6 +94,7 @@ export interface PersistedWorkflowFile {
 
 export interface PersistedMissionConnector extends Omit<ProviderConnector, "health" | "capabilities" | "label" | "tokenConfigured"> {
   provider: MissionProvider;
+  token?: string | undefined;
 }
 
 export interface PersistedMissionControlFile {

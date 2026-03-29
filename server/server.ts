@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { networkInterfaces } from "node:os";
 import { WebSocketServer } from "ws";
 import type { AgentEvent, AgentRegistration, ServerMessage } from "../src/types";
 import { handleClaudeAuth } from "./auth/claude";
@@ -82,6 +83,31 @@ import {
 
 let websocketServer: WebSocketServer;
 let meetingStartActivityEmitted = false;
+
+function listeningUrls(port: number): string[] {
+  const urls = new Set<string>([`http://localhost:${port}`]);
+  const interfaces = networkInterfaces();
+
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.internal) {
+        continue;
+      }
+
+      if (entry.family === "IPv4") {
+        urls.add(`http://${entry.address}:${port}`);
+        continue;
+      }
+
+      const normalized = entry.address.split("%")[0];
+      if (normalized) {
+        urls.add(`http://[${normalized}]:${port}`);
+      }
+    }
+  }
+
+  return [...urls];
+}
 
 function broadcast(message: ServerMessage): void {
   if (!websocketServer) {
@@ -776,7 +802,7 @@ export async function start(): Promise<void> {
   });
 
   httpServer.listen(PORT, () => {
-    console.log(`Realtime server listening on http://localhost:${PORT}`);
+    console.log(`Realtime server listening on ${listeningUrls(PORT).join(", ")}`);
   });
 
   startOpenClawSync();

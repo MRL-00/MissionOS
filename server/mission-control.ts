@@ -3,14 +3,14 @@ import path from "node:path";
 import {
   DEFAULT_CONNECTOR_SYNC_INTERVAL_MS,
   HERMES_POLL_INTERVAL_MS,
-  HERMES_TOKEN_CONFIGURED,
   HERMES_RUNTIME_URL,
+  HERMES_TOKEN,
   HERMES_URL,
   HERMES_WS_URL,
   LINEAR_SYNC_INTERVAL_MS,
   MISSION_PROVIDER_LABELS,
   OPENCLAW_POLL_INTERVAL_MS,
-  OPENCLAW_TOKEN_CONFIGURED,
+  OPENCLAW_TOKEN,
   OPENCLAW_URL,
   RequestBodyError,
   dataDir,
@@ -49,7 +49,11 @@ import { generateId } from "./utils";
 
 const CONNECTOR_ORDER: MissionProvider[] = ["openclaw", "hermes"];
 
-const providerConnectors = new Map<MissionProvider, ProviderConnector>();
+interface ProviderConnectorState extends ProviderConnector {
+  token?: string | undefined;
+}
+
+const providerConnectors = new Map<MissionProvider, ProviderConnectorState>();
 const connectorTimers = new Map<MissionProvider, NodeJS.Timeout>();
 let linearTimer: NodeJS.Timeout | null = null;
 let broadcast: ((message: ServerMessage) => void) | null = null;
@@ -80,8 +84,14 @@ function providerCapabilities(provider: MissionProvider): ProviderConnector["cap
   };
 }
 
-function defaultConnector(provider: MissionProvider): ProviderConnector {
+function publicConnectorShape(connector: ProviderConnectorState): ProviderConnector {
+  const { token: _token, ...publicConnector } = connector;
+  return publicConnector;
+}
+
+function defaultConnector(provider: MissionProvider): ProviderConnectorState {
   if (provider === "openclaw") {
+    const token = OPENCLAW_TOKEN.trim();
     return {
       provider,
       label: MISSION_PROVIDER_LABELS[provider],
@@ -90,8 +100,9 @@ function defaultConnector(provider: MissionProvider): ProviderConnector {
       websocketUrl: OPENCLAW_URL ? OPENCLAW_URL.replace(/^http/i, "ws") : undefined,
       runtimeBaseUrl: OPENCLAW_URL || undefined,
       syncIntervalMs: OPENCLAW_POLL_INTERVAL_MS || DEFAULT_CONNECTOR_SYNC_INTERVAL_MS,
-      authMode: OPENCLAW_TOKEN_CONFIGURED ? "bearer" : "none",
-      tokenConfigured: OPENCLAW_TOKEN_CONFIGURED,
+      authMode: token ? "bearer" : "none",
+      tokenConfigured: Boolean(token),
+      token: token || undefined,
       capabilities: providerCapabilities(provider),
       health: {
         provider,
@@ -105,6 +116,7 @@ function defaultConnector(provider: MissionProvider): ProviderConnector {
     };
   }
 
+  const token = HERMES_TOKEN.trim();
   return {
     provider,
     label: MISSION_PROVIDER_LABELS[provider],
@@ -113,8 +125,9 @@ function defaultConnector(provider: MissionProvider): ProviderConnector {
     websocketUrl: HERMES_WS_URL || undefined,
     runtimeBaseUrl: HERMES_RUNTIME_URL || HERMES_URL || undefined,
     syncIntervalMs: HERMES_POLL_INTERVAL_MS || DEFAULT_CONNECTOR_SYNC_INTERVAL_MS,
-    authMode: HERMES_TOKEN_CONFIGURED ? "bearer" : "none",
-    tokenConfigured: HERMES_TOKEN_CONFIGURED,
+    authMode: token ? "bearer" : "none",
+    tokenConfigured: Boolean(token),
+    token: token || undefined,
     capabilities: providerCapabilities(provider),
     health: {
       provider,
@@ -128,7 +141,7 @@ function defaultConnector(provider: MissionProvider): ProviderConnector {
   };
 }
 
-function persistedConnectorShape(connector: ProviderConnector): PersistedMissionConnector {
+function persistedConnectorShape(connector: ProviderConnectorState): PersistedMissionConnector {
   return {
     provider: connector.provider,
     enabled: connector.enabled,
@@ -137,15 +150,18 @@ function persistedConnectorShape(connector: ProviderConnector): PersistedMission
     runtimeBaseUrl: connector.runtimeBaseUrl,
     syncIntervalMs: connector.syncIntervalMs,
     authMode: connector.authMode,
+    token: connector.token,
     lastSyncAt: connector.lastSyncAt,
   };
 }
 
-function hydrateConnector(provider: MissionProvider, persisted?: PersistedMissionConnector): ProviderConnector {
+function hydrateConnector(provider: MissionProvider, persisted?: PersistedMissionConnector): ProviderConnectorState {
   const base = defaultConnector(provider);
   if (!persisted) {
     return base;
   }
+
+  const token = persisted.token?.trim() ?? base.token ?? "";
 
   return {
     ...base,
@@ -154,7 +170,9 @@ function hydrateConnector(provider: MissionProvider, persisted?: PersistedMissio
     websocketUrl: persisted.websocketUrl ?? base.websocketUrl,
     runtimeBaseUrl: persisted.runtimeBaseUrl ?? base.runtimeBaseUrl,
     syncIntervalMs: persisted.syncIntervalMs || base.syncIntervalMs,
-    authMode: persisted.authMode ?? base.authMode,
+    authMode: persisted.authMode ?? (token ? "bearer" : base.authMode),
+    token: token || undefined,
+    tokenConfigured: Boolean(token),
     lastSyncAt: persisted.lastSyncAt,
   };
 }
@@ -172,6 +190,7 @@ function isPersistedMissionConnector(value: unknown): value is PersistedMissionC
     && (value.runtimeBaseUrl === undefined || typeof value.runtimeBaseUrl === "string")
     && typeof value.syncIntervalMs === "number"
     && (value.authMode === "none" || value.authMode === "bearer")
+    && (value.token === undefined || typeof value.token === "string")
     && (value.lastSyncAt === undefined || typeof value.lastSyncAt === "number");
 }
 
@@ -267,7 +286,8 @@ function buildMissionSnapshot(): MissionControlSnapshot {
   return {
     connectors: CONNECTOR_ORDER
       .map((provider) => providerConnectors.get(provider))
-      .filter((connector): connector is ProviderConnector => Boolean(connector)),
+      .filter((connector): connector is ProviderConnectorState => Boolean(connector))
+      .map((connector) => publicConnectorShape(connector)),
     providerAgents: [...providerAgents],
     schedules: [...schedules],
     tasks: [...taskSnapshot],
@@ -309,7 +329,7 @@ async function persistMissionControl(): Promise<void> {
   const payload: PersistedMissionControlFile = {
     connectors: CONNECTOR_ORDER
       .map((provider) => providerConnectors.get(provider))
-      .filter((connector): connector is ProviderConnector => Boolean(connector))
+      .filter((connector): connector is ProviderConnectorState => Boolean(connector))
       .map(persistedConnectorShape),
     handoffs: [...taskHandoffs].sort((left, right) => right.createdAt - left.createdAt),
   };
@@ -354,7 +374,9 @@ function scheduleConnector(provider: MissionProvider): void {
   }
 
   const timer = setInterval(() => {
-    void syncMissionConnector(provider);
+    void syncMissionConnector(provider).catch((error) => {
+      console.error(`[mission-control] ${provider} connector sync failed:`, error);
+    });
   }, Math.max(1000, connector.syncIntervalMs));
   connectorTimers.set(provider, timer);
 }
@@ -364,7 +386,9 @@ function scheduleLinearSync(): void {
     clearInterval(linearTimer);
   }
   linearTimer = setInterval(() => {
-    void syncMissionTasks();
+    void syncMissionTasks().catch((error) => {
+      console.error("[mission-control] Linear sync failed:", error);
+    });
   }, LINEAR_SYNC_INTERVAL_MS);
 }
 
@@ -393,11 +417,17 @@ export async function loadMissionControl(): Promise<void> {
 export function listMissionConnectors(): ProviderConnector[] {
   return CONNECTOR_ORDER
     .map((provider) => providerConnectors.get(provider))
-    .filter((connector): connector is ProviderConnector => Boolean(connector));
+    .filter((connector): connector is ProviderConnectorState => Boolean(connector))
+    .map((connector) => publicConnectorShape(connector));
 }
 
 export function getMissionControlSnapshot(): MissionControlSnapshot {
   return buildMissionSnapshot();
+}
+
+export function getMissionConnectorState(provider: MissionProvider): ProviderConnectorState | undefined {
+  const connector = providerConnectors.get(provider);
+  return connector ? { ...connector } : undefined;
 }
 
 export async function updateMissionConnector(provider: MissionProvider, updates: ProviderConnectorUpdateRequest): Promise<ProviderConnector> {
@@ -406,7 +436,8 @@ export async function updateMissionConnector(provider: MissionProvider, updates:
     throw new RequestBodyError(`Unknown provider ${provider}.`, 404);
   }
 
-  const next: ProviderConnector = {
+  const nextToken = updates.token !== undefined ? updates.token.trim() : (current.token ?? "");
+  const next: ProviderConnectorState = {
     ...current,
     enabled: updates.enabled ?? current.enabled,
     baseUrl: updates.baseUrl?.trim() || (updates.baseUrl === "" ? undefined : current.baseUrl),
@@ -415,14 +446,16 @@ export async function updateMissionConnector(provider: MissionProvider, updates:
     syncIntervalMs: updates.syncIntervalMs && Number.isFinite(updates.syncIntervalMs)
       ? Math.max(1000, updates.syncIntervalMs)
       : current.syncIntervalMs,
-    authMode: updates.authMode ?? current.authMode,
+    authMode: updates.authMode ?? (nextToken ? "bearer" : "none"),
+    token: nextToken || undefined,
+    tokenConfigured: Boolean(nextToken),
   };
 
   providerConnectors.set(provider, next);
   scheduleConnector(provider);
   await queuePersistMissionControl();
   broadcastMissionSnapshot();
-  return next;
+  return publicConnectorShape(next);
 }
 
 export async function testMissionConnector(provider: MissionProvider): Promise<ProviderConnector> {
@@ -435,7 +468,7 @@ export async function syncMissionConnector(provider: MissionProvider): Promise<P
     throw new RequestBodyError(`Unknown provider ${provider}.`, 404);
   }
 
-  const syncing: ProviderConnector = {
+  const syncing: ProviderConnectorState = {
     ...connector,
     health: {
       ...connector.health,
@@ -449,7 +482,7 @@ export async function syncMissionConnector(provider: MissionProvider): Promise<P
 
   try {
     const result = await syncProviderConnector(syncing);
-    const nextConnector: ProviderConnector = {
+    const nextConnector: ProviderConnectorState = {
       ...syncing,
       health: result.health,
       lastSyncAt: Date.now(),
@@ -464,10 +497,10 @@ export async function syncMissionConnector(provider: MissionProvider): Promise<P
     }
 
     broadcastMissionSnapshot();
-    return nextConnector;
+    return publicConnectorShape(nextConnector);
   } catch (error) {
     const message = error instanceof Error ? error.message : `Failed to sync ${provider}.`;
-    const failed: ProviderConnector = {
+    const failed: ProviderConnectorState = {
       ...syncing,
       health: {
         provider,
@@ -480,7 +513,7 @@ export async function syncMissionConnector(provider: MissionProvider): Promise<P
     };
     providerConnectors.set(provider, failed);
     broadcastMissionSnapshot();
-    return failed;
+    return publicConnectorShape(failed);
   }
 }
 
@@ -630,7 +663,8 @@ export function isProviderConnectorUpdateRequest(value: unknown): value is Provi
     && (value.websocketUrl === undefined || typeof value.websocketUrl === "string")
     && (value.runtimeBaseUrl === undefined || typeof value.runtimeBaseUrl === "string")
     && (value.syncIntervalMs === undefined || typeof value.syncIntervalMs === "number")
-    && (value.authMode === undefined || value.authMode === "none" || value.authMode === "bearer");
+    && (value.authMode === undefined || value.authMode === "none" || value.authMode === "bearer")
+    && (value.token === undefined || typeof value.token === "string");
 }
 
 export function isMissionTaskUpdateRequest(value: unknown): value is MissionTaskUpdateRequest {

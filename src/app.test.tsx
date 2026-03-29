@@ -1,13 +1,40 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { App } from "./app";
+import type { ProviderConnector } from "./mission/types";
 
-vi.mock("./mission/scene/MissionScene", () => ({
-  MissionScene: () => <div data-testid="mission-scene">mission-scene</div>,
-}));
+function createMissionControlState(activeView: "mission" | "settings" = "mission") {
+  const connectors: ProviderConnector[] = [
+    {
+      provider: "openclaw",
+      label: "OpenClaw",
+      enabled: true,
+      baseUrl: "http://openclaw.local",
+      websocketUrl: "ws://openclaw.local",
+      runtimeBaseUrl: "http://openclaw.local",
+      syncIntervalMs: 5000,
+      authMode: "bearer",
+      tokenConfigured: true,
+      capabilities: {
+        agents: true,
+        schedules: true,
+        activeWork: true,
+        launch: true,
+        subscribe: true,
+      },
+      health: {
+        provider: "openclaw",
+        status: "ok",
+        checkedAt: Date.now(),
+        activeAgents: 1,
+        schedules: 2,
+        message: "Healthy",
+      },
+      lastSyncAt: Date.now(),
+    },
+  ];
 
-vi.mock("./mission/hooks/useMissionControl", () => ({
-  useMissionControl: () => ({
-    activeView: "mission",
+  return {
+    activeView,
     setActiveView: vi.fn(),
     agents: [
       {
@@ -24,44 +51,16 @@ vi.mock("./mission/hooks/useMissionControl", () => ({
       },
     ],
     missionSnapshot: {
-      connectors: [
-        {
-          provider: "openclaw",
-          label: "OpenClaw",
-          enabled: true,
-          baseUrl: "http://openclaw.local",
-          websocketUrl: "ws://openclaw.local",
-          runtimeBaseUrl: "http://openclaw.local",
-          syncIntervalMs: 5000,
-          authMode: "bearer",
-          tokenConfigured: true,
-          capabilities: {
-            agents: true,
-            schedules: true,
-            activeWork: true,
-            launch: true,
-            subscribe: true,
-          },
-          health: {
-            provider: "openclaw",
-            status: "ok",
-            checkedAt: Date.now(),
-            activeAgents: 1,
-            schedules: 2,
-            message: "Healthy",
-          },
-          lastSyncAt: Date.now(),
-        },
-      ],
+      connectors,
       providerAgents: [],
       schedules: [
         {
           id: "openclaw:nightly",
-          provider: "openclaw",
+          provider: "openclaw" as const,
           name: "Nightly sync",
           recurrence: "Every weekday at 9am",
           nextRunAt: Date.now(),
-          status: "scheduled",
+          status: "scheduled" as const,
         },
       ],
       tasks: [
@@ -86,7 +85,7 @@ vi.mock("./mission/hooks/useMissionControl", () => ({
         updatedAt: Date.now(),
       },
       taskSync: {
-        state: "ok",
+        state: "ok" as const,
         updatedAt: Date.now(),
         message: "Synced",
       },
@@ -113,7 +112,7 @@ vi.mock("./mission/hooks/useMissionControl", () => ({
       comments: [],
       handoffs: [],
     },
-    connectionState: "connected",
+    connectionState: "connected" as const,
     busyKey: null,
     error: null,
     loading: false,
@@ -125,10 +124,24 @@ vi.mock("./mission/hooks/useMissionControl", () => ({
     saveConnector: vi.fn(),
     syncConnector: vi.fn(),
     testConnectorHealth: vi.fn(),
-  }),
+  };
+}
+
+let mockMissionControlState = createMissionControlState();
+
+vi.mock("./mission/scene/MissionScene", () => ({
+  MissionScene: () => <div data-testid="mission-scene">mission-scene</div>,
+}));
+
+vi.mock("./mission/hooks/useMissionControl", () => ({
+  useMissionControl: () => mockMissionControlState,
 }));
 
 describe("App", () => {
+  beforeEach(() => {
+    mockMissionControlState = createMissionControlState();
+  });
+
   it("renders mission control shell", async () => {
     render(<App />);
 
@@ -136,5 +149,41 @@ describe("App", () => {
     expect(screen.getByText("Live Mission Overview")).toBeInTheDocument();
     expect(await screen.findByTestId("mission-scene")).toBeInTheDocument();
     expect(screen.getByText("Build mission control")).toBeInTheDocument();
+  });
+
+  it("keeps the connector token draft during live connector refreshes", () => {
+    mockMissionControlState = createMissionControlState("settings");
+
+    const { rerender } = render(<App />);
+    const tokenInput = screen.getByLabelText("Bearer token") as HTMLInputElement;
+
+    fireEvent.change(tokenInput, { target: { value: "openclaw-secret" } });
+    expect(tokenInput).toHaveValue("openclaw-secret");
+
+    mockMissionControlState = {
+      ...mockMissionControlState,
+      missionSnapshot: {
+        ...mockMissionControlState.missionSnapshot,
+        connectors: mockMissionControlState.missionSnapshot.connectors.map((connector) => (
+          connector.provider === "openclaw"
+            ? {
+                ...connector,
+                health: {
+                  ...connector.health,
+                  status: "syncing",
+                  checkedAt: Date.now(),
+                  message: "Syncing OpenClaw...",
+                },
+                lastSyncAt: Date.now(),
+              }
+            : connector
+        )),
+        syncedAt: Date.now(),
+      },
+    };
+
+    rerender(<App />);
+
+    expect(screen.getByLabelText("Bearer token")).toHaveValue("openclaw-secret");
   });
 });

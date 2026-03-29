@@ -12,12 +12,11 @@ import {
   resolveAppearance,
   upsertRegistration,
 } from "./agents";
+import { getMissionConnectorState } from "./mission-control";
 import {
   OPENCLAW_ACTIVITY_WINDOW_MINUTES,
   OPENCLAW_IDLE_GRACE_MS,
   OPENCLAW_POLL_INTERVAL_MS,
-  OPENCLAW_TOKEN,
-  OPENCLAW_URL,
   type OpenClawAgentState,
   type OpenClawSessionInfo,
   type OpenClawSessionListRow,
@@ -47,9 +46,67 @@ export let openClawWsConnected = false;
 export let openClawWsPending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 export let openClawWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 export let openClawWsConnectSent = false;
+let openClawPollTimer: ReturnType<typeof setTimeout> | null = null;
+let openClawWsConfigSignature = "";
+let openClawScopeFallbackLogged = false;
+
+function openClawConnectorState() {
+  return getMissionConnectorState("openclaw");
+}
+
+function openClawConfigSignature(): string {
+  const connector = openClawConnectorState();
+  return [
+    connector?.enabled ? "1" : "0",
+    connector?.baseUrl ?? "",
+    connector?.websocketUrl ?? "",
+    connector?.authMode ?? "none",
+    connector?.token ?? "",
+  ].join("|");
+}
 
 function openClawWsUrl(): string {
-  return OPENCLAW_URL.replace(/^http/, "ws");
+  const connector = openClawConnectorState();
+  if (!connector?.enabled) {
+    return "";
+  }
+  if (connector.websocketUrl?.trim()) {
+    return connector.websocketUrl.trim();
+  }
+  return (connector.baseUrl ?? "").replace(/^http/i, "ws");
+}
+
+function openClawPollIntervalMs(): number {
+  const connector = openClawConnectorState();
+  return Math.max(1000, connector?.syncIntervalMs ?? OPENCLAW_POLL_INTERVAL_MS);
+}
+
+function openClawToken(): string {
+  const connector = openClawConnectorState();
+  if (!connector || connector.authMode !== "bearer") {
+    return "";
+  }
+  return connector.token?.trim() ?? "";
+}
+
+function openClawActivityWindows(): number[] {
+  return Array.from(new Set([
+    OPENCLAW_ACTIVITY_WINDOW_MINUTES,
+    Math.max(OPENCLAW_ACTIVITY_WINDOW_MINUTES, 60),
+  ]));
+}
+
+function ensureOpenClawConnectionConfig(): boolean {
+  const nextSignature = openClawConfigSignature();
+  if (!openClawWs || nextSignature === openClawWsConfigSignature) {
+    return true;
+  }
+
+  openClawWsConnected = false;
+  openClawWsConnectSent = false;
+  openClawWsConfigSignature = nextSignature;
+  openClawWs.close();
+  return false;
 }
 
 export function resolveOpenClawOfficeAgentId(openClawAgentId: string): string | undefined {
@@ -100,12 +157,59 @@ export function looksLikeSessionKey(text: string): boolean {
   return t.startsWith("agent:") || /:(telegram|discord|subagent|cron|direct):/.test(t);
 }
 
+function extractOpenClawSessionRows(result: unknown): unknown[] {
+  if (Array.isArray(result)) {
+    return result;
+  }
+  if (typeof result !== "object" || result === null) {
+    return [];
+  }
+
+  const record = result as Record<string, unknown>;
+  if (Array.isArray(record.sessions)) {
+    return record.sessions;
+  }
+
+  const details = record.details;
+  if (typeof details === "object" && details !== null && Array.isArray((details as { sessions?: unknown[] }).sessions)) {
+    return (details as { sessions: unknown[] }).sessions;
+  }
+
+  const nestedResult = record.result;
+  if (typeof nestedResult === "object" && nestedResult !== null) {
+    const nestedDetails = (nestedResult as { details?: { sessions?: unknown[] } }).details;
+    if (nestedDetails && Array.isArray(nestedDetails.sessions)) {
+      return nestedDetails.sessions;
+    }
+
+    const content = Array.isArray((nestedResult as { content?: unknown[] }).content)
+      ? (nestedResult as { content: unknown[] }).content
+      : [];
+    for (const entry of content) {
+      if (typeof entry !== "object" || entry === null) {
+        continue;
+      }
+      const text = (entry as { text?: unknown }).text;
+      if (typeof text !== "string" || !text.trim()) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(text) as unknown;
+        const parsedRows = extractOpenClawSessionRows(parsed);
+        if (parsedRows.length > 0) {
+          return parsedRows;
+        }
+      } catch {
+        // Ignore text payloads that are not JSON.
+      }
+    }
+  }
+
+  return [];
+}
+
 export function normalizeToolSessions(result: unknown): OpenClawSessionInfo[] {
-  const rows = Array.isArray(result)
-    ? result
-    : (Array.isArray((result as { sessions?: unknown[] } | null | undefined)?.sessions)
-        ? (result as { sessions: unknown[] }).sessions
-        : []);
+  const rows = extractOpenClawSessionRows(result);
 
   return rows.flatMap((row): OpenClawSessionInfo[] => {
     if (typeof row !== "object" || row === null) {
@@ -127,6 +231,91 @@ export function normalizeToolSessions(result: unknown): OpenClawSessionInfo[] {
       task: extractOpenClawMessageText(lastMessage),
     }];
   });
+}
+
+async function fetchOpenClawSessionsHttp(): Promise<OpenClawSessionInfo[]> {
+  const connector = openClawConnectorState();
+  if (!connector?.enabled || !connector.baseUrl) {
+    return [];
+  }
+
+  const baseUrl = connector.baseUrl.endsWith("/") ? connector.baseUrl.slice(0, -1) : connector.baseUrl;
+  const token = openClawToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  let lastResult: OpenClawSessionInfo[] = [];
+
+  for (const activeMinutes of openClawActivityWindows()) {
+    const candidates: Array<{ url: string; init?: RequestInit }> = [
+      {
+        url: `${baseUrl}/api/sessions?activeMinutes=${activeMinutes}&messageLimit=1`,
+      },
+      {
+        url: `${baseUrl}/tools/invoke`,
+        init: {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            tool: "sessions_list",
+            action: "json",
+            sessionKey: "main",
+            args: {
+              activeMinutes,
+              messageLimit: 1,
+            },
+          }),
+        },
+      },
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        const requestInit: RequestInit = {
+          method: candidate.init?.method ?? "GET",
+          headers: candidate.init?.headers ?? headers,
+        };
+        if (candidate.init?.body !== undefined) {
+          requestInit.body = candidate.init.body;
+        }
+
+        const response = await fetch(candidate.url, requestInit);
+
+        if (!response.ok) {
+          if (response.status === 404 || response.status === 405) {
+            continue;
+          }
+          const message = await response.text().catch(() => "");
+          console.error("[openclaw-sync] HTTP sessions fallback failed:", message || `HTTP ${response.status}`);
+          return lastResult;
+        }
+
+        const rawText = await response.text().catch(() => "");
+        if (!rawText) {
+          continue;
+        }
+
+        let payload: unknown = rawText;
+        try {
+          payload = JSON.parse(rawText) as unknown;
+        } catch {
+          // Keep raw text if the response is not JSON.
+        }
+
+        const sessions = normalizeToolSessions(payload);
+        if (sessions.length > 0) {
+          return sessions;
+        }
+        lastResult = sessions;
+      } catch (error) {
+        console.error("[openclaw-sync] HTTP sessions fallback failed:", (error as Error).message);
+      }
+    }
+  }
+
+  return lastResult;
 }
 
 export function openClawWsRequest(method: string, params: unknown): Promise<unknown> {
@@ -153,8 +342,12 @@ export function startOpenClawWsConnection(): void {
     return;
   }
   const wsUrl = openClawWsUrl();
+  if (!wsUrl) {
+    return;
+  }
   openClawWsConnected = false;
   openClawWsConnectSent = false;
+  openClawWsConfigSignature = openClawConfigSignature();
 
   const socket = new WsWebSocket(wsUrl);
   openClawWs = socket;
@@ -220,7 +413,7 @@ export function startOpenClawWsConnection(): void {
   });
 }
 
-export function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
+export function sendOpenClawConnect(socket: WsWebSocket, _nonce?: string): void {
   if (openClawWsConnectSent) {
     return;
   }
@@ -241,12 +434,9 @@ export function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
     scopes: ["operator.admin", "operator.read", "operator.write", "operator.approvals", "operator.pairing"],
     caps: [],
     auth: {
-      token: OPENCLAW_TOKEN || undefined,
+      token: openClawToken() || undefined,
     },
   };
-  if (nonce) {
-    connectParams.nonce = nonce;
-  }
 
   const timeout = setTimeout(() => {
     openClawWsPending.delete(id);
@@ -272,7 +462,7 @@ export function sendOpenClawConnect(socket: WsWebSocket, nonce?: string): void {
 
 export async function fetchOpenClawSessions(): Promise<OpenClawSessionInfo[]> {
   if (!openClawWsConnected) {
-    return [];
+    return fetchOpenClawSessionsHttp();
   }
 
   try {
@@ -285,8 +475,16 @@ export async function fetchOpenClawSessions(): Promise<OpenClawSessionInfo[]> {
 
     return normalizeToolSessions(result);
   } catch (error) {
-    console.error("[openclaw-sync] sessions.list failed:", (error as Error).message);
-    return [];
+    const message = error instanceof Error ? error.message : "request failed";
+    if (message.includes("missing scope: operator.read")) {
+      if (!openClawScopeFallbackLogged) {
+        console.warn("[openclaw-sync] sessions.list missing operator.read; falling back to HTTP tool invocation");
+        openClawScopeFallbackLogged = true;
+      }
+    } else {
+      console.error("[openclaw-sync] sessions.list failed:", message);
+    }
+    return fetchOpenClawSessionsHttp();
   }
 }
 
@@ -375,11 +573,19 @@ export async function applyOpenClawStatus(
 }
 
 export async function pollOpenClawSessions(): Promise<void> {
-  if (!OPENCLAW_URL) {
+  const connector = openClawConnectorState();
+  if (!connector?.enabled || !connector.baseUrl) {
+    if (openClawWs) {
+      openClawWs.close();
+    }
     return;
   }
 
   try {
+    ensureOpenClawConnectionConfig();
+    if (!openClawWs) {
+      startOpenClawWsConnection();
+    }
     const sessions = await fetchOpenClawSessions();
     await applyOpenClawSessions(sessions);
   } catch (error) {
@@ -415,18 +621,26 @@ export async function applyOpenClawSessions(sessions: OpenClawSessionInfo[]): Pr
 }
 
 export function startOpenClawSync(): void {
-  if (!OPENCLAW_URL) {
+  if (openClawPollTimer) {
     return;
   }
 
-  console.log(`[openclaw-sync] Connecting to ${OPENCLAW_URL} via WebSocket, polling every ${OPENCLAW_POLL_INTERVAL_MS / 1000}s`);
-  startOpenClawWsConnection();
+  const tick = () => {
+    openClawPollTimer = setTimeout(() => {
+      openClawPollTimer = null;
+      void pollOpenClawSessions().finally(() => {
+        tick();
+      });
+    }, openClawPollIntervalMs());
+  };
 
-  setTimeout(() => {
-    void pollOpenClawSessions();
-  }, 3000);
+  const connector = openClawConnectorState();
+  if (connector?.enabled && connector.baseUrl) {
+    console.log(`[openclaw-sync] Monitoring ${connector.baseUrl} via WebSocket and session polling`);
+  } else {
+    console.log("[openclaw-sync] Waiting for OpenClaw connector configuration");
+  }
 
-  setInterval(() => {
-    void pollOpenClawSessions();
-  }, OPENCLAW_POLL_INTERVAL_MS);
+  void pollOpenClawSessions();
+  tick();
 }

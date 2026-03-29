@@ -6,6 +6,7 @@ import type {
   MissionTaskSnapshot,
   MissionTaskUpdateRequest,
 } from "../src/mission/types";
+import { isMissionTaskBacklog } from "../src/mission/taskBoard";
 import { LINEAR_API_KEY, LINEAR_API_URL, LINEAR_PAGE_SIZE, RequestBodyError } from "./types";
 
 interface LinearIssueNode {
@@ -311,21 +312,41 @@ export async function syncLinearTasks(handoffs: MissionTaskHandoff[]): Promise<M
     };
   }
 
-  const [activeCycles, data] = await Promise.all([
-    fetchActiveLinearCycles(),
-    linearGraphQl<{ issues: { nodes?: LinearIssueNode[] | undefined } }>(
-      `query MissionTasks($first: Int!) {
-      issues(first: $first, filter: { cycle: { isActive: { eq: true } } }) {
+  const activeCycles = await fetchActiveLinearCycles();
+  const activeCycleIds = new Set(activeCycles.map((cycle) => cycle.id));
+
+  if (activeCycleIds.size === 0) {
+    return {
+      tasks: [],
+      syncedAt: Date.now(),
+      syncState: "ok",
+      message: buildActiveCycleMessage(activeCycles, 0),
+    };
+  }
+
+  const data = await linearGraphQl<{ issues: { nodes?: LinearIssueNode[] | undefined } }>(
+    `query MissionTasks($first: Int!, $cycleIds: [ID!]!) {
+      issues(first: $first, filter: { cycle: { id: { in: $cycleIds } } }) {
         nodes {
           ${ISSUE_FIELDS}
         }
       }
     }`,
-      { first: LINEAR_PAGE_SIZE },
-    ),
-  ]);
+    {
+      first: LINEAR_PAGE_SIZE,
+      cycleIds: Array.from(activeCycleIds),
+    },
+  );
 
   const tasks = (data.issues.nodes ?? [])
+    .filter((issue): issue is LinearIssueNode => {
+      const cycleId = issue?.cycle?.id;
+      return typeof cycleId === "string" && activeCycleIds.has(cycleId);
+    })
+    .filter((issue) => !isMissionTaskBacklog({
+      name: issue.state?.name ?? "",
+      type: issue.state?.type ?? undefined,
+    }))
     .map((issue) => missionTaskFromIssue(issue, handoffs))
     .sort((left, right) => right.updatedAt - left.updatedAt);
 

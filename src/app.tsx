@@ -1,6 +1,7 @@
 import { Suspense, lazy, startTransition, useDeferredValue, useEffect, useState } from "react";
 import { DEPLOY_BADGE_LABEL } from "./config/buildInfo";
 import { useMissionControl, type MissionView } from "./mission/hooks/useMissionControl";
+import { compareMissionTasksForBoard, getMissionTaskBoardStage } from "./mission/taskBoard";
 import type {
   MissionTask,
   ProviderAgentRecord,
@@ -117,7 +118,7 @@ function connectionTone(state: "connecting" | "connected" | "offline"): string {
   return "bg-linear-red/15 text-linear-red border-linear-red/25";
 }
 
-function taskStateTone(name: string): string {
+function statusTone(name: string): string {
   const normalized = name.trim().toLowerCase();
   if (normalized.includes("block")) {
     return "bg-linear-red/15 text-linear-red border-linear-red/25";
@@ -128,7 +129,26 @@ function taskStateTone(name: string): string {
   if (normalized.includes("done") || normalized.includes("complete")) {
     return "bg-linear-teal/15 text-linear-teal border-linear-teal/25";
   }
-  return "bg-white/5 text-linear-ink border-white/10";
+  return "bg-linear-surfaceAlt text-linear-ink border-linear-lineStrong";
+}
+
+function taskWorkflowTone(task: MissionTask): string {
+  switch (getMissionTaskBoardStage(task.state)) {
+    case "todo":
+      return "bg-sky-500/15 text-sky-200 border-sky-400/25";
+    case "in_progress":
+      return "bg-amber-500/15 text-amber-200 border-amber-400/25";
+    case "qa_review":
+      return "bg-orange-500/15 text-orange-200 border-orange-400/25";
+    case "uat_review":
+      return "bg-rose-500/15 text-rose-200 border-rose-400/25";
+    case "ready_to_deploy":
+      return "bg-cyan-500/15 text-cyan-200 border-cyan-400/25";
+    case "deployed":
+      return "bg-emerald-500/15 text-emerald-200 border-emerald-400/25";
+    default:
+      return statusTone(task.state.name);
+  }
 }
 
 function connectorTone(status: ProviderConnector["health"]["status"]): string {
@@ -141,7 +161,7 @@ function connectorTone(status: ProviderConnector["health"]["status"]): string {
   if (status === "error") {
     return "bg-linear-red/15 text-linear-red border-linear-red/25";
   }
-  return "bg-white/5 text-linear-muted border-white/10";
+  return "bg-linear-surfaceAlt text-linear-muted border-linear-lineStrong";
 }
 
 function SectionCard(props: { title: string; subtitle?: string; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
@@ -166,7 +186,7 @@ function MetricCard(props: { label: string; value: string | number; hint?: strin
       ? "border-linear-warm/20 bg-linear-warm/10"
       : props.tone === "danger"
         ? "border-linear-red/25 bg-linear-red/10"
-        : "border-white/8 bg-white/[0.04]";
+        : "border-linear-line bg-linear-surface";
 
   return (
     <article className={cx("rounded-xl border p-3.5", toneClass)}>
@@ -216,7 +236,7 @@ function TaskDetailPanel(props: {
   if (!task || !props.detail) {
     return (
       <SectionCard title="Task Detail" subtitle="Pick a task from the board to inspect its Linear data, comments, and handoffs.">
-        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-5 py-16 text-center text-linear-muted">
+        <div className="rounded-xl border border-dashed border-linear-line bg-linear-surface px-5 py-16 text-center text-linear-muted">
           Select a task to open its mission-control detail panel.
         </div>
       </SectionCard>
@@ -235,12 +255,12 @@ function TaskDetailPanel(props: {
     <SectionCard
       title={task.title}
       subtitle={`${task.identifier} · ${task.team.name}${task.cycle ? ` · ${taskCycleLabel(task)}` : ""}`}
-      action={<span className={cx("mission-badge border", taskStateTone(task.state.name))}>{task.state.name}</span>}
+      action={<span className={cx("mission-badge border", taskWorkflowTone(task))}>{task.state.name}</span>}
       className="h-full"
     >
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="space-y-4">
-          <div className="rounded-xl border border-white/8 bg-white/[0.04] p-3.5">
+          <div className="rounded-xl border border-linear-line bg-linear-surface p-3.5">
             <label className="mission-section-label">Title</label>
             <input
               className="mission-input mt-3"
@@ -275,14 +295,14 @@ function TaskDetailPanel(props: {
             </button>
           </div>
 
-          <div className="rounded-xl border border-white/8 bg-white/[0.04] p-3.5">
+          <div className="rounded-xl border border-linear-line bg-linear-surface p-3.5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="font-display text-base font-semibold text-white">Comments</h3>
               <span className="mission-muted">{props.detail.comments.length} synced</span>
             </div>
             <div className="mt-4 space-y-3">
               {props.detail.comments.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-center text-linear-muted">
+                <div className="rounded-xl border border-dashed border-linear-line px-4 py-6 text-center text-linear-muted">
                   No comments synced yet.
                 </div>
               ) : (
@@ -317,7 +337,7 @@ function TaskDetailPanel(props: {
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-xl border border-white/8 bg-white/[0.04] p-3.5">
+          <div className="rounded-xl border border-linear-line bg-linear-surface p-3.5">
             <h3 className="font-display text-sm font-semibold text-white">Task metadata</h3>
             <dl className="mt-4 space-y-3">
               <div>
@@ -339,14 +359,14 @@ function TaskDetailPanel(props: {
             </dl>
           </div>
 
-          <div className="rounded-xl border border-white/8 bg-white/[0.04] p-3.5">
+          <div className="rounded-xl border border-linear-line bg-linear-surface p-3.5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="font-display text-sm font-semibold text-white">Handoffs</h3>
               <span className="mission-muted">{props.detail.handoffs.length} total</span>
             </div>
             <div className="mt-4 space-y-3">
               {props.detail.handoffs.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-center text-linear-muted">
+                <div className="rounded-xl border border-dashed border-linear-line px-4 py-6 text-center text-linear-muted">
                   No handoffs recorded for this task.
                 </div>
               ) : (
@@ -391,7 +411,7 @@ function TaskDetailPanel(props: {
           </div>
 
           {task.description ? (
-            <div className="rounded-xl border border-white/8 bg-white/[0.04] p-3.5">
+            <div className="rounded-xl border border-linear-line bg-linear-surface p-3.5">
               <h3 className="font-display text-sm font-semibold text-white">Description</h3>
               <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-linear-ink">{task.description}</p>
             </div>
@@ -410,7 +430,7 @@ function HandoffCard(props: { handoff: MissionTaskHandoff; onRespond(status: "ac
           <strong className="text-sm text-white">{props.handoff.fromAgentName} → {props.handoff.toAgentName}</strong>
           <p className="mission-muted mt-1">{formatDateTime(props.handoff.createdAt)}</p>
         </div>
-        <span className={cx("mission-badge border", taskStateTone(props.handoff.status))}>{props.handoff.status}</span>
+        <span className={cx("mission-badge border", statusTone(props.handoff.status))}>{props.handoff.status}</span>
       </div>
       <p className="mt-3 text-sm leading-6 text-linear-ink">{props.handoff.note}</p>
       {props.handoff.status === "pending" ? (
@@ -436,7 +456,17 @@ function HandoffCard(props: { handoff: MissionTaskHandoff; onRespond(status: "ac
 function ConnectorSettingsCard(props: {
   connector: ProviderConnector;
   busyKey: string | null;
-  onSave(provider: ProviderConnector["provider"], input: { enabled: boolean; baseUrl: string; websocketUrl: string; runtimeBaseUrl: string; syncIntervalMs: number }): Promise<void>;
+  onSave(
+    provider: ProviderConnector["provider"],
+    input: {
+      enabled: boolean;
+      baseUrl: string;
+      websocketUrl: string;
+      runtimeBaseUrl: string;
+      syncIntervalMs: number;
+      token?: string;
+    },
+  ): Promise<void>;
   onTest(provider: ProviderConnector["provider"]): Promise<void>;
   onSync(provider: ProviderConnector["provider"]): Promise<void>;
 }) {
@@ -445,6 +475,7 @@ function ConnectorSettingsCard(props: {
   const [websocketUrl, setWebsocketUrl] = useState(props.connector.websocketUrl ?? "");
   const [runtimeBaseUrl, setRuntimeBaseUrl] = useState(props.connector.runtimeBaseUrl ?? "");
   const [syncIntervalMs, setSyncIntervalMs] = useState(props.connector.syncIntervalMs);
+  const [token, setToken] = useState("");
 
   useEffect(() => {
     setEnabled(props.connector.enabled);
@@ -452,9 +483,29 @@ function ConnectorSettingsCard(props: {
     setWebsocketUrl(props.connector.websocketUrl ?? "");
     setRuntimeBaseUrl(props.connector.runtimeBaseUrl ?? "");
     setSyncIntervalMs(props.connector.syncIntervalMs);
-  }, [props.connector]);
+    setToken("");
+  }, [
+    props.connector.provider,
+    props.connector.enabled,
+    props.connector.baseUrl,
+    props.connector.websocketUrl,
+    props.connector.runtimeBaseUrl,
+    props.connector.syncIntervalMs,
+  ]);
 
   const isBusy = props.busyKey?.startsWith(`connector:${props.connector.provider}`) ?? false;
+
+  async function handleSave(): Promise<void> {
+    await props.onSave(props.connector.provider, {
+      enabled,
+      baseUrl,
+      websocketUrl,
+      runtimeBaseUrl,
+      syncIntervalMs,
+      ...(token.trim() ? { token: token.trim() } : {}),
+    });
+    setToken("");
+  }
 
   return (
     <SectionCard
@@ -479,9 +530,19 @@ function ConnectorSettingsCard(props: {
           <span className="mission-section-label">Sync interval (ms)</span>
           <input className="mission-input" type="number" min={1000} step={1000} value={syncIntervalMs} onChange={(event) => setSyncIntervalMs(Number(event.target.value) || props.connector.syncIntervalMs)} />
         </label>
+        <label className="space-y-2 md:col-span-2">
+          <span className="mission-section-label">Bearer token</span>
+          <input
+            className="mission-input"
+            type="password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder={props.connector.tokenConfigured ? "Leave blank to keep the current token" : "Paste provider token"}
+          />
+        </label>
       </div>
       <div className="flex flex-wrap items-center gap-2.5">
-        <label className="inline-flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white">
+        <label className="inline-flex items-center gap-3 rounded-xl border border-linear-line bg-linear-surface px-4 py-3 text-sm text-white">
           <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
           Connector enabled
         </label>
@@ -491,7 +552,9 @@ function ConnectorSettingsCard(props: {
         <button
           className="mission-button"
           disabled={isBusy}
-          onClick={() => props.onSave(props.connector.provider, { enabled, baseUrl, websocketUrl, runtimeBaseUrl, syncIntervalMs })}
+          onClick={() => {
+            void handleSave();
+          }}
         >
           {isBusy ? "Saving..." : "Save connector"}
         </button>
@@ -537,7 +600,7 @@ function ProviderRosterPanel(props: {
           const staged = roster.length - linked;
 
           return (
-            <article key={connector.provider} className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
+            <article key={connector.provider} className="rounded-xl border border-linear-line bg-linear-surface p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <div className="font-semibold text-white">{connector.label}</div>
@@ -550,15 +613,15 @@ function ProviderRosterPanel(props: {
               </div>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-xl border border-white/8 bg-black/15 px-3 py-3">
+                <div className="rounded-xl border border-linear-line bg-mission-950 px-3 py-3">
                   <div className="mission-section-label">Discovered</div>
                   <div className="mt-2 text-lg font-semibold text-white">{roster.length}</div>
                 </div>
-                <div className="rounded-xl border border-white/8 bg-black/15 px-3 py-3">
+                <div className="rounded-xl border border-linear-line bg-mission-950 px-3 py-3">
                   <div className="mission-section-label">Linked</div>
                   <div className="mt-2 text-lg font-semibold text-white">{linked}</div>
                 </div>
-                <div className="rounded-xl border border-white/8 bg-black/15 px-3 py-3">
+                <div className="rounded-xl border border-linear-line bg-mission-950 px-3 py-3">
                   <div className="mission-section-label">Staged</div>
                   <div className="mt-2 text-lg font-semibold text-white">{staged}</div>
                 </div>
@@ -566,7 +629,7 @@ function ProviderRosterPanel(props: {
 
               <div className="mt-4 space-y-2">
                 {roster.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-white/10 px-4 py-4 text-sm text-linear-muted">
+                  <div className="rounded-xl border border-dashed border-linear-line px-4 py-4 text-sm text-linear-muted">
                     No agents discovered yet. If the connector is reachable but this stays empty, check provider auth and whether the runtime exposes a supported roster or session API.
                   </div>
                 ) : (
@@ -578,7 +641,7 @@ function ProviderRosterPanel(props: {
                           <div className="mission-muted mt-1">{agent.externalId}{agent.role ? ` · ${agent.role}` : ""}</div>
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                          <span className={cx("mission-badge border", taskStateTone(agent.status))}>{agent.status}</span>
+                          <span className={cx("mission-badge border", statusTone(agent.status))}>{agent.status}</span>
                           <span className="mission-badge">{agent.officeAgentId ? "linked" : "staged"}</span>
                         </div>
                       </div>
@@ -608,6 +671,7 @@ export function App() {
   const mission = useMissionControl();
   const [taskSearch, setTaskSearch] = useState("");
   const deferredTaskSearch = useDeferredValue(taskSearch);
+  const isTasksView = mission.activeView === "tasks";
 
   const selectedAgent = mission.agents.find((agent) => agent.id === mission.selectedAgentId) ?? null;
   const pendingHandoffs = mission.selectedTaskDetail?.handoffs.filter((handoff) => handoff.status === "pending") ?? [];
@@ -619,13 +683,13 @@ export function App() {
       return true;
     }
     return `${task.identifier} ${task.title} ${task.team.name} ${task.state.name}`.toLowerCase().includes(needle);
-  });
+  }).sort(compareMissionTasksForBoard);
   const agentNames = mission.agents.map((agent) => agent.name);
 
   return (
     <div className="mission-shell">
       <div className="relative z-10 grid min-h-screen grid-cols-1 xl:grid-cols-[248px_minmax(0,1fr)]">
-        <aside className="border-b border-white/8 bg-black/20 p-3.5 backdrop-blur-md xl:border-b-0 xl:border-r xl:p-4">
+        <aside className="border-b border-linear-line bg-black/20 p-3.5 backdrop-blur-md xl:border-b-0 xl:border-r xl:p-4">
           <div className="mission-panel p-4">
             <p className="mission-section-label">The Office</p>
             <h1 className="mt-2.5 font-display text-[1.6rem] font-semibold text-white">Mission Control</h1>
@@ -641,7 +705,7 @@ export function App() {
               <button
                 key={item.id}
                 className={cx(
-                  "mission-panel flex items-center justify-between px-3 py-2.5 text-left transition hover:border-white/15 hover:bg-white/[0.055]",
+                  "mission-panel flex items-center justify-between px-3 py-2.5 text-left transition hover:border-linear-lineStrong hover:bg-linear-surfaceHover",
                   mission.activeView === item.id && "border-linear-teal/35 bg-linear-teal/10 shadow-[inset_0_0_0_1px_rgba(114,168,255,0.14)]",
                 )}
                 onClick={() => {
@@ -685,7 +749,7 @@ export function App() {
                     <div className="mission-muted mt-1">{agent.role}</div>
                   </div>
                   <div className="flex flex-col items-end gap-2">
-                    <span className={cx("mission-badge border", taskStateTone(agent.status))}>{agent.status}</span>
+                    <span className={cx("mission-badge border", statusTone(agent.status))}>{agent.status}</span>
                     <span className="max-w-[11rem] truncate text-xs text-linear-muted">{agent.task || "No active task"}</span>
                   </div>
                 </button>
@@ -695,25 +759,49 @@ export function App() {
         </aside>
 
         <main className="flex min-h-screen flex-col gap-4 p-4 xl:p-5">
-          <header className="mission-panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="mission-badge">Task sync {mission.missionSnapshot.taskSync.state}</div>
-              <h2 className="mt-2 font-display text-xl font-semibold text-white">
-                {mission.activeView === "mission" ? "Live Mission Overview" : mission.activeView === "tasks" ? "Task Board" : mission.activeView === "schedules" ? "Schedules" : "Connector Settings"}
-              </h2>
-              <p className="mission-muted mt-2">
-                {mission.missionSnapshot.taskSync.message || formatRelativeUpdate(mission.missionSnapshot.taskSync.updatedAt)}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <button
-                className="mission-button-muted"
-                onClick={() => void mission.refreshMission()}
-              >
-                Refresh snapshot
-              </button>
-            </div>
-          </header>
+          {isTasksView ? (
+            <header className="flex flex-col gap-2 border-b border-linear-line pb-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[13px]">
+                  <span className="text-linear-muted">Current cycle</span>
+                  <span className="text-linear-muted">›</span>
+                  <span className="truncate font-medium text-white">Task Board</span>
+                </div>
+                <p className="mission-muted mt-1">
+                  {mission.missionSnapshot.taskSync.message || formatRelativeUpdate(mission.missionSnapshot.taskSync.updatedAt)}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mission-badge">Sync {mission.missionSnapshot.taskSync.state}</span>
+                <button
+                  className="mission-button-muted"
+                  onClick={() => void mission.refreshMission()}
+                >
+                  Refresh
+                </button>
+              </div>
+            </header>
+          ) : (
+            <header className="mission-panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="mission-badge">Task sync {mission.missionSnapshot.taskSync.state}</div>
+                <h2 className="mt-2 font-display text-xl font-semibold text-white">
+                  {mission.activeView === "mission" ? "Live Mission Overview" : mission.activeView === "schedules" ? "Schedules" : "Connector Settings"}
+                </h2>
+                <p className="mission-muted mt-2">
+                  {mission.missionSnapshot.taskSync.message || formatRelativeUpdate(mission.missionSnapshot.taskSync.updatedAt)}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  className="mission-button-muted"
+                  onClick={() => void mission.refreshMission()}
+                >
+                  Refresh snapshot
+                </button>
+              </div>
+            </header>
+          )}
 
           {mission.error ? (
             <div className="mission-panel border-linear-red/25 bg-linear-red/10 px-5 py-4 text-sm text-linear-red">
@@ -726,7 +814,7 @@ export function App() {
               <div className="flex flex-col gap-5">
                 <SectionCard
                   title="Command map"
-                  subtitle="Flat control-room map with live linked agents."
+                  subtitle="Authored office floorplan with bullpen desks, collaboration rooms, and agent slots defined from map data."
                   action={<span className="mission-badge">{mission.agents.filter((agent) => agent.status === "working").length} working</span>}
                   className="flex-1"
                 >
@@ -737,11 +825,11 @@ export function App() {
                       <MetricCard label="Linked agents" value={mission.missionSnapshot.rosterImport.linked} tone="good" />
                       <MetricCard label="Staged imports" value={mission.missionSnapshot.rosterImport.staged} tone={mission.missionSnapshot.rosterImport.staged > 0 ? "warn" : "default"} />
                     </div>
-                    <div className="overflow-hidden rounded-[28px] border border-white/8 bg-gradient-to-b from-mission-900/70 to-mission-950/90">
+                    <div className="overflow-hidden rounded-[28px] border border-linear-line bg-gradient-to-b from-mission-900/70 to-mission-950/90">
                       <Suspense
                         fallback={
                           <div className="flex h-[420px] items-center justify-center text-sm text-linear-muted">
-                            Loading office scene...
+                            Loading live map...
                           </div>
                         }
                       >
@@ -774,7 +862,7 @@ export function App() {
                             <div className="mt-1 text-sm text-linear-ink">{task.title}</div>
                             <div className="mission-muted mt-2">{task.team.name}</div>
                           </div>
-                          <span className={cx("mission-badge border", taskStateTone(task.state.name))}>{task.state.name}</span>
+                          <span className={cx("mission-badge border", taskWorkflowTone(task))}>{task.state.name}</span>
                         </button>
                       ))}
                     </div>
@@ -782,7 +870,7 @@ export function App() {
 
                   <ProviderRosterPanel
                     title="Provider roster"
-                    subtitle="Discovered provider agents. Only linked agents are rendered in the office map."
+                    subtitle="Discovered provider agents. Only linked agents are rendered in the mission map."
                     connectors={mission.missionSnapshot.connectors}
                     agents={mission.missionSnapshot.providerAgents}
                     compact
@@ -794,11 +882,11 @@ export function App() {
                 <SectionCard title="Selected agent" subtitle={selectedAgent ? selectedAgent.role : "No agent selected"}>
                   {selectedAgent ? (
                     <div className="space-y-4">
-                      <div className="rounded-2xl border border-white/8 bg-white/[0.04] p-4">
+                      <div className="rounded-xl border border-linear-line bg-linear-surface p-4">
                         <div className="text-xl font-semibold text-white">{selectedAgent.name}</div>
                         <div className="mission-muted mt-2">{selectedAgent.role}</div>
                         <div className="mt-4 flex flex-wrap gap-2">
-                          <span className={cx("mission-badge border", taskStateTone(selectedAgent.status))}>{selectedAgent.status}</span>
+                          <span className={cx("mission-badge border", statusTone(selectedAgent.status))}>{selectedAgent.status}</span>
                           <span className="mission-badge">{selectedAgent.location || "desk"}</span>
                         </div>
                         <p className="mt-4 text-sm leading-6 text-linear-ink">{selectedAgent.task || "No active task assigned."}</p>
@@ -806,7 +894,7 @@ export function App() {
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-2xl border border-dashed border-white/10 px-4 py-12 text-center text-linear-muted">
+                    <div className="rounded-xl border border-dashed border-linear-line px-4 py-12 text-center text-linear-muted">
                       Select an agent from the roster or scene.
                     </div>
                   )}
@@ -832,7 +920,7 @@ export function App() {
                 <SectionCard title="Pending handoffs" subtitle={`${pendingHandoffs.length} waiting on response`}>
                   <div className="space-y-3">
                     {pendingHandoffs.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-white/10 px-4 py-10 text-center text-linear-muted">
+                      <div className="rounded-xl border border-dashed border-linear-line px-4 py-10 text-center text-linear-muted">
                         No pending handoffs for the currently selected task.
                       </div>
                     ) : (
@@ -895,7 +983,7 @@ export function App() {
                           <span className="mission-muted mt-0.5 block truncate">{task.team.key ?? task.team.name} · {taskCycleLabel(task)}</span>
                         </span>
                         <span className="truncate text-[12px] text-linear-ink">{task.assignee?.name ?? "Unassigned"}</span>
-                        <span className={cx("mission-badge border w-fit", taskStateTone(task.state.name))}>{task.state.name}</span>
+                        <span className={cx("mission-badge border w-fit", taskWorkflowTone(task))}>{task.state.name}</span>
                         <span className="text-[12px] text-linear-muted">{formatRelativeStamp(task.updatedAt)}</span>
                       </button>
                     ))
@@ -921,7 +1009,7 @@ export function App() {
             <SectionCard title="Schedules" subtitle="All provider-imported cron and scheduled jobs">
               <div className="grid gap-3">
                 {mission.missionSnapshot.schedules.map((schedule) => (
-                  <article key={schedule.id} className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
+                  <article key={schedule.id} className="rounded-xl border border-linear-line bg-linear-surface p-4">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div>
                         <div className="font-display text-lg font-semibold text-white">{schedule.name}</div>
@@ -929,7 +1017,7 @@ export function App() {
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <span className="mission-badge">{schedule.provider}</span>
-                        <span className={cx("mission-badge border", taskStateTone(schedule.status))}>{schedule.status}</span>
+                        <span className={cx("mission-badge border", statusTone(schedule.status))}>{schedule.status}</span>
                       </div>
                     </div>
                     <div className="mt-4 grid gap-3 md:grid-cols-3">

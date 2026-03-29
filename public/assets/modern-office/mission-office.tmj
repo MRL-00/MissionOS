@@ -1,0 +1,802 @@
+{
+  "compressionlevel": -1,
+  "height": 42,
+  "infinite": false,
+  "layers": [
+    {
+      "id": 1,
+      "name": "zones",
+      "type": "objectgroup",
+      "draworder": "topdown",
+      "opacity": 1,
+      "visible": true,
+      "objects": [
+        {
+          "id": 1,
+          "name": "Bullpen Floor",
+          "type": "work",
+          "x": 152,
+          "y": 120,
+          "width": 368,
+          "height": 256,
+          "properties": [
+            {
+              "name": "accent",
+              "type": "string",
+              "value": "#8fd2ff"
+            },
+            {
+              "name": "summary",
+              "type": "string",
+              "value": "Main engineering floor with paired desks and clear central walk lanes."
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "name": "Collab Room",
+          "type": "meeting",
+          "x": 176,
+          "y": 416,
+          "width": 176,
+          "height": 128,
+          "properties": [
+            {
+              "name": "accent",
+              "type": "string",
+              "value": "#ffe08c"
+            },
+            {
+              "name": "summary",
+              "type": "string",
+              "value": "Soft-seating collaboration room for reviews, planning, and pair sessions."
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "name": "Executive Office",
+          "type": "lead",
+          "x": 432,
+          "y": 448,
+          "width": 128,
+          "height": 112,
+          "properties": [
+            {
+              "name": "accent",
+              "type": "string",
+              "value": "#d0b2ff"
+            },
+            {
+              "name": "summary",
+              "type": "string",
+              "value": "Private leadership office for escalations, approvals, and quieter work."
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "name": "Support Nook",
+          "type": "support",
+          "x": 480,
+          "y": 104,
+          "width": 112,
+          "height": 248,
+          "properties": [
+            {
+              "name": "accent",
+              "type": "string",
+              "value": "#8ce6d1"
+            },
+            {
+              "name": "summary",
+              "type": "string",
+              "value": "Support and connector corner with a visible quick-help lane beside the utilities wall."
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "name": "Entry Hall",
+          "type": "entry",
+          "x": 112,
+          "y": 112,
+          "width": 48,
+          "height": 240,
+          "properties": [
+            {
+              "name": "accent",
+              "type": "string",
+              "value": "#9cc8ff"
+            },
+            {
+              "name": "summary",
+              "type": "string",
+              "value": "Arrival corridor and handoff path into the main floor."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "props",
+      "type": "objectgroup",
+      "draworder": "topdown",
+      "opacity": 1,
+      "visible": true,
+      "objects": [
+        {
+          "id": 6,
+          "gid": 200,
+          "x": 96,
+          "y": 608,
+          "width": 512,
+          "height": 544,
+          "properties": [
+            {
+              "name": "depth",
+              "type": "string",
+              "value": "background"
+            },
+            {
+              "name": "filter",
+              "type": "string",
+              "value": "none"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "blocked",
+      "type": "objectgroup",
+      "draworder": "topdown",
+      "opacity": 1,
+      "visible": true,
+      "objects": [
+        {
+          "id": 7,
+          "x": 0,
+          "y": 0,
+          "width": 96,
+          "height": 672
+        },
+        {
+          "id": 8,
+          "x": 608,
+          "y": 0,
+          "width": 96,
+          "height": 672
+        },
+        {
+          "id": 9,
+          "x": 96,
+          "y": 0,
+          "width": 512,
+          "height": 64
+        },
+        {
+          "id": 10,
+          "x": 96,
+          "y": 608,
+          "width": 512,
+          "height": 64
+        },
+        {
+          "id": 11,
+          "x": 96,
+          "y": 256,
+          "width": 96,
+          "height": 144
+        },
+        {
+          "id": 12,
+          "x": 208,
+          "y": 160,
+          "width": 64,
+          "height": 80
+        },
+        {
+          "id": 13,
+          "x": 272,
+          "y": 160,
+          "width": 176,
+          "height": 96
+        },
+        {
+          "id": 14,
+          "x": 160,
+          "y": 288,
+          "width": 384,
+          "height": 96
+        },
+        {
+          "id": 15,
+          "x": 160,
+          "y": 400,
+          "width": 48,
+          "height": 96
+        },
+        {
+          "id": 16,
+          "x": 400,
+          "y": 400,
+          "width": 32,
+          "height": 176
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "slots",
+      "type": "objectgroup",
+      "draworder": "topdown",
+      "opacity": 1,
+      "visible": true,
+      "objects": [
+        {
+          "id": 17,
+          "name": "Collab Room",
+          "type": "meeting",
+          "x": 248,
+          "y": 488,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Collab Room"
+            }
+          ]
+        },
+        {
+          "id": 18,
+          "name": "Collab Room",
+          "type": "meeting",
+          "x": 280,
+          "y": 488,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Collab Room"
+            }
+          ]
+        },
+        {
+          "id": 19,
+          "name": "Collab Room",
+          "type": "meeting",
+          "x": 312,
+          "y": 488,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Collab Room"
+            }
+          ]
+        },
+        {
+          "id": 20,
+          "name": "Collab Room",
+          "type": "meeting",
+          "x": 248,
+          "y": 520,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Collab Room"
+            }
+          ]
+        },
+        {
+          "id": 21,
+          "name": "Collab Room",
+          "type": "meeting",
+          "x": 280,
+          "y": 520,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Collab Room"
+            }
+          ]
+        },
+        {
+          "id": 22,
+          "name": "Collab Room",
+          "type": "meeting",
+          "x": 312,
+          "y": 520,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Collab Room"
+            }
+          ]
+        },
+        {
+          "id": 23,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 240,
+          "y": 272,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 24,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 304,
+          "y": 272,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 25,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 368,
+          "y": 272,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 26,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 432,
+          "y": 272,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 27,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 256,
+          "y": 392,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 28,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 320,
+          "y": 392,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 29,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 384,
+          "y": 392,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 30,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 480,
+          "y": 392,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 31,
+          "name": "Bullpen Floor",
+          "type": "desk",
+          "x": 560,
+          "y": 336,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Bullpen Floor"
+            }
+          ]
+        },
+        {
+          "id": 32,
+          "name": "Entry Hall",
+          "type": "entry",
+          "x": 144,
+          "y": 208,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Entry Hall"
+            }
+          ]
+        },
+        {
+          "id": 33,
+          "name": "Entry Hall",
+          "type": "entry",
+          "x": 144,
+          "y": 240,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Entry Hall"
+            }
+          ]
+        },
+        {
+          "id": 34,
+          "name": "Entry Hall",
+          "type": "entry",
+          "x": 368,
+          "y": 416,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Entry Hall"
+            }
+          ]
+        },
+        {
+          "id": 35,
+          "name": "Entry Hall",
+          "type": "entry",
+          "x": 384,
+          "y": 416,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Entry Hall"
+            }
+          ]
+        },
+        {
+          "id": 36,
+          "name": "Executive Office",
+          "type": "lead",
+          "x": 464,
+          "y": 512,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Executive Office"
+            }
+          ]
+        },
+        {
+          "id": 37,
+          "name": "Executive Office",
+          "type": "lead",
+          "x": 512,
+          "y": 512,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Executive Office"
+            }
+          ]
+        },
+        {
+          "id": 38,
+          "name": "Executive Office",
+          "type": "lead",
+          "x": 488,
+          "y": 552,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Executive Office"
+            }
+          ]
+        },
+        {
+          "id": 39,
+          "name": "Support Nook",
+          "type": "support",
+          "x": 512,
+          "y": 272,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Support Nook"
+            }
+          ]
+        },
+        {
+          "id": 40,
+          "name": "Support Nook",
+          "type": "support",
+          "x": 544,
+          "y": 288,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Support Nook"
+            }
+          ]
+        },
+        {
+          "id": 41,
+          "name": "Support Nook",
+          "type": "support",
+          "x": 560,
+          "y": 320,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Support Nook"
+            }
+          ]
+        },
+        {
+          "id": 42,
+          "name": "Hallway",
+          "type": "overflow",
+          "x": 272,
+          "y": 272,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Hallway"
+            }
+          ]
+        },
+        {
+          "id": 43,
+          "name": "Hallway",
+          "type": "overflow",
+          "x": 320,
+          "y": 272,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Hallway"
+            }
+          ]
+        },
+        {
+          "id": 44,
+          "name": "Hallway",
+          "type": "overflow",
+          "x": 448,
+          "y": 272,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Hallway"
+            }
+          ]
+        },
+        {
+          "id": 45,
+          "name": "Hallway",
+          "type": "overflow",
+          "x": 272,
+          "y": 400,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Hallway"
+            }
+          ]
+        },
+        {
+          "id": 46,
+          "name": "Hallway",
+          "type": "overflow",
+          "x": 320,
+          "y": 400,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Hallway"
+            }
+          ]
+        },
+        {
+          "id": 47,
+          "name": "Hallway",
+          "type": "overflow",
+          "x": 448,
+          "y": 400,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Hallway"
+            }
+          ]
+        },
+        {
+          "id": 48,
+          "name": "Hallway",
+          "type": "overflow",
+          "x": 512,
+          "y": 400,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Hallway"
+            }
+          ]
+        },
+        {
+          "id": 49,
+          "name": "Hallway",
+          "type": "overflow",
+          "x": 224,
+          "y": 400,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Hallway"
+            }
+          ]
+        },
+        {
+          "id": 50,
+          "name": "Support Nook",
+          "type": "special",
+          "x": 544,
+          "y": 288,
+          "point": true,
+          "properties": [
+            {
+              "name": "zone",
+              "type": "string",
+              "value": "Support Nook"
+            },
+            {
+              "name": "agentId",
+              "type": "string",
+              "value": "charlie"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "nextlayerid": 5,
+  "nextobjectid": 51,
+  "orientation": "orthogonal",
+  "properties": [
+    {
+      "name": "title",
+      "type": "string",
+      "value": "Modern Operations Floor"
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "value": "Structured office floor built from the modern-office pack with desk banks, collaboration rooms, and clean agent slots."
+    },
+    {
+      "name": "theme",
+      "type": "string",
+      "value": "Pixel-authored modern office"
+    }
+  ],
+  "renderorder": "right-down",
+  "tiledversion": "1.11.0",
+  "tileheight": 16,
+  "tilesets": [
+    {
+      "firstgid": 200,
+      "name": "modern-office-layout",
+      "tilewidth": 512,
+      "tileheight": 544,
+      "tilecount": 1,
+      "columns": 0,
+      "tiles": [
+        {
+          "id": 0,
+          "image": "6_Office_Designs/Office_Design_2.png",
+          "imagewidth": 512,
+          "imageheight": 544
+        }
+      ]
+    }
+  ],
+  "tilewidth": 16,
+  "type": "map",
+  "version": "1.10",
+  "width": 44
+}

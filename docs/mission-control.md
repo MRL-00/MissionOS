@@ -3,7 +3,7 @@
 This build turns the office into a local-first mission-control surface with:
 
 - a React + Tailwind control-room shell
-- a fixed isometric office scene
+- a tile-authored mission map with named zones and slot-based agent placement
 - provider connectors for OpenClaw and Hermes Agent
 - a Linear-backed task board
 - imported provider schedules

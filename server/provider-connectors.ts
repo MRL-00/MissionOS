@@ -1,8 +1,6 @@
 import {
-  HERMES_TOKEN,
   MISSION_PROVIDER_LABELS,
   OPENCLAW_ACTIVITY_WINDOW_MINUTES,
-  OPENCLAW_TOKEN,
 } from "./types";
 import type {
   MissionProvider,
@@ -11,6 +9,10 @@ import type {
   ProviderHealth,
   ProviderScheduleEntry,
 } from "../src/mission/types";
+
+export interface ProviderConnectorSyncConfig extends ProviderConnector {
+  token?: string | undefined;
+}
 
 export interface ProviderSyncResult {
   health: ProviderHealth;
@@ -32,8 +34,18 @@ function ensureBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
 }
 
-function providerToken(provider: MissionProvider): string {
-  return provider === "openclaw" ? OPENCLAW_TOKEN : HERMES_TOKEN;
+function openClawActivityWindows(): number[] {
+  return Array.from(new Set([
+    OPENCLAW_ACTIVITY_WINDOW_MINUTES,
+    Math.max(OPENCLAW_ACTIVITY_WINDOW_MINUTES, 60),
+  ]));
+}
+
+function providerToken(connector: ProviderConnectorSyncConfig): string {
+  if (connector.authMode !== "bearer") {
+    return "";
+  }
+  return connector.token?.trim() ?? "";
 }
 
 function parseTimestamp(value: unknown): number | undefined {
@@ -51,6 +63,35 @@ function parseTimestamp(value: unknown): number | undefined {
     }
   }
   return undefined;
+}
+
+function extractOpenClawMessageText(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractOpenClawMessageText(item);
+      if (text) {
+        return text;
+      }
+    }
+    return undefined;
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    extractOpenClawMessageText(record.text)
+    ?? extractOpenClawMessageText(record.content)
+    ?? extractOpenClawMessageText(record.parts)
+    ?? extractOpenClawMessageText(record.message)
+  );
 }
 
 function normalizeStatus(value: unknown): ProviderAgentRecord["status"] {
@@ -93,6 +134,56 @@ function extractCollection(value: unknown, keys: string[]): unknown[] {
   return [];
 }
 
+function extractOpenClawSessionRows(value: unknown): unknown[] {
+  const direct = extractCollection(value, ["sessions"]);
+  if (direct.length > 0) {
+    return direct;
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return [];
+  }
+
+  const record = value as Record<string, unknown>;
+  const detailsRows = extractCollection(record.details, ["sessions"]);
+  if (detailsRows.length > 0) {
+    return detailsRows;
+  }
+
+  const result = record.result;
+  if (typeof result !== "object" || result === null) {
+    return [];
+  }
+
+  const resultRecord = result as Record<string, unknown>;
+  const nestedDetailsRows = extractCollection(resultRecord.details, ["sessions"]);
+  if (nestedDetailsRows.length > 0) {
+    return nestedDetailsRows;
+  }
+
+  const content = Array.isArray(resultRecord.content) ? resultRecord.content : [];
+  for (const entry of content) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const text = (entry as { text?: unknown }).text;
+    if (typeof text !== "string" || !text.trim()) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      const parsedRows = extractCollection(parsed, ["sessions"]);
+      if (parsedRows.length > 0) {
+        return parsedRows;
+      }
+    } catch {
+      // Ignore tool content that is not JSON.
+    }
+  }
+
+  return [];
+}
+
 function responseMessage(data: unknown, fallback: string): string {
   if (typeof data === "string" && data.trim()) {
     return data.trim();
@@ -124,18 +215,17 @@ function responseMessage(data: unknown, fallback: string): string {
 }
 
 async function fetchJsonWithTimeout(
-  provider: MissionProvider,
-  baseUrl: string,
+  connector: ProviderConnectorSyncConfig,
   path: string,
   init: RequestInit = {},
 ): Promise<TimedJsonResult> {
   const controller = new AbortController();
   const startedAt = Date.now();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  const token = providerToken(provider);
+  const token = providerToken(connector);
 
   try {
-    const response = await fetch(`${ensureBaseUrl(baseUrl)}${path}`, {
+    const response = await fetch(`${ensureBaseUrl(connector.baseUrl ?? "")}${path}`, {
       ...init,
       signal: controller.signal,
       headers: {
@@ -178,12 +268,11 @@ async function fetchJsonWithTimeout(
 }
 
 async function tryJsonCandidates(
-  provider: MissionProvider,
-  baseUrl: string,
+  connector: ProviderConnectorSyncConfig,
   candidates: Array<{ path: string; init?: RequestInit }>,
 ): Promise<TimedJsonResult | null> {
   for (const candidate of candidates) {
-    const result = await fetchJsonWithTimeout(provider, baseUrl, candidate.path, candidate.init);
+    const result = await fetchJsonWithTimeout(connector, candidate.path, candidate.init);
     if (result.ok) {
       return result;
     }
@@ -300,7 +389,7 @@ function normalizeScheduleRecord(provider: MissionProvider, value: unknown, inde
 }
 
 function normalizeOpenClawSessionAgents(value: unknown): ProviderAgentRecord[] {
-  const rows = extractCollection(value, ["sessions"]);
+  const rows = extractOpenClawSessionRows(value);
 
   return rows.flatMap((row, index) => {
     if (typeof row !== "object" || row === null) {
@@ -322,7 +411,10 @@ function normalizeOpenClawSessionAgents(value: unknown): ProviderAgentRecord[] {
     const name = typeof record.label === "string" && record.label.trim()
       ? record.label.trim()
       : externalId;
-    const task = typeof record.task === "string" ? record.task.trim() || undefined : undefined;
+    const lastMessage = Array.isArray(record.messages) ? record.messages.at(-1) : undefined;
+    const task = typeof record.task === "string"
+      ? record.task.trim() || undefined
+      : extractOpenClawMessageText(lastMessage);
 
     return [{
       provider: "openclaw",
@@ -336,7 +428,8 @@ function normalizeOpenClawSessionAgents(value: unknown): ProviderAgentRecord[] {
   });
 }
 
-async function buildHealth(provider: MissionProvider, connector: ProviderConnector): Promise<ProviderHealth> {
+async function buildHealth(connector: ProviderConnectorSyncConfig): Promise<ProviderHealth> {
+  const { provider } = connector;
   if (!connector.enabled || !connector.baseUrl) {
     return {
       provider,
@@ -348,7 +441,7 @@ async function buildHealth(provider: MissionProvider, connector: ProviderConnect
     };
   }
 
-  const health = await tryJsonCandidates(provider, connector.baseUrl, [
+  const health = await tryJsonCandidates(connector, [
     { path: "/health" },
     { path: "/api/health" },
     { path: "/api/status" },
@@ -378,45 +471,52 @@ async function buildHealth(provider: MissionProvider, connector: ProviderConnect
   };
 }
 
-async function syncOpenClaw(connector: ProviderConnector): Promise<ProviderSyncResult> {
-  const baseHealth = await buildHealth("openclaw", connector);
+async function syncOpenClaw(connector: ProviderConnectorSyncConfig): Promise<ProviderSyncResult> {
+  const baseHealth = await buildHealth(connector);
   if (!connector.enabled || !connector.baseUrl) {
     return { health: baseHealth, agents: [], schedules: [] };
   }
 
-  const sessionsResult = await tryJsonCandidates("openclaw", connector.baseUrl, [
-    {
-      path: `/api/sessions?activeMinutes=${OPENCLAW_ACTIVITY_WINDOW_MINUTES}&messageLimit=1`,
-    },
-    {
-      path: "/tools/invoke",
-      init: {
-        method: "POST",
-        body: JSON.stringify({
-          tool: "sessions_list",
-          action: "json",
-          sessionKey: "main",
-          args: {
-            activeMinutes: OPENCLAW_ACTIVITY_WINDOW_MINUTES,
-            messageLimit: 1,
-          },
-        }),
+  let sessionsResult: TimedJsonResult | null = null;
+  let sessionAgents: ProviderAgentRecord[] = [];
+  for (const activeMinutes of openClawActivityWindows()) {
+    sessionsResult = await tryJsonCandidates(connector, [
+      {
+        path: `/api/sessions?activeMinutes=${activeMinutes}&messageLimit=1`,
       },
-    },
-  ]);
+      {
+        path: "/tools/invoke",
+        init: {
+          method: "POST",
+          body: JSON.stringify({
+            tool: "sessions_list",
+            action: "json",
+            sessionKey: "main",
+            args: {
+              activeMinutes,
+              messageLimit: 1,
+            },
+          }),
+        },
+      },
+    ]);
+    sessionAgents = sessionsResult ? normalizeOpenClawSessionAgents(sessionsResult.data) : [];
+    if (sessionAgents.length > 0 || !sessionsResult?.ok) {
+      break;
+    }
+  }
 
-  const rosterResult = await tryJsonCandidates("openclaw", connector.baseUrl, [
+  const rosterResult = await tryJsonCandidates(connector, [
     { path: "/api/agents" },
     { path: "/api/roster" },
     { path: "/api/provider/agents" },
   ]);
-  const schedulesResult = await tryJsonCandidates("openclaw", connector.baseUrl, [
+  const schedulesResult = await tryJsonCandidates(connector, [
     { path: "/api/schedules" },
     { path: "/api/cron" },
     { path: "/api/jobs" },
   ]);
 
-  const sessionAgents = sessionsResult ? normalizeOpenClawSessionAgents(sessionsResult.data) : [];
   const rosterAgents = extractCollection(rosterResult?.data, ["agents", "roster", "items"])
     .map((item, index) => normalizeAgentRecord("openclaw", item, index))
     .filter((item): item is ProviderAgentRecord => Boolean(item));
@@ -459,23 +559,23 @@ async function syncOpenClaw(connector: ProviderConnector): Promise<ProviderSyncR
   };
 }
 
-async function syncHermes(connector: ProviderConnector): Promise<ProviderSyncResult> {
-  const baseHealth = await buildHealth("hermes", connector);
+async function syncHermes(connector: ProviderConnectorSyncConfig): Promise<ProviderSyncResult> {
+  const baseHealth = await buildHealth(connector);
   if (!connector.enabled || !connector.baseUrl) {
     return { health: baseHealth, agents: [], schedules: [] };
   }
 
-  const agentsResult = await tryJsonCandidates("hermes", connector.baseUrl, [
+  const agentsResult = await tryJsonCandidates(connector, [
     { path: "/api/agents" },
     { path: "/api/roster" },
     { path: "/api/provider/agents" },
   ]);
-  const activeWorkResult = await tryJsonCandidates("hermes", connector.baseUrl, [
+  const activeWorkResult = await tryJsonCandidates(connector, [
     { path: "/api/active-work" },
     { path: "/api/tasks/active" },
     { path: "/api/work/active" },
   ]);
-  const schedulesResult = await tryJsonCandidates("hermes", connector.baseUrl, [
+  const schedulesResult = await tryJsonCandidates(connector, [
     { path: "/api/schedules" },
     { path: "/api/jobs" },
     { path: "/api/cron" },
@@ -522,7 +622,7 @@ async function syncHermes(connector: ProviderConnector): Promise<ProviderSyncRes
   };
 }
 
-export async function syncProviderConnector(connector: ProviderConnector): Promise<ProviderSyncResult> {
+export async function syncProviderConnector(connector: ProviderConnectorSyncConfig): Promise<ProviderSyncResult> {
   if (connector.provider === "openclaw") {
     return syncOpenClaw(connector);
   }
