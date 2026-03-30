@@ -64,8 +64,9 @@ const CHARACTER_CELL_HEIGHT = 192;
 const CHARACTER_FRAME_WIDTH = 48;
 const CHARACTER_FRAME_HEIGHT = 48;
 const AGENT_WALK_FRAMES = 3;
-const SPRITE_SCALE = 1.72;
-const MOVE_SPEED = 86;
+const SPRITE_SCALE = 1.18;
+const MOVE_SPEED = 82;
+const COLLISION_PADDING = 10;
 const POSITION_EPSILON = 2;
 const IDLE_PAUSE_MIN_SECONDS = 1.6;
 const IDLE_PAUSE_MAX_SECONDS = 3.4;
@@ -559,6 +560,42 @@ function resolveDestinationAnchor(
   };
 }
 
+function repelCrowdedSprites(sprites: AgentSpriteRuntime[]): void {
+  for (let index = 0; index < sprites.length; index += 1) {
+    const left = sprites[index];
+    if (!left) {
+      continue;
+    }
+
+    for (let otherIndex = index + 1; otherIndex < sprites.length; otherIndex += 1) {
+      const right = sprites[otherIndex];
+      if (!right) {
+        continue;
+      }
+
+      const dx = right.container.x - left.container.x;
+      const dy = right.container.y - left.container.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance === 0 || distance >= COLLISION_PADDING * 2) {
+        continue;
+      }
+
+      const overlap = (COLLISION_PADDING * 2 - distance) / 2;
+      const offsetX = (dx / distance) * overlap;
+      const offsetY = (dy / distance) * overlap;
+
+      if (left.path.length > 0) {
+        left.container.x -= offsetX;
+        left.container.y -= offsetY;
+      }
+      if (right.path.length > 0) {
+        right.container.x += offsetX;
+        right.container.y += offsetY;
+      }
+    }
+  }
+}
+
 function applySpriteFrame(sprite: AgentSpriteRuntime, frame: number): void {
   const characterIndex = characterIndexForAgent(sprite.agent);
   sprite.body.setTexture(frameTextureName(characterIndex, Math.floor(frame / AGENT_WALK_FRAMES), frame % AGENT_WALK_FRAMES));
@@ -804,8 +841,9 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
 
     update(_time: number, delta: number): void {
       const deltaSeconds = delta / 1000;
+      const spriteList = Array.from(this.sprites.values());
 
-      this.sprites.forEach((sprite) => {
+      spriteList.forEach((sprite) => {
         sprite.walkElapsed += deltaSeconds;
         sprite.pulseElapsed += deltaSeconds;
         sprite.activityCooldown = Math.max(0, sprite.activityCooldown - deltaSeconds);
@@ -814,7 +852,11 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
         if (sprite.path.length === 0 && sprite.agent.connected && sprite.agent.status === "idle" && sprite.activityCooldown <= 0) {
           queueRoamPath(options.map, this.runtimeModel, sprite);
         }
+      });
 
+      repelCrowdedSprites(spriteList);
+
+      spriteList.forEach((sprite) => {
         applyAgentPose(sprite);
 
         const walking = sprite.path.length > 0;
