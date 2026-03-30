@@ -8,6 +8,7 @@ import {
   buildMissionOfficeRuntimeModel,
   resolveMissionOfficeDestination,
   type MissionFacing,
+  type MissionOfficeAnchor,
   type MissionOfficeDestination,
   type MissionOfficeRuntimeModel,
 } from "./missionOfficeRuntimeModel";
@@ -542,9 +543,60 @@ function destinationKey(destination: MissionOfficeDestination, agent: AgentRunti
     destination.id,
     destination.pose,
     destination.facing,
+    destination.approachNodeId ?? "none",
+    Math.round(destination.approachX ?? 0),
+    Math.round(destination.approachY ?? 0),
+    Math.round(destination.x),
+    Math.round(destination.y),
     agent.status,
     agent.connected ? "on" : "off",
   ].join(":");
+}
+
+function distanceSquared(leftX: number, leftY: number, rightX: number, rightY: number): number {
+  return (leftX - rightX) ** 2 + (leftY - rightY) ** 2;
+}
+
+function resolveDestinationAnchor(
+  runtime: MissionOfficeRuntimeModel,
+  destination: MissionOfficeDestination,
+  occupiedAnchorIds: Set<string>,
+  referenceX: number,
+  referenceY: number,
+): MissionOfficeDestination {
+  if (!destination.anchorIds.length) {
+    return destination;
+  }
+
+  const anchors = destination.anchorIds
+    .map((anchorId) => runtime.anchors.get(anchorId))
+    .filter((anchor): anchor is MissionOfficeAnchor => Boolean(anchor));
+
+  if (!anchors.length) {
+    return destination;
+  }
+
+  const available = anchors.filter((anchor) => !occupiedAnchorIds.has(anchor.id));
+  const candidates = available.length > 0 ? available : anchors;
+  const selected = [...candidates].sort((left, right) => {
+    const leftDistance = distanceSquared(left.x, left.y, referenceX, referenceY);
+    const rightDistance = distanceSquared(right.x, right.y, referenceX, referenceY);
+    return leftDistance - rightDistance || left.priority - right.priority;
+  })[0];
+
+  if (!selected) {
+    return destination;
+  }
+
+  occupiedAnchorIds.add(selected.id);
+  return {
+    ...destination,
+    x: selected.x,
+    y: selected.y,
+    approachX: selected.x,
+    approachY: selected.y,
+    approachNodeId: selected.nodeId ?? destination.approachNodeId,
+  };
 }
 
 function applySpriteFrame(sprite: AgentSpriteRuntime, frame: number): void {
@@ -617,20 +669,20 @@ function roamNodeIdsForDestination(destination: MissionOfficeDestination): strin
   switch (destination.kind) {
     case "support":
     case "special":
-      return ["support", "upper-right", "lower-right", "upper-center"];
+      return ["support", "upper-right", "lower-right"];
     case "lead":
-      return ["exec-center", "exec-door", "lower-right", "upper-right"];
+      return ["exec-center", "exec-door", "lower-right"];
     case "meeting":
-      return ["meeting-center", "meeting-door", "lower-center"];
+      return ["meeting-center", "meeting-door"];
     case "entry":
-      return ["entry", "upper-left", "lower-left"];
+      return ["entry", "upper-left"];
     case "desk":
     case "work":
       return destination.zone === "Bullpen Floor"
         ? ["upper-left", "upper-center", "upper-right", "lower-left", "lower-center", "lower-right"]
-        : ["upper-center", "lower-center", "meeting-door"];
+        : ["upper-center", "lower-center"];
     default:
-      return ["upper-center", "lower-center", "support", "meeting-door"];
+      return ["upper-center", "lower-center"];
   }
 }
 
@@ -774,35 +826,45 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
         }
       });
 
+      const occupiedAnchorIds = new Set<string>();
+
       state.agents.forEach((placement) => {
         const appearance = resolveAppearance(placement.agent);
-        const destination = resolveMissionOfficeDestination(this.runtimeModel, placement.point, placement.agent.status === "working");
-        const nextKey = destinationKey(destination, placement.agent);
-        const existing = this.sprites.get(placement.agent.id) ?? this.createAgentSprite(placement.agent, appearance, destination);
+        const baseDestination = resolveMissionOfficeDestination(this.runtimeModel, placement.point, placement.agent.status === "working");
+        const existing = this.sprites.get(placement.agent.id);
+        const resolvedDestination = resolveDestinationAnchor(
+          this.runtimeModel,
+          baseDestination,
+          occupiedAnchorIds,
+          existing?.container.x ?? baseDestination.x,
+          existing?.container.y ?? baseDestination.y,
+        );
+        const nextKey = destinationKey(resolvedDestination, placement.agent);
+        const sprite = existing ?? this.createAgentSprite(placement.agent, appearance, resolvedDestination);
         const accentColor = Number.parseInt(statusColor(placement.agent).slice(1), 16);
 
-        existing.agent = placement.agent;
-        existing.appearance = appearance;
-        existing.destination = destination;
-        existing.signal.setFillStyle(accentColor, 1);
-        existing.marker.setFillStyle(accentColor, 0.22);
-        existing.ring.setVisible(state.selectedAgentId === placement.agent.id);
+        sprite.agent = placement.agent;
+        sprite.appearance = appearance;
+        sprite.destination = resolvedDestination;
+        sprite.signal.setFillStyle(accentColor, 1);
+        sprite.marker.setFillStyle(accentColor, 0.22);
+        sprite.ring.setVisible(state.selectedAgentId === placement.agent.id);
 
-        if (existing.destinationKey !== nextKey) {
-          existing.destinationKey = nextKey;
-          existing.path = targetPath(
+        if (sprite.destinationKey !== nextKey) {
+          sprite.destinationKey = nextKey;
+          sprite.path = targetPath(
             options.map,
             this.runtimeModel,
-            existing.container.x,
-            existing.container.y,
-            destination,
-            placement.agent.status === "working" && destination.pose === "sit",
+            sprite.container.x,
+            sprite.container.y,
+            resolvedDestination,
+            placement.agent.status === "working" && resolvedDestination.pose === "sit",
           );
-          existing.activityCooldown = pauseDurationSeconds(existing.agent.id, existing.roamStep);
+          sprite.activityCooldown = pauseDurationSeconds(sprite.agent.id, sprite.roamStep);
         }
 
-        this.sprites.set(placement.agent.id, existing);
-        applyAgentPose(existing);
+        this.sprites.set(placement.agent.id, sprite);
+        applyAgentPose(sprite);
       });
     }
 

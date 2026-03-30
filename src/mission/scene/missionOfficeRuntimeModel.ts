@@ -33,7 +33,16 @@ export interface MissionOfficeOccluder {
   y: number;
 }
 
+export interface MissionOfficeAnchor {
+  id: string;
+  nodeId?: string;
+  priority: number;
+  x: number;
+  y: number;
+}
+
 export interface MissionOfficeDestination {
+  anchorIds: string[];
   approachNodeId: string | undefined;
   approachX: number | undefined;
   approachY: number | undefined;
@@ -47,6 +56,7 @@ export interface MissionOfficeDestination {
 }
 
 export interface MissionOfficeRuntimeModel {
+  anchors: Map<string, MissionOfficeAnchor>;
   background: MissionOfficeBackground;
   height: number;
   nodes: Map<string, MissionOfficeNode>;
@@ -89,6 +99,24 @@ function makeNode(background: MissionOfficeBackground, id: string, x: number, y:
     links,
     x: point.x,
     y: point.y,
+  };
+}
+
+function makeAnchor(
+  background: MissionOfficeBackground,
+  id: string,
+  x: number,
+  y: number,
+  priority: number,
+  nodeId?: string,
+): MissionOfficeAnchor {
+  const point = makeLocal(background, x, y);
+  return {
+    id,
+    x: point.x,
+    y: point.y,
+    priority,
+    ...(nodeId ? { nodeId } : {}),
   };
 }
 
@@ -139,9 +167,37 @@ export function buildMissionOfficeRuntimeModel(map: MissionTileMap): MissionOffi
 
   nodeList.forEach((node) => nodes.set(node.id, node));
 
+  const anchors = new Map<string, MissionOfficeAnchor>();
+  const anchorList = [
+    makeAnchor(background, "desk-ul-a", 116, 196, 1, "upper-left"),
+    makeAnchor(background, "desk-ul-b", 136, 196, 2, "upper-left"),
+    makeAnchor(background, "desk-uc-a", 208, 196, 1, "upper-center"),
+    makeAnchor(background, "desk-uc-b", 240, 196, 2, "upper-center"),
+    makeAnchor(background, "desk-uc-c", 264, 196, 3, "upper-center"),
+    makeAnchor(background, "desk-ur-a", 324, 196, 1, "upper-right"),
+    makeAnchor(background, "desk-ur-b", 356, 196, 2, "upper-right"),
+    makeAnchor(background, "desk-ll-a", 116, 362, 1, "lower-left"),
+    makeAnchor(background, "desk-ll-b", 148, 362, 2, "lower-left"),
+    makeAnchor(background, "desk-lc-a", 220, 362, 1, "lower-center"),
+    makeAnchor(background, "desk-lc-b", 252, 362, 2, "lower-center"),
+    makeAnchor(background, "desk-lc-c", 300, 362, 3, "lower-center"),
+    makeAnchor(background, "desk-lr-a", 392, 362, 1, "lower-right"),
+    makeAnchor(background, "desk-lr-b", 424, 362, 2, "lower-right"),
+    makeAnchor(background, "support-a", 444, 238, 1, "support"),
+    makeAnchor(background, "support-b", 424, 220, 2, "upper-right"),
+    makeAnchor(background, "meeting-a", 178, 436, 1, "meeting-center"),
+    makeAnchor(background, "meeting-b", 154, 452, 2, "meeting-center"),
+    makeAnchor(background, "meeting-c", 202, 452, 3, "meeting-center"),
+    makeAnchor(background, "exec-seat", 418, 466, 1, "exec-center"),
+    makeAnchor(background, "exec-side", 392, 448, 2, "exec-center"),
+    makeAnchor(background, "entry-a", 52, 170, 1, "entry"),
+    makeAnchor(background, "entry-b", 70, 184, 2, "upper-left"),
+    makeAnchor(background, "overflow-a", 270, 290, 1, "upper-center"),
+    makeAnchor(background, "overflow-b", 334, 290, 2, "upper-right"),
+  ];
+  anchorList.forEach((anchor) => anchors.set(anchor.id, anchor));
+
   const occluders = [
-    // Only the desk fronts need to occlude agents. Cropping the full furniture banks
-    // hides the characters entirely and makes "seated" agents disappear into the scene.
     makeOccluder(background, "desk-upper-left", 88, 171, 80, 36),
     makeOccluder(background, "desk-upper-center", 176, 171, 102, 36),
     makeOccluder(background, "desk-upper-right", 274, 171, 112, 36),
@@ -157,6 +213,7 @@ export function buildMissionOfficeRuntimeModel(map: MissionTileMap): MissionOffi
     height: map.pixelHeight,
     background,
     nodes,
+    anchors,
     occluders,
   };
 }
@@ -183,6 +240,17 @@ function nearestNode(runtime: MissionOfficeRuntimeModel, x: number, y: number, c
   return bestId;
 }
 
+function nearestAnchorIds(runtime: MissionOfficeRuntimeModel, x: number, y: number, prefix: string): string[] {
+  return Array.from(runtime.anchors.values())
+    .filter((anchor) => anchor.id.startsWith(prefix))
+    .sort((left, right) => {
+      const leftDistance = (left.x - x) ** 2 + (left.y - y) ** 2;
+      const rightDistance = (right.x - x) ** 2 + (right.y - y) ** 2;
+      return leftDistance - rightDistance || left.priority - right.priority;
+    })
+    .map((anchor) => anchor.id);
+}
+
 function facingForPoint(point: MapPoint): MissionFacing {
   const zone = point.zone.toLowerCase();
   const kind = point.kind?.toLowerCase() ?? "";
@@ -199,92 +267,16 @@ function facingForPoint(point: MapPoint): MissionFacing {
   return "north";
 }
 
-export function resolveMissionOfficeDestination(
+function destinationFromAnchorIds(
   runtime: MissionOfficeRuntimeModel,
   point: MapPoint,
-  working: boolean,
+  kind: string,
+  facing: MissionFacing,
+  pose: MissionPose,
+  anchorIds: string[],
+  fallbackNodeCandidates: string[],
 ): MissionOfficeDestination {
-  const kind = point.kind?.toLowerCase() ?? "overflow";
-  const localX = point.x - runtime.background.x;
-  const localY = point.y - runtime.background.y;
-  const facing = facingForPoint(point);
-
-  if (kind === "desk" || kind === "work") {
-    const upperRow = localY < 270;
-    return {
-      id: point.slotId ?? `${kind}-${point.x}-${point.y}`,
-      kind,
-      zone: point.zone,
-      x: point.x,
-      y: point.y,
-      facing,
-      pose: working ? "sit" : "stand",
-      approachX: point.x,
-      approachY: point.y + (upperRow ? 22 : 26),
-      approachNodeId: nearestNode(runtime, point.x, point.y, upperRow ? ["upper-left", "upper-center", "upper-right"] : ["lower-left", "lower-center", "lower-right"]),
-    };
-  }
-
-  if (kind === "lead") {
-    return {
-      id: point.slotId ?? `${kind}-${point.x}-${point.y}`,
-      kind,
-      zone: point.zone,
-      x: point.x,
-      y: point.y,
-      facing,
-      pose: working ? "sit" : "stand",
-      approachX: runtime.background.x + 392,
-      approachY: runtime.background.y + 412,
-      approachNodeId: "exec-door",
-    };
-  }
-
-  if (kind === "support" || kind === "special") {
-    return {
-      id: point.slotId ?? `${kind}-${point.x}-${point.y}`,
-      kind,
-      zone: point.zone,
-      x: point.x,
-      y: point.y,
-      facing,
-      pose: "stand",
-      approachX: point.x,
-      approachY: point.y,
-      approachNodeId: "support",
-    };
-  }
-
-  if (kind === "meeting") {
-    return {
-      id: point.slotId ?? `${kind}-${point.x}-${point.y}`,
-      kind,
-      zone: point.zone,
-      x: point.x,
-      y: point.y,
-      facing,
-      pose: "stand",
-      approachX: point.x,
-      approachY: point.y,
-      approachNodeId: nearestNode(runtime, point.x, point.y, ["meeting-center", "meeting-door"]),
-    };
-  }
-
-  if (kind === "entry") {
-    return {
-      id: point.slotId ?? `${kind}-${point.x}-${point.y}`,
-      kind,
-      zone: point.zone,
-      x: point.x,
-      y: point.y,
-      facing,
-      pose: "stand",
-      approachX: point.x,
-      approachY: point.y,
-      approachNodeId: "entry",
-    };
-  }
-
+  const primaryAnchor = anchorIds.map((id) => runtime.anchors.get(id)).find(Boolean);
   return {
     id: point.slotId ?? `${kind}-${point.x}-${point.y}`,
     kind,
@@ -292,9 +284,54 @@ export function resolveMissionOfficeDestination(
     x: point.x,
     y: point.y,
     facing,
-    pose: "stand",
-    approachX: point.x,
-    approachY: point.y,
-    approachNodeId: nearestNode(runtime, point.x, point.y, ["upper-center", "lower-center", "support", "meeting-door", "exec-door"]),
+    pose,
+    anchorIds,
+    approachX: primaryAnchor?.x ?? point.x,
+    approachY: primaryAnchor?.y ?? point.y,
+    approachNodeId: primaryAnchor?.nodeId ?? nearestNode(runtime, point.x, point.y, fallbackNodeCandidates),
   };
+}
+
+export function resolveMissionOfficeDestination(
+  runtime: MissionOfficeRuntimeModel,
+  point: MapPoint,
+  working: boolean,
+): MissionOfficeDestination {
+  const kind = point.kind?.toLowerCase() ?? "overflow";
+  const localY = point.y - runtime.background.y;
+  const facing = facingForPoint(point);
+
+  if (kind === "desk" || kind === "work") {
+    const upperRow = localY < 270;
+    const anchorIds = upperRow
+      ? nearestAnchorIds(runtime, point.x, point.y, "desk-u")
+      : nearestAnchorIds(runtime, point.x, point.y, "desk-l");
+    return destinationFromAnchorIds(
+      runtime,
+      point,
+      kind,
+      facing,
+      working ? "sit" : "stand",
+      anchorIds,
+      upperRow ? ["upper-left", "upper-center", "upper-right"] : ["lower-left", "lower-center", "lower-right"],
+    );
+  }
+
+  if (kind === "lead") {
+    return destinationFromAnchorIds(runtime, point, kind, facing, working ? "sit" : "stand", ["exec-seat", "exec-side"], ["exec-door", "exec-center"]);
+  }
+
+  if (kind === "support" || kind === "special") {
+    return destinationFromAnchorIds(runtime, point, kind, facing, "stand", ["support-a", "support-b"], ["support", "upper-right", "lower-right"]);
+  }
+
+  if (kind === "meeting") {
+    return destinationFromAnchorIds(runtime, point, kind, facing, "stand", ["meeting-a", "meeting-b", "meeting-c"], ["meeting-center", "meeting-door"]);
+  }
+
+  if (kind === "entry") {
+    return destinationFromAnchorIds(runtime, point, kind, facing, "stand", ["entry-a", "entry-b"], ["entry", "upper-left"]);
+  }
+
+  return destinationFromAnchorIds(runtime, point, kind, facing, "stand", ["overflow-a", "overflow-b"], ["upper-center", "lower-center", "support", "meeting-door", "exec-door"]);
 }
