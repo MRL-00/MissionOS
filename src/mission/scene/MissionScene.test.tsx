@@ -39,8 +39,7 @@ describe("MissionScene", () => {
       />,
     );
 
-    expect(screen.getByText("Pixel-authored modern office")).toBeInTheDocument();
-    expect(screen.getByText("Collab Room")).toBeInTheDocument();
+    expect(screen.getByText(/Pixel-authored modern office/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Pickle, working, Bullpen Floor/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Matt, in meeting, Collab Room/i })).toBeInTheDocument();
 

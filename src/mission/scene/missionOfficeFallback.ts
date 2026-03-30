@@ -261,17 +261,17 @@ export const missionOfficeFallbackData = {
   tilesets: [
     {
       firstgid: 200,
-      name: "modern-office-layout",
-      tilewidth: 512,
-      tileheight: 544,
+      name: "office-bounds",
+      tilewidth: OFFICE_WIDTH,
+      tileheight: OFFICE_HEIGHT,
       tilecount: 1,
       columns: 0,
       tiles: [
         {
           id: 0,
-          image: "6_Office_Designs/Office_Design_2.png",
-          imagewidth: 512,
-          imageheight: 544,
+          image: "../1_Room_Builder_Office/Room_Builder_Office_16x16.png",
+          imagewidth: OFFICE_WIDTH,
+          imageheight: OFFICE_HEIGHT,
         },
       ],
     },

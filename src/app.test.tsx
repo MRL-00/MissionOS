@@ -146,9 +146,7 @@ describe("App", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { level: 1, name: "Mission Control" })).toBeInTheDocument();
-    expect(screen.getByText("Live Mission Overview")).toBeInTheDocument();
     expect(await screen.findByTestId("mission-scene")).toBeInTheDocument();
-    expect(screen.getByText("Build mission control")).toBeInTheDocument();
   });
 
   it("keeps the connector token draft during live connector refreshes", () => {

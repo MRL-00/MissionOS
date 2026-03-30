@@ -753,9 +753,6 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
         return;
       }
 
-      if (this.runtimeModel.background.source) {
-        load.image("office-bg", this.runtimeModel.background.source);
-      }
       options.map.props.forEach((prop) => {
         const key = `prop-${prop.id}`;
         if (!this.textures.exists(key)) {
@@ -773,18 +770,83 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
       }
 
       cameras.main.setRoundPixels(true);
-      add.rectangle(0, 0, this.runtimeModel.width, this.runtimeModel.height, 0xe5e7eb).setOrigin(0, 0).setDepth(-40);
-      add.rectangle(96, 96, 416, 288, 0xf8fafc).setOrigin(0, 0).setDepth(-35);
-      add.rectangle(96, 96, 416, 24, 0xcbd5e1).setOrigin(0, 0).setDepth(-34);
-      add.rectangle(96, 272, 416, 16, 0xdbe4ef).setOrigin(0, 0).setDepth(-34);
 
-      if (this.runtimeModel.background.source) {
-        add.image(this.runtimeModel.background.x, this.runtimeModel.background.y, "office-bg")
-          .setOrigin(0, 0)
-          .setDisplaySize(this.runtimeModel.background.width, this.runtimeModel.background.height)
-          .setDepth(-10);
+      const map = options.map;
+      const zones = map.zones;
+      const T = map.tileWidth;
+
+      // Derive office bounds from walkable area
+      let oLeft = map.pixelWidth;
+      let oTop = map.pixelHeight;
+      let oRight = 0;
+      let oBottom = 0;
+      for (let row = 0; row < map.rows; row += 1) {
+        for (let col = 0; col < map.cols; col += 1) {
+          if (map.walkableTiles[row * map.cols + col]) {
+            oLeft = Math.min(oLeft, col * T);
+            oTop = Math.min(oTop, row * T);
+            oRight = Math.max(oRight, (col + 1) * T);
+            oBottom = Math.max(oBottom, (row + 1) * T);
+          }
+        }
+      }
+      // Expand by 1 tile for the perimeter wall
+      oLeft -= T;
+      oTop -= T;
+      oRight += T;
+      oBottom += T;
+
+      // Zone floor colors
+      const ZONE_FLOOR: Record<string, number> = {
+        work: 0xebe7e1,
+        meeting: 0xe4ddd0,
+        lead: 0xdedad4,
+        support: 0xe0e8e4,
+        entry: 0xdce0e8,
+      };
+      const CORRIDOR_COLOR = 0xedeae6;
+      const WALL_COLOR = 0x3d3548;
+
+      // Dark surround
+      add.rectangle(0, 0, this.runtimeModel.width, this.runtimeModel.height, 0x1a1d24).setOrigin(0, 0).setDepth(-40);
+
+      // Render every cell inside the office bounds
+      for (let row = Math.floor(oTop / T); row < Math.ceil(oBottom / T); row += 1) {
+        for (let col = Math.floor(oLeft / T); col < Math.ceil(oRight / T); col += 1) {
+          const x = col * T;
+          const y = row * T;
+          const cx = x + T / 2;
+          const cy = y + T / 2;
+          const walkable = isWalkableCell(map, col, row);
+          const zone = zones.find((z) => cx >= z.x && cx < z.x + z.width && cy >= z.y && cy < z.y + z.height);
+
+          if (zone) {
+            // Inside a zone: always floor (furniture props render on top)
+            const color = ZONE_FLOOR[zone.kind] ?? CORRIDOR_COLOR;
+            add.rectangle(x, y, T, T, color).setOrigin(0, 0).setDepth(-20);
+          } else if (walkable) {
+            // Corridor / hallway between zones
+            add.rectangle(x, y, T, T, CORRIDOR_COLOR).setOrigin(0, 0).setDepth(-20);
+          } else {
+            // Structural wall or perimeter
+            add.rectangle(x, y, T, T, WALL_COLOR).setOrigin(0, 0).setDepth(-15);
+          }
+        }
       }
 
+      // Thin accent border around the full office
+      const g = this.add.graphics();
+      g.lineStyle(1, 0x2a2434);
+      g.strokeRect(oLeft + T, oTop + T, oRight - oLeft - 2 * T, oBottom - oTop - 2 * T);
+      g.setDepth(-12);
+
+      // Subtle zone separator lines
+      g.lineStyle(1, 0xc8c0b8);
+      zones.forEach((zone) => {
+        g.strokeRect(zone.x, zone.y, zone.width, zone.height);
+      });
+
+      // Render furniture props from map (48×48 singles placed in the tmj)
       [...options.map.props]
         .sort((left, right) => left.zIndex - right.zIndex)
         .forEach((prop) => {
@@ -795,17 +857,6 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
         });
 
       createSheetFrames(this, "body-sheet");
-
-      if (this.runtimeModel.background.source) {
-        this.runtimeModel.occluders.forEach((occluder) => {
-          const key = `occluder-${occluder.id}`;
-          cropTexture(this, key, "office-bg", occluder.cropX, occluder.cropY, occluder.cropWidth, occluder.cropHeight);
-          add.image(occluder.x, occluder.y, key)
-            .setOrigin(0, 0)
-            .setDepth(occluder.y + occluder.height + 8);
-        });
-      }
-
       this.applyState(this.latestState);
     }
 
