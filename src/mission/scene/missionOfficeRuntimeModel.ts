@@ -1,5 +1,5 @@
 import type { MapPoint } from "./missionMapModel";
-import type { MissionMapProp, MissionTileMap } from "./missionTileMap";
+import type { MissionTileMap } from "./missionTileMap";
 
 export type MissionFacing = "south" | "east" | "north" | "west";
 export type MissionPose = "stand" | "sit";
@@ -64,24 +64,15 @@ export interface MissionOfficeRuntimeModel {
   width: number;
 }
 
-function largestProp(map: MissionTileMap): MissionMapProp | null {
-  return map.props.reduce<MissionMapProp | null>((largest, current) => {
-    if (!largest) {
-      return current;
-    }
-    return current.width * current.height > largest.width * largest.height ? current : largest;
-  }, null);
-}
-
-function clampBackground(map: MissionTileMap, prop: MissionMapProp): MissionOfficeBackground {
+function defaultBackground(map: MissionTileMap): MissionOfficeBackground {
   return {
-    source: prop.asset.source,
-    imageWidth: prop.asset.imageWidth,
-    imageHeight: prop.asset.imageHeight,
-    x: prop.x,
-    y: prop.y - prop.height,
-    width: prop.width,
-    height: prop.height,
+    source: "",
+    imageWidth: map.pixelWidth,
+    imageHeight: map.pixelHeight,
+    x: 0,
+    y: 0,
+    width: map.pixelWidth,
+    height: map.pixelHeight,
   };
 }
 
@@ -143,12 +134,7 @@ function makeOccluder(
 }
 
 export function buildMissionOfficeRuntimeModel(map: MissionTileMap): MissionOfficeRuntimeModel | null {
-  const backgroundProp = largestProp(map);
-  if (!backgroundProp) {
-    return null;
-  }
-
-  const background = clampBackground(map, backgroundProp);
+  const background = defaultBackground(map);
   const nodes = new Map<string, MissionOfficeNode>();
   const nodeList = [
     makeNode(background, "entry", 24, 176, ["upper-left"]),

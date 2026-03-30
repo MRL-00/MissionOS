@@ -753,7 +753,15 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
         return;
       }
 
-      load.image("office-bg", this.runtimeModel.background.source);
+      if (this.runtimeModel.background.source) {
+        load.image("office-bg", this.runtimeModel.background.source);
+      }
+      options.map.props.forEach((prop) => {
+        const key = `prop-${prop.id}`;
+        if (!this.textures.exists(key)) {
+          load.image(key, prop.asset.source);
+        }
+      });
       load.image("body-sheet", CHARACTER_SPRITES);
     }
 
@@ -765,22 +773,38 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
       }
 
       cameras.main.setRoundPixels(true);
-      add.rectangle(0, 0, this.runtimeModel.width, this.runtimeModel.height, 0xd7dde5).setOrigin(0, 0).setDepth(-20);
+      add.rectangle(0, 0, this.runtimeModel.width, this.runtimeModel.height, 0xe5e7eb).setOrigin(0, 0).setDepth(-40);
+      add.rectangle(96, 96, 416, 288, 0xf8fafc).setOrigin(0, 0).setDepth(-35);
+      add.rectangle(96, 96, 416, 24, 0xcbd5e1).setOrigin(0, 0).setDepth(-34);
+      add.rectangle(96, 272, 416, 16, 0xdbe4ef).setOrigin(0, 0).setDepth(-34);
 
-      add.image(this.runtimeModel.background.x, this.runtimeModel.background.y, "office-bg")
-        .setOrigin(0, 0)
-        .setDisplaySize(this.runtimeModel.background.width, this.runtimeModel.background.height)
-        .setDepth(-10);
+      if (this.runtimeModel.background.source) {
+        add.image(this.runtimeModel.background.x, this.runtimeModel.background.y, "office-bg")
+          .setOrigin(0, 0)
+          .setDisplaySize(this.runtimeModel.background.width, this.runtimeModel.background.height)
+          .setDepth(-10);
+      }
+
+      [...options.map.props]
+        .sort((left, right) => left.zIndex - right.zIndex)
+        .forEach((prop) => {
+          add.image(prop.x, prop.y, `prop-${prop.id}`)
+            .setOrigin(0, 1)
+            .setDisplaySize(prop.width, prop.height)
+            .setDepth(prop.zIndex);
+        });
 
       createSheetFrames(this, "body-sheet");
 
-      this.runtimeModel.occluders.forEach((occluder) => {
-        const key = `occluder-${occluder.id}`;
-        cropTexture(this, key, "office-bg", occluder.cropX, occluder.cropY, occluder.cropWidth, occluder.cropHeight);
-        add.image(occluder.x, occluder.y, key)
-          .setOrigin(0, 0)
-          .setDepth(occluder.y + occluder.height + 8);
-      });
+      if (this.runtimeModel.background.source) {
+        this.runtimeModel.occluders.forEach((occluder) => {
+          const key = `occluder-${occluder.id}`;
+          cropTexture(this, key, "office-bg", occluder.cropX, occluder.cropY, occluder.cropWidth, occluder.cropHeight);
+          add.image(occluder.x, occluder.y, key)
+            .setOrigin(0, 0)
+            .setDepth(occluder.y + occluder.height + 8);
+        });
+      }
 
       this.applyState(this.latestState);
     }
