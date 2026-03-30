@@ -1,4 +1,4 @@
-import type { AgentAppearance, AgentRuntimeState, HairStyle } from "../../types";
+import type { AgentAppearance, AgentRuntimeState } from "../../types";
 import {
   resolveAppearance,
   statusColor,
@@ -46,57 +46,35 @@ interface AgentSpriteRuntime {
   destination: MissionOfficeDestination | null;
   destinationKey: string;
   facing: MissionFacing;
-  hair: PhaserImage | null;
   marker: PhaserEllipse;
-  outfit: PhaserImage;
   path: Array<{ x: number; y: number }>;
   pulseElapsed: number;
   ring: PhaserEllipse;
   roamStep: number;
-  shadow: PhaserImage;
+  shadow: PhaserEllipse;
   signal: PhaserArc;
   walkElapsed: number;
 }
 
-const METRO_ASSET_BASE = "/assets/metro-city";
-const CHARACTER_SPRITES = encodeURI(`${METRO_ASSET_BASE}/CharacterModel/Character Model.png`);
-const SHADOW_SPRITE = encodeURI(`${METRO_ASSET_BASE}/CharacterModel/Shadow.png`);
-const HAIR_SPRITES = encodeURI(`${METRO_ASSET_BASE}/Hair/Hairs.png`);
-const OUTFIT_SPRITES = [
-  `${METRO_ASSET_BASE}/Outfits/Outfit1.png`,
-  `${METRO_ASSET_BASE}/Outfits/Outfit2.png`,
-  `${METRO_ASSET_BASE}/Outfits/Outfit3.png`,
-  `${METRO_ASSET_BASE}/Outfits/Outfit4.png`,
-  `${METRO_ASSET_BASE}/Outfits/Outfit5.png`,
-  `${METRO_ASSET_BASE}/Outfits/Outfit6.png`,
-] as const;
-const SUIT_SPRITE = `${METRO_ASSET_BASE}/Outfits/Suit.png`;
-const FRAME_COLUMNS = 24;
-const BASE_ROWS = 6;
-const HAIR_ROWS = 8;
-const AGENT_WALK_FRAMES = 6;
-const FRAME_SIZE = 32;
-const SPRITE_SCALE = 1.94;
+const CHARACTER_SPRITES = "/assets/modern-office/characters/RPGMAKERMV/Characters_MV.png";
+const CHARACTER_SHEET_COLUMNS = 4;
+const CHARACTER_SHEET_ROWS = 2;
+const CHARACTER_CELL_WIDTH = 144;
+const CHARACTER_CELL_HEIGHT = 192;
+const CHARACTER_FRAME_WIDTH = 48;
+const CHARACTER_FRAME_HEIGHT = 48;
+const AGENT_WALK_FRAMES = 3;
+const SPRITE_SCALE = 1.72;
 const MOVE_SPEED = 86;
 const POSITION_EPSILON = 2;
 const IDLE_PAUSE_MIN_SECONDS = 1.6;
 const IDLE_PAUSE_MAX_SECONDS = 3.4;
-const HAIR_ROW_BY_STYLE: Record<Exclude<HairStyle, "none">, number> = {
-  short: 0,
-  long: 1,
-  mohawk: 2,
-  messy: 3,
-  slicked: 4,
-  buzz: 5,
-  curly: 6,
-};
-const DIRECTION_FRAME_START: Record<MissionFacing, number> = {
+const DIRECTION_FRAME_ROW: Record<MissionFacing, number> = {
   south: 0,
-  east: 6,
-  north: 12,
-  west: 18,
+  west: 1,
+  east: 2,
+  north: 3,
 };
-const SUIT_ROLE_MATCHER = /(chief|cio|lead|advisor|director|manager|head)/i;
 
 function hashString(value: string): number {
   let hash = 2166136261;
@@ -109,64 +87,31 @@ function hashString(value: string): number {
   return hash >>> 0;
 }
 
-function baseRowForAppearance(agentId: string, appearance: AgentAppearance): number {
-  return hashString(`${agentId}:${appearance.skinColor}:${appearance.headShape}`) % BASE_ROWS;
-}
-
-function hairRowForAppearance(appearance: AgentAppearance): number | null {
-  if (appearance.hairStyle === "none") {
-    return null;
-  }
-
-  return HAIR_ROW_BY_STYLE[appearance.hairStyle];
-}
-
-function outfitTextureInfo(agent: Pick<AgentRuntimeState, "id" | "role">): {
-  keyPrefix: string;
-  row: number;
-  rowCount: number;
-  source: string;
-} {
-  const hash = hashString(`${agent.id}:${agent.role}`);
-  if (SUIT_ROLE_MATCHER.test(agent.role)) {
-    return {
-      keyPrefix: "suit",
-      source: SUIT_SPRITE,
-      row: hash % 4,
-      rowCount: 4,
-    };
-  }
-
-  const outfitIndex = hash % OUTFIT_SPRITES.length;
-  return {
-    keyPrefix: `outfit-${outfitIndex + 1}`,
-    source: OUTFIT_SPRITES[outfitIndex] ?? OUTFIT_SPRITES[0],
-    row: 0,
-    rowCount: 1,
-  };
+function characterIndexForAgent(agent: Pick<AgentRuntimeState, "id" | "role">): number {
+  return hashString(`${agent.id}:${agent.role}`) % (CHARACTER_SHEET_COLUMNS * CHARACTER_SHEET_ROWS);
 }
 
 function stationaryFrame(agent: AgentRuntimeState, destination: MissionOfficeDestination | null, elapsed: number, facing: MissionFacing): number {
-  const frameStart = DIRECTION_FRAME_START[facing];
+  const row = DIRECTION_FRAME_ROW[facing];
 
   if (!agent.connected) {
-    return frameStart;
+    return row * AGENT_WALK_FRAMES + 1;
   }
 
   if (agent.status === "meeting") {
-    return frameStart + 1;
+    return row * AGENT_WALK_FRAMES + 1;
   }
 
   if (destination?.pose === "sit" && agent.status === "working") {
-    return frameStart + 1 + (Math.floor(elapsed * 6) % 2);
+    return row * AGENT_WALK_FRAMES + (Math.floor(elapsed * 4) % AGENT_WALK_FRAMES);
   }
 
-  return frameStart;
+  return row * AGENT_WALK_FRAMES + 1;
 }
 
 function walkingFrame(facing: MissionFacing, elapsed: number): number {
-  const frameStart = DIRECTION_FRAME_START[facing];
-  return frameStart + (Math.floor(elapsed * 12) % AGENT_WALK_FRAMES);
+  const row = DIRECTION_FRAME_ROW[facing];
+  return row * AGENT_WALK_FRAMES + (Math.floor(elapsed * 8) % AGENT_WALK_FRAMES);
 }
 
 function facingFromDelta(dx: number, dy: number, fallback: MissionFacing): MissionFacing {
@@ -179,8 +124,8 @@ function facingFromDelta(dx: number, dy: number, fallback: MissionFacing): Missi
   return dy > 0 ? "south" : "north";
 }
 
-function frameTextureName(prefix: string, row: number, frame: number): string {
-  return `${prefix}-${row}-${frame}`;
+function frameTextureName(characterIndex: number, row: number, frame: number): string {
+  return `char-${characterIndex}-${row}-${frame}`;
 }
 
 function cropTexture(scene: PhaserScene, key: string, sourceKey: string, x: number, y: number, width: number, height: number): void {
@@ -201,10 +146,25 @@ function cropTexture(scene: PhaserScene, key: string, sourceKey: string, x: numb
   texture.refresh();
 }
 
-function createSheetFrames(scene: PhaserScene, sourceKey: string, prefix: string, rows: number): void {
-  for (let row = 0; row < rows; row += 1) {
-    for (let frame = 0; frame < FRAME_COLUMNS; frame += 1) {
-      cropTexture(scene, frameTextureName(prefix, row, frame), sourceKey, frame * FRAME_SIZE, row * FRAME_SIZE, FRAME_SIZE, FRAME_SIZE);
+function createSheetFrames(scene: PhaserScene, sourceKey: string): void {
+  for (let characterIndex = 0; characterIndex < CHARACTER_SHEET_COLUMNS * CHARACTER_SHEET_ROWS; characterIndex += 1) {
+    const characterCol = characterIndex % CHARACTER_SHEET_COLUMNS;
+    const characterRow = Math.floor(characterIndex / CHARACTER_SHEET_COLUMNS);
+    const baseX = characterCol * CHARACTER_CELL_WIDTH;
+    const baseY = characterRow * CHARACTER_CELL_HEIGHT;
+
+    for (let row = 0; row < 4; row += 1) {
+      for (let frame = 0; frame < AGENT_WALK_FRAMES; frame += 1) {
+        cropTexture(
+          scene,
+          frameTextureName(characterIndex, row, frame),
+          sourceKey,
+          baseX + frame * CHARACTER_FRAME_WIDTH,
+          baseY + row * CHARACTER_FRAME_HEIGHT,
+          CHARACTER_FRAME_WIDTH,
+          CHARACTER_FRAME_HEIGHT,
+        );
+      }
     }
   }
 }
@@ -600,36 +560,21 @@ function resolveDestinationAnchor(
 }
 
 function applySpriteFrame(sprite: AgentSpriteRuntime, frame: number): void {
-  const appearanceRow = baseRowForAppearance(sprite.agent.id, sprite.appearance);
-  sprite.body.setTexture(frameTextureName("body", appearanceRow, frame));
-
-  const outfit = outfitTextureInfo(sprite.agent);
-  sprite.outfit.setTexture(frameTextureName(outfit.keyPrefix, outfit.row, frame));
-
-  const hairRow = hairRowForAppearance(sprite.appearance);
-  if (hairRow !== null && sprite.hair) {
-    sprite.hair.setVisible(true);
-    sprite.hair.setTexture(frameTextureName("hair", hairRow, frame));
-  } else if (sprite.hair) {
-    sprite.hair.setVisible(false);
-  }
+  const characterIndex = characterIndexForAgent(sprite.agent);
+  sprite.body.setTexture(frameTextureName(characterIndex, Math.floor(frame / AGENT_WALK_FRAMES), frame % AGENT_WALK_FRAMES));
 }
 
 function applyAgentPose(sprite: AgentSpriteRuntime): void {
   const seated = sprite.destination?.pose === "sit" && sprite.agent.status === "working" && sprite.path.length === 0;
-  const bodyOffsetY = seated ? -22 : 0;
-  const bodyScale = seated ? 0.82 : 1;
+  const bodyOffsetY = seated ? -14 : -4;
+  const bodyScale = seated ? 0.9 : 1;
 
   sprite.body.setY(bodyOffsetY).setScale(SPRITE_SCALE, SPRITE_SCALE * bodyScale);
-  sprite.outfit.setY(bodyOffsetY).setScale(SPRITE_SCALE, SPRITE_SCALE * bodyScale);
-  if (sprite.hair) {
-    sprite.hair.setY(bodyOffsetY).setScale(SPRITE_SCALE, SPRITE_SCALE * bodyScale);
-  }
-  sprite.shadow.setY(seated ? 8 : 3).setScale(seated ? 1.05 : 1.28);
-  sprite.marker.setY(seated ? 7 : 2);
-  sprite.ring.setY(seated ? 7 : 2);
-  sprite.signal.setY(seated ? -58 : -48);
-  sprite.signal.setX(seated ? 17 : 18);
+  sprite.shadow.setY(seated ? 10 : 6).setSize(seated ? 28 : 34, seated ? 12 : 14);
+  sprite.marker.setY(seated ? 8 : 4);
+  sprite.ring.setY(seated ? 8 : 4);
+  sprite.signal.setY(seated ? -42 : -38);
+  sprite.signal.setX(14);
 }
 
 function updateAgentMotion(sprite: AgentSpriteRuntime, deltaSeconds: number): void {
@@ -772,13 +717,7 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
       }
 
       load.image("office-bg", this.runtimeModel.background.source);
-      load.image("shadow", SHADOW_SPRITE);
       load.image("body-sheet", CHARACTER_SPRITES);
-      load.image("hair-sheet", HAIR_SPRITES);
-      load.image("suit-sheet", SUIT_SPRITE);
-      OUTFIT_SPRITES.forEach((source, index) => {
-        load.image(`outfit-sheet-${index + 1}`, source);
-      });
     }
 
     create(): void {
@@ -796,12 +735,7 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
         .setDisplaySize(this.runtimeModel.background.width, this.runtimeModel.background.height)
         .setDepth(-10);
 
-      createSheetFrames(this, "body-sheet", "body", BASE_ROWS);
-      createSheetFrames(this, "hair-sheet", "hair", HAIR_ROWS);
-      createSheetFrames(this, "suit-sheet", "suit", 4);
-      OUTFIT_SPRITES.forEach((_, index) => {
-        createSheetFrames(this, `outfit-sheet-${index + 1}`, `outfit-${index + 1}`, 1);
-      });
+      createSheetFrames(this, "body-sheet");
 
       this.runtimeModel.occluders.forEach((occluder) => {
         const key = `occluder-${occluder.id}`;
@@ -896,27 +830,21 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
     }
 
     private createAgentSprite(agent: AgentRuntimeState, appearance: AgentAppearance, destination: MissionOfficeDestination): AgentSpriteRuntime {
-      const hairRow = hairRowForAppearance(appearance);
-      const marker = this.add.ellipse(0, 2, 26, 10, Number.parseInt(statusColor(agent).slice(1), 16), 0.22);
-      const ring = this.add.ellipse(0, 2, 34, 14)
+      const marker = this.add.ellipse(0, 4, 26, 10, Number.parseInt(statusColor(agent).slice(1), 16), 0.22);
+      const ring = this.add.ellipse(0, 4, 34, 14)
         .setStrokeStyle(2, 0x7ef3b1, 1)
         .setFillStyle(0x7ef3b1, 0.14)
         .setVisible(false);
-      const shadow = this.add.image(0, 3, "shadow").setScale(1.25).setAlpha(0.68);
-      const body = this.add.image(0, 0, frameTextureName("body", baseRowForAppearance(agent.id, appearance), 0)).setOrigin(0.5, 1).setScale(SPRITE_SCALE);
-      const outfitInfo = outfitTextureInfo(agent);
-      const outfit = this.add.image(0, 0, frameTextureName(outfitInfo.keyPrefix, outfitInfo.row, 0)).setOrigin(0.5, 1).setScale(SPRITE_SCALE);
-      const hair = hairRow === null
-        ? null
-        : this.add.image(0, 0, frameTextureName("hair", hairRow, 0)).setOrigin(0.5, 1).setScale(SPRITE_SCALE);
-      const signal = this.add.circle(18, -48, 5, Number.parseInt(statusColor(agent).slice(1), 16), 1);
+      const shadow = this.add.ellipse(0, 6, 34, 14, 0x000000, 0.22);
+      const body = this.add.image(0, -4, frameTextureName(characterIndexForAgent(agent), 0, 1)).setOrigin(0.5, 1).setScale(SPRITE_SCALE);
+      const signal = this.add.circle(14, -38, 5, Number.parseInt(statusColor(agent).slice(1), 16), 1);
       signal.setStrokeStyle(2, 0x172113, 1);
       const spawnNodeId = spawnNodeIdForAgent(this.runtimeModel, agent, destination);
       const spawnNode = this.runtimeModel.nodes.get(spawnNodeId);
       const spawnX = spawnNode?.x ?? destination.approachX ?? destination.x;
       const spawnY = spawnNode?.y ?? destination.approachY ?? destination.y;
 
-      const parts = [marker, ring, shadow, body, outfit, ...(hair ? [hair] : []), signal];
+      const parts = [marker, ring, shadow, body, signal];
       const container = this.add.container(spawnX, spawnY, parts);
       container.setSize(60, 82);
       container.setInteractive(
@@ -934,9 +862,7 @@ export async function createMissionPhaserRuntime(options: MissionPhaserRuntimeOp
         destination,
         destinationKey: destinationKey(destination, agent),
         facing: destination.facing,
-        hair,
         marker,
-        outfit,
         path: [],
         pulseElapsed: 0,
         ring,
