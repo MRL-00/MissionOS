@@ -1,4 +1,12 @@
 export type MissionProvider = "hermes" | "claude-local" | "codex-local";
+export type ProviderAgentActivityStatus =
+  | "idle"
+  | "building"
+  | "reviewing"
+  | "spec-writing"
+  | "pr-opened"
+  | "approved"
+  | "rejected";
 
 export interface AdapterConfigField {
   key: string;
@@ -40,7 +48,6 @@ export interface ProviderConnector {
   baseUrl?: string | undefined;
   websocketUrl?: string | undefined;
   runtimeBaseUrl?: string | undefined;
-  syncIntervalMs: number;
   authMode: "none" | "bearer";
   tokenConfigured: boolean;
   capabilities: MissionProviderCapabilities;
@@ -55,7 +62,6 @@ export interface ProviderConnectorUpdateRequest {
   baseUrl?: string | undefined;
   websocketUrl?: string | undefined;
   runtimeBaseUrl?: string | undefined;
-  syncIntervalMs?: number | undefined;
   authMode?: "none" | "bearer" | undefined;
   token?: string | undefined;
   adapterConfig?: Record<string, unknown> | undefined;
@@ -68,7 +74,11 @@ export interface ProviderAgentRecord {
   name: string;
   role?: string | undefined;
   officeAgentId?: string | undefined;
-  status: "idle" | "working" | "offline" | "unknown";
+  status: "online" | "offline" | "working" | "idle" | "unknown";
+  activityStatus?: ProviderAgentActivityStatus | null;
+  currentTicket?: string | null;
+  taskStage?: string | null;
+  lastActivityAt?: string | null;
   task?: string | undefined;
   lastSeenAt?: number | undefined;
   runtimeBaseUrl?: string | undefined;

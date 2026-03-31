@@ -1,5 +1,9 @@
 import { Suspense, lazy, startTransition, useDeferredValue, useCallback, useEffect, useRef, useState } from "react";
 import { DEPLOY_BADGE_LABEL } from "./config/buildInfo";
+import {
+  formatProviderAgentStatus,
+  isProviderAgentActivelyExecuting,
+} from "./mission/providerAgents";
 import { useMissionControl, type MissionView } from "./mission/hooks/useMissionControl";
 import { compareMissionTasksForBoard, getMissionTaskBoardStage } from "./mission/taskBoard";
 import type { ActivityLogEntry, AgentBackendProvider, AgentRegistration, AgentRuntimeState } from "./types";
@@ -136,6 +140,21 @@ function statusTone(name: string): string {
   const normalized = name.trim().toLowerCase();
   if (normalized.includes("block")) {
     return "bg-linear-red/15 text-linear-red border-linear-red/25";
+  }
+  if (normalized.includes("reject")) {
+    return "bg-linear-red/15 text-linear-red border-linear-red/25";
+  }
+  if (normalized.includes("build")) {
+    return "bg-sky-500/15 text-sky-200 border-sky-400/25";
+  }
+  if (normalized.includes("approve")) {
+    return "bg-emerald-500/15 text-emerald-200 border-emerald-400/25";
+  }
+  if (normalized.includes("spec")) {
+    return "bg-amber-500/15 text-amber-200 border-amber-400/25";
+  }
+  if (normalized.includes("pr ")) {
+    return "bg-violet-500/15 text-violet-200 border-violet-400/25";
   }
   if (normalized.includes("review") || normalized.includes("qa") || normalized.includes("merge")) {
     return "bg-linear-warm/15 text-linear-warm border-linear-warm/25";
@@ -670,7 +689,6 @@ function ConnectorSettingsCard(props: {
       baseUrl: string;
       websocketUrl: string;
       runtimeBaseUrl: string;
-      syncIntervalMs: number;
       token?: string;
       adapterConfig?: Record<string, unknown>;
     },
@@ -707,7 +725,7 @@ function ConnectorSettingsCard(props: {
     const tokenValue = String(fieldValues.token ?? "").trim();
     // Collect any field values that aren't the well-known connector keys
     // into adapterConfig so adapters can define custom fields freely.
-    const knownKeys = new Set(["baseUrl", "websocketUrl", "runtimeBaseUrl", "syncIntervalMs", "token"]);
+    const knownKeys = new Set(["baseUrl", "websocketUrl", "runtimeBaseUrl", "token"]);
     const extras: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fieldValues)) {
       if (!knownKeys.has(key)) extras[key] = value;
@@ -717,7 +735,6 @@ function ConnectorSettingsCard(props: {
       baseUrl: String(fieldValues.baseUrl ?? props.connector.baseUrl ?? ""),
       websocketUrl: String(fieldValues.websocketUrl ?? props.connector.websocketUrl ?? ""),
       runtimeBaseUrl: String(fieldValues.runtimeBaseUrl ?? props.connector.runtimeBaseUrl ?? ""),
-      syncIntervalMs: Number(fieldValues.syncIntervalMs) || props.connector.syncIntervalMs,
       ...(tokenValue ? { token: tokenValue } : {}),
       ...(Object.keys(extras).length > 0 ? { adapterConfig: extras } : {}),
     });
@@ -875,7 +892,9 @@ function ProviderRosterPanel(props: {
                           <div className="mission-muted mt-1">{agent.externalId}{agent.role ? ` · ${agent.role}` : ""}</div>
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                          <span className={cx("mission-badge border", statusTone(agent.status))}>{agent.status}</span>
+                          <span className={cx("mission-badge border", statusTone(formatProviderAgentStatus(agent)))}>
+                            {formatProviderAgentStatus(agent)}
+                          </span>
                           <span className="mission-badge">{agent.officeAgentId ? "linked" : "staged"}</span>
                         </div>
                       </div>
@@ -883,7 +902,11 @@ function ProviderRosterPanel(props: {
                         {agent.officeAgentId ? `Visible in office as ${agent.officeAgentId}.` : "Not rendered in the office map until it is linked to an office agent."}
                       </div>
                       <div className="mission-muted mt-1">
-                        Last seen {formatDateTime(agent.lastSeenAt)}{agent.task ? ` · ${agent.task}` : ""}
+                        {agent.currentTicket ? `Ticket ${agent.currentTicket}` : "No active ticket"}
+                        {agent.taskStage ? ` · ${agent.taskStage}` : agent.task ? ` · ${agent.task}` : ""}
+                      </div>
+                      <div className="mission-muted mt-1">
+                        Last activity {formatDateTime(agent.lastActivityAt ? Date.parse(agent.lastActivityAt) : agent.lastSeenAt)}
                       </div>
                     </div>
                   ))
@@ -918,7 +941,6 @@ function SettingsView(props: {
       baseUrl: string;
       websocketUrl: string;
       runtimeBaseUrl: string;
-      syncIntervalMs: number;
       token?: string;
       adapterConfig?: Record<string, unknown>;
     },
@@ -1277,6 +1299,17 @@ export function App() {
   const pendingHandoffs = mission.selectedTaskDetail?.handoffs.filter((handoff) => handoff.status === "pending") ?? [];
   const discoveredAgents = mission.missionSnapshot.providerAgents.length;
   const stagedAgents = mission.missionSnapshot.providerAgents.filter((agent) => !agent.officeAgentId).length;
+  const activeExecutingAgentIds = new Set(
+    mission.agents
+      .filter((agent) => agent.status === "working")
+      .map((agent) => agent.id),
+  );
+  mission.missionSnapshot.providerAgents.forEach((agent) => {
+    if (agent.officeAgentId && isProviderAgentActivelyExecuting(agent)) {
+      activeExecutingAgentIds.add(agent.officeAgentId);
+    }
+  });
+  const activeExecutingCount = activeExecutingAgentIds.size;
   const visibleTasks = mission.missionSnapshot.tasks.filter((task) => {
     const needle = deferredTaskSearch.trim().toLowerCase();
     if (!needle) {
@@ -1438,7 +1471,7 @@ export function App() {
                 <SectionCard
                   title="Command map"
                   subtitle="Office agents, provider runtimes, and the current command topology."
-                  action={<span className="mission-badge">{mission.agents.filter((agent) => agent.status === "working").length} actively executing</span>}
+                  action={<span className="mission-badge">{activeExecutingCount} actively executing</span>}
                   className="flex-1 min-h-0 overflow-hidden"
                 >
                   <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -1458,6 +1491,7 @@ export function App() {
                       >
                         <OrgChart
                           agents={mission.agents}
+                          providerAgents={mission.missionSnapshot.providerAgents}
                           selectedAgentId={mission.selectedAgentId}
                           thinkingAgentId={mission.busyKey?.match(/^agent:(.+):message$/)?.[1] ?? null}
                           onSelectAgent={(agentId) => mission.setSelectedAgentId(agentId)}

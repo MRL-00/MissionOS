@@ -1,4 +1,5 @@
 import { getAdapter } from "./adapters/registry";
+import { isProviderAgentActivelyExecuting } from "../src/mission/providerAgents";
 import type {
   ProviderAgentRecord,
   ProviderConnector,
@@ -83,8 +84,8 @@ async function syncHermes(connector: ProviderConnectorSyncConfig): Promise<Provi
     status: "ok",
     checkedAt: Date.now(),
     latencyMs: Date.now() - startedAt,
-    message: `Hermes synced ${agents.length} session${agents.length === 1 ? "" : "s"} and ${schedules.length} schedule${schedules.length === 1 ? "" : "s"}.`,
-    activeAgents: agents.filter((a) => a.status === "working").length,
+    message: `Hermes synced ${agents.length} agent${agents.length === 1 ? "" : "s"} and ${schedules.length} schedule${schedules.length === 1 ? "" : "s"}.`,
+    activeAgents: agents.filter((agent) => isProviderAgentActivelyExecuting(agent)).length,
     schedules: schedules.length,
   };
 

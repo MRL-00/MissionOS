@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { OrgChart } from "./OrgChart";
 import type { AgentRuntimeState } from "../../types";
+import type { ProviderAgentRecord } from "../types";
 
 beforeAll(() => {
   globalThis.ResizeObserver = class {
@@ -77,5 +78,35 @@ describe("OrgChart", () => {
     );
 
     expect(screen.getByTestId("org-chart")).toBeInTheDocument();
+  });
+
+  it("renders linked provider ticket and task stage metadata", () => {
+    const providerAgents: ProviderAgentRecord[] = [
+      {
+        connectorId: "hermes",
+        provider: "hermes",
+        externalId: "hermes",
+        name: "Hermes",
+        officeAgentId: "a",
+        status: "working",
+        activityStatus: "building",
+        currentTicket: "EPIC-555",
+        taskStage: "implementing backend",
+        lastActivityAt: "2026-03-31T14:30:00Z",
+        imported: true,
+      },
+    ];
+
+    render(
+      <OrgChart
+        agents={[agent({ id: "a", name: "Alice", role: "Engineer" })]}
+        providerAgents={providerAgents}
+        selectedAgentId={null}
+        onSelectAgent={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("EPIC-555")).toBeInTheDocument();
+    expect(screen.getByText("implementing backend")).toBeInTheDocument();
   });
 });

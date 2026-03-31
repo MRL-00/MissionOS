@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
 import type { AgentRuntimeState } from "../../types";
+import type { ProviderAgentRecord } from "../types";
 import { AgentNode } from "./AgentNode";
 import { buildHierarchy } from "./buildHierarchy";
 import { ConnectionLines } from "./ConnectionLines";
@@ -9,6 +10,7 @@ import { useNodePositions } from "./useNodePositions";
 
 interface OrgChartProps {
   agents: AgentRuntimeState[];
+  providerAgents?: ProviderAgentRecord[];
   selectedAgentId: string | null;
   thinkingAgentId?: string | null;
   onSelectAgent(agentId: string): void;
@@ -59,7 +61,13 @@ function collectLevels(node: OrgTreeNode): OrgTreeNode[][] {
   return levels;
 }
 
-export function OrgChart({ agents, selectedAgentId, thinkingAgentId, onSelectAgent }: OrgChartProps) {
+export function OrgChart({
+  agents,
+  providerAgents = [],
+  selectedAgentId,
+  thinkingAgentId,
+  onSelectAgent,
+}: OrgChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -67,6 +75,15 @@ export function OrgChart({ agents, selectedAgentId, thinkingAgentId, onSelectAge
   const [isPanning, setIsPanning] = useState(false);
 
   const trees = useMemo(() => buildHierarchy(agents), [agents]);
+  const providerAgentsByOfficeAgentId = useMemo(() => {
+    const next = new Map<string, ProviderAgentRecord>();
+    providerAgents.forEach((agent) => {
+      if (agent.officeAgentId && !next.has(agent.officeAgentId)) {
+        next.set(agent.officeAgentId, agent);
+      }
+    });
+    return next;
+  }, [providerAgents]);
   const { positions, measure } = useNodePositions(containerRef);
 
   useEffect(() => {
@@ -235,6 +252,7 @@ export function OrgChart({ agents, selectedAgentId, thinkingAgentId, onSelectAge
                       <div key={node.agent.id} data-agent-id={node.agent.id}>
                         <AgentNode
                           agent={node.agent}
+                          providerAgent={providerAgentsByOfficeAgentId.get(node.agent.id) ?? null}
                           selected={selectedAgentId === node.agent.id}
                           thinking={thinkingAgentId === node.agent.id}
                           onSelect={onSelectAgent}

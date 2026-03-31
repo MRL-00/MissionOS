@@ -2,6 +2,10 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ProviderAgentRecord, ProviderScheduleEntry } from "../../src/mission/types";
 import type { AdapterConfigField, AdapterMessage, AdapterModule, AdapterTestResult } from "./types";
+import {
+  readHermesAgentStateSnapshot,
+  readHermesAgentStateSnapshotOverSsh,
+} from "./agent-state-watcher";
 
 const execFileAsync = promisify(execFile);
 const CLI_TIMEOUT_MS = 15_000;
@@ -109,7 +113,7 @@ function tryParseJson(text: string): unknown | null {
     const jsonMatch = text.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
     if (jsonMatch) {
       try {
-        return JSON.parse(jsonMatch[1]);
+        return jsonMatch[1] ? JSON.parse(jsonMatch[1]) : null;
       } catch {
         return null;
       }
@@ -126,7 +130,7 @@ function parseCliTable(text: string): Array<Record<string, string>> {
 
   if (lines.length < 2) return [];
 
-  const headerLine = lines[0];
+  const headerLine = lines[0] ?? "";
   const isPipeDelimited = headerLine.includes("\u2502") || headerLine.includes("|");
   const delimiter = headerLine.includes("\u2502") ? "\u2502" : "|";
 
@@ -361,17 +365,19 @@ function parseMessagesFromJson(data: unknown): AdapterMessage[] {
       const msg = item as Record<string, unknown>;
       const content = String(msg.content ?? msg.text ?? msg.message ?? msg.body ?? "").trim();
       if (!content) continue;
+      const timestamp = typeof msg.timestamp === "number" ? msg.timestamp
+        : typeof msg.created_at === "number" ? msg.created_at
+        : typeof msg.createdAt === "number" ? msg.createdAt
+        : undefined;
+      const agentName = typeof msg.agentName === "string" ? msg.agentName
+        : typeof msg.name === "string" ? msg.name
+        : undefined;
       messages.push({
         id: String(msg.id ?? `msg-${i}`),
         role: normalizeMessageRole(String(msg.role ?? msg.type ?? msg.sender ?? "system")),
         content,
-        timestamp: typeof msg.timestamp === "number" ? msg.timestamp
-          : typeof msg.created_at === "number" ? msg.created_at
-          : typeof msg.createdAt === "number" ? msg.createdAt
-          : undefined,
-        agentName: typeof msg.agentName === "string" ? msg.agentName
-          : typeof msg.name === "string" ? msg.name
-          : undefined,
+        ...(timestamp !== undefined ? { timestamp } : {}),
+        ...(agentName ? { agentName } : {}),
       });
     }
     if (messages.length > 0) return messages;
@@ -516,7 +522,14 @@ export const hermesAdapter: AdapterModule = {
         placeholder: "matt@192.168.1.113",
         hint: "Leave blank for local. Requires SSH key auth (ssh-copy-id).",
       },
-      { key: "runtimeBaseUrl", label: "Runtime bridge URL", type: "url", placeholder: "http://localhost:3012" },
+      { key: "runtimeBaseUrl", label: "Runtime bridge URL", type: "url", placeholder: "http://127.0.0.1:8642" },
+      {
+        key: "token",
+        label: "API token",
+        type: "password",
+        placeholder: "Bearer token for /events and API server auth",
+        hint: "Optional. Required only when the Hermes API server is protected by API_SERVER_KEY.",
+      },
     ];
   },
 
@@ -524,8 +537,8 @@ export const hermesAdapter: AdapterModule = {
     return {
       baseUrl: process.env.HERMES_COMMAND?.trim() || "hermes",
       websocketUrl: process.env.HERMES_SSH_HOST?.trim() || "",
-      runtimeBaseUrl: "",
-      token: "",
+      runtimeBaseUrl: process.env.HERMES_RUNTIME_URL?.trim() || "",
+      token: process.env.HERMES_TOKEN?.trim() || "",
     };
   },
 
@@ -549,35 +562,13 @@ export const hermesAdapter: AdapterModule = {
   },
 
   async syncAgents(config): Promise<ProviderAgentRecord[]> {
-    const command = configCommand(config);
     const sshHost = configSshHost(config);
 
-    const statusResult = await runHermesCli(command, ["status"], sshHost);
-    if (!statusResult.ok && !statusResult.stdout) return [];
+    const fileSnapshot = sshHost
+      ? await readHermesAgentStateSnapshotOverSsh(sshHost)
+      : await readHermesAgentStateSnapshot();
 
-    const output = statusResult.stdout;
-    const label = command.split("/").pop() || command;
-    const gatewayRunning = /gateway.*running/i.test(output) || /Status:\s*✓\s*running/i.test(output);
-    const activeMatch = output.match(/Active:\s*(\d+)\s*session/i);
-    const activeSessions = activeMatch ? parseInt(activeMatch[1], 10) : 0;
-    const modelMatch = output.match(/Model:\s*(.+)/i);
-    const model = modelMatch ? modelMatch[1].trim() : undefined;
-    const busyMatch = /Busy:\s*(\d+)/i.test(output) || /Generating/i.test(output) || /Running task/i.test(output);
-
-    const displayName = label.charAt(0).toUpperCase() + label.slice(1);
-    return [{
-      provider: "hermes",
-      connectorId: "",  // will be set by mergeProviderAgents
-      externalId: `${label}-gateway`,
-      name: `${displayName} Agent`,
-      role: "Gateway",
-      status: gatewayRunning ? (busyMatch ? "working" : "idle") : "offline",
-      task: gatewayRunning
-        ? `${activeSessions} session${activeSessions === 1 ? "" : "s"} open${model ? ` · ${model}` : ""}`
-        : "Gateway stopped",
-      lastSeenAt: Date.now(),
-      imported: false,
-    }];
+    return fileSnapshot.agents;
   },
 
   async syncSchedules(config): Promise<ProviderScheduleEntry[]> {
@@ -640,11 +631,12 @@ export const hermesAdapter: AdapterModule = {
         const content = String(record.content ?? record.text ?? record.message ?? record.body ?? "").trim();
         const role = String(record.role ?? record.type ?? record.sender ?? "");
         if (content) {
+          const timestamp = typeof record.timestamp === "number" ? record.timestamp : undefined;
           messages.push({
             id: String(record.id ?? `msg-${i}`),
             role: normalizeMessageRole(role),
             content: stripHermesChromeFromOutput(content),
-            timestamp: typeof record.timestamp === "number" ? record.timestamp : undefined,
+            ...(timestamp !== undefined ? { timestamp } : {}),
           });
         }
       }

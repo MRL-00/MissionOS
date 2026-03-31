@@ -27,7 +27,6 @@ function baseConnector(provider: ProviderConnector["provider"], baseUrl: string)
     baseUrl,
     websocketUrl: undefined,
     runtimeBaseUrl: baseUrl,
-    syncIntervalMs: 0,
     authMode: "none",
     tokenConfigured: false,
     capabilities: {
@@ -35,7 +34,7 @@ function baseConnector(provider: ProviderConnector["provider"], baseUrl: string)
       schedules: true,
       activeWork: true,
       launch: true,
-      subscribe: false,
+      subscribe: true,
     },
     health: {
       provider,

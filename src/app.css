@@ -330,6 +330,26 @@
     transition: border-color 200ms ease, background 200ms ease;
   }
 
+  .org-chart__ticket-badge {
+    position: absolute;
+    top: -12px;
+    left: 12px;
+    z-index: 2;
+    max-width: calc(100% - 24px);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    background: rgba(11, 16, 24, 0.96);
+    padding: 4px 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #f5f7fb;
+  }
+
   .org-chart__node:hover {
     border-color: var(--linear-lineStrong, #31415d);
     background: var(--linear-surfaceHover, #171d2a);
@@ -338,6 +358,42 @@
   .org-chart__node--selected {
     border-color: rgba(114, 168, 255, 0.5);
     background: rgba(114, 168, 255, 0.06);
+  }
+
+  .org-chart__node--provider-idle {
+    border-color: rgba(107, 114, 128, 0.7);
+  }
+
+  .org-chart__node--provider-working {
+    border-color: rgba(99, 102, 241, 0.8);
+    animation: working-glow 2.4s ease-in-out infinite;
+  }
+
+  .org-chart__node--provider-reviewing,
+  .org-chart__node--provider-spec-writing {
+    border-color: rgba(249, 115, 22, 0.72);
+    box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.18);
+  }
+
+  .org-chart__node--provider-building {
+    border-color: rgba(99, 102, 241, 0.8);
+    animation: working-glow 2.4s ease-in-out infinite;
+  }
+
+  .org-chart__node--provider-pr-opened {
+    border-color: rgba(168, 85, 247, 0.78);
+    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.18);
+  }
+
+  .org-chart__node--provider-approved {
+    border-color: rgba(16, 185, 129, 0.8);
+    animation: org-node-glow-green 2s ease-in-out infinite;
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.22);
+  }
+
+  .org-chart__node--provider-rejected {
+    border-color: rgba(239, 68, 68, 0.82);
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18);
   }
 
   .org-chart__node--thinking {
@@ -390,6 +446,43 @@
     outline: 2px solid rgba(114, 168, 255, 0.6);
     outline-offset: 2px;
   }
+
+  .org-chart__status-dot {
+    display: inline-block;
+    height: 10px;
+    width: 10px;
+    flex-shrink: 0;
+    border-radius: 999px;
+  }
+
+  .org-chart__status-dot--idle {
+    background: #22c55e;
+  }
+
+  .org-chart__status-dot--working {
+    background: #38bdf8;
+  }
+
+  .org-chart__status-dot--reviewing,
+  .org-chart__status-dot--spec-writing {
+    background: #f59e0b;
+  }
+
+  .org-chart__status-dot--building {
+    background: #3b82f6;
+  }
+
+  .org-chart__status-dot--pr-opened {
+    background: #a855f7;
+  }
+
+  .org-chart__status-dot--approved {
+    background: #10b981;
+  }
+
+  .org-chart__status-dot--rejected {
+    background: #ef4444;
+  }
 }
 
 @property --thinking-angle {
@@ -401,6 +494,44 @@
 @keyframes thinking-rotate {
   to {
     --thinking-angle: 360deg;
+  }
+}
+
+@keyframes org-node-pulse-blue {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.18), 0 0 0 0 rgba(59, 130, 246, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.24), 0 0 24px 4px rgba(59, 130, 246, 0.18);
+  }
+}
+
+@keyframes working-glow {
+  0%,
+  100% {
+    border-color: rgba(59, 130, 246, 0.8);
+    box-shadow:
+      0 0 0 1px rgba(59, 130, 246, 0.3),
+      0 0 12px 2px rgba(59, 130, 246, 0.25),
+      0 0 28px 4px rgba(139, 92, 246, 0.1);
+  }
+  50% {
+    border-color: rgba(139, 92, 246, 0.8);
+    box-shadow:
+      0 0 0 1px rgba(139, 92, 246, 0.3),
+      0 0 16px 3px rgba(139, 92, 246, 0.3),
+      0 0 36px 6px rgba(59, 130, 246, 0.12);
+  }
+}
+
+@keyframes org-node-glow-green {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.22), 0 0 0 rgba(16, 185, 129, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.28), 0 0 26px rgba(16, 185, 129, 0.2);
   }
 }
 

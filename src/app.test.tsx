@@ -10,7 +10,6 @@ function createMissionControlState(activeView: "mission" | "tasks" | "schedules"
       label: "Hermes",
       enabled: true,
       baseUrl: "hermes",
-      syncIntervalMs: 0,
       authMode: "none",
       tokenConfigured: false,
       capabilities: {
@@ -18,7 +17,7 @@ function createMissionControlState(activeView: "mission" | "tasks" | "schedules"
         schedules: true,
         activeWork: true,
         launch: true,
-        subscribe: false,
+        subscribe: true,
       },
       health: {
         provider: "hermes",
@@ -36,6 +35,7 @@ function createMissionControlState(activeView: "mission" | "tasks" | "schedules"
         { key: "baseUrl", label: "CLI command", type: "text" as const, placeholder: "hermes", required: true },
         { key: "websocketUrl", label: "SSH host", type: "text" as const, placeholder: "matt@192.168.1.113" },
         { key: "runtimeBaseUrl", label: "Runtime bridge URL", type: "url" as const },
+        { key: "token", label: "API token", type: "password" as const },
       ],
     },
   ];
@@ -172,7 +172,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(screen.getByText("Hermes")).toBeInTheDocument();
+    expect(screen.getAllByText("Hermes").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders agents view with agent list and form", () => {
