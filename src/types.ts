@@ -4,7 +4,7 @@ import type { MissionControlSnapshot } from "./mission/types";
 export type HeadShape = "round" | "oval" | "square";
 export type HairStyle = "none" | "short" | "long" | "mohawk" | "messy" | "slicked" | "buzz" | "curly";
 export type Accessory = "glasses" | "hat" | "tie" | "beard";
-export type AgentBackendProvider = "openclaw" | "hermes" | "claude" | "codex" | "unlinked";
+export type AgentBackendProvider = "hermes" | "claude" | "codex" | "unlinked";
 export type AgentStatus = "idle" | "working" | "in-meeting";
 export type RealtimeAgentStatus = "idle" | "working" | "meeting" | "entering" | "leaving";
 export type AgentEventLocation = "desk" | "meeting-room" | "door" | "cio-office";
@@ -52,6 +52,7 @@ export interface AgentRuntimeTarget {
 
 export interface AgentBackendLink {
   provider: AgentBackendProvider;
+  connectorId?: string | undefined;
   agentId?: string | undefined;
   connected: boolean;
   tokenId?: string | undefined;
@@ -121,6 +122,7 @@ export interface AgentRegistration {
   type?: "resident" | "visitor" | undefined;
   deskIndex?: number | undefined;
   backendLink?: AgentBackendLink | undefined;
+  parentAgentId?: string | null | undefined;
 }
 
 export interface AgentRuntimeState extends AgentRegistration {

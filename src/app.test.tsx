@@ -1,28 +1,27 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { App } from "./app";
 import type { ProviderConnector } from "./mission/types";
 
-function createMissionControlState(activeView: "mission" | "settings" = "mission") {
+function createMissionControlState(activeView: "mission" | "tasks" | "schedules" | "settings" | "agents" = "mission") {
   const connectors: ProviderConnector[] = [
     {
-      provider: "openclaw",
-      label: "OpenClaw",
+      id: "hermes",
+      provider: "hermes",
+      label: "Hermes",
       enabled: true,
-      baseUrl: "http://openclaw.local",
-      websocketUrl: "ws://openclaw.local",
-      runtimeBaseUrl: "http://openclaw.local",
-      syncIntervalMs: 5000,
-      authMode: "bearer",
-      tokenConfigured: true,
+      baseUrl: "hermes",
+      syncIntervalMs: 0,
+      authMode: "none",
+      tokenConfigured: false,
       capabilities: {
         agents: true,
         schedules: true,
         activeWork: true,
         launch: true,
-        subscribe: true,
+        subscribe: false,
       },
       health: {
-        provider: "openclaw",
+        provider: "hermes",
         status: "ok",
         checkedAt: Date.now(),
         activeAgents: 1,
@@ -30,6 +29,14 @@ function createMissionControlState(activeView: "mission" | "settings" = "mission
         message: "Healthy",
       },
       lastSyncAt: Date.now(),
+      adapterConfig: {
+        baseUrl: "hermes",
+      },
+      configFields: [
+        { key: "baseUrl", label: "CLI command", type: "text" as const, placeholder: "hermes", required: true },
+        { key: "websocketUrl", label: "SSH host", type: "text" as const, placeholder: "matt@192.168.1.113" },
+        { key: "runtimeBaseUrl", label: "Runtime bridge URL", type: "url" as const },
+      ],
     },
   ];
 
@@ -55,8 +62,9 @@ function createMissionControlState(activeView: "mission" | "settings" = "mission
       providerAgents: [],
       schedules: [
         {
-          id: "openclaw:nightly",
-          provider: "openclaw" as const,
+          connectorId: "hermes",
+          id: "hermes:nightly",
+          provider: "hermes" as const,
           name: "Nightly sync",
           recurrence: "Every weekday at 9am",
           nextRunAt: Date.now(),
@@ -112,11 +120,17 @@ function createMissionControlState(activeView: "mission" | "settings" = "mission
       comments: [],
       handoffs: [],
     },
+    activityLog: [],
+    agentMessages: [],
+    agentMessagesLoading: false,
     connectionState: "connected" as const,
     busyKey: null,
     error: null,
     loading: false,
     refreshMission: vi.fn(),
+    createAgent: vi.fn(),
+    editAgent: vi.fn(),
+    removeAgent: vi.fn(),
     saveTaskUpdate: vi.fn(),
     addComment: vi.fn(),
     createHandoff: vi.fn(),
@@ -124,13 +138,17 @@ function createMissionControlState(activeView: "mission" | "settings" = "mission
     saveConnector: vi.fn(),
     syncConnector: vi.fn(),
     testConnectorHealth: vi.fn(),
+    addConnector: vi.fn(),
+    removeConnector: vi.fn(),
+    sendMessageToAgent: vi.fn(),
+    refreshAgentMessages: vi.fn(),
   };
 }
 
 let mockMissionControlState = createMissionControlState();
 
-vi.mock("./mission/scene/MissionScene", () => ({
-  MissionScene: () => <div data-testid="mission-scene">mission-scene</div>,
+vi.mock("./mission/orgchart/OrgChart", () => ({
+  OrgChart: () => <div data-testid="org-chart">org-chart</div>,
 }));
 
 vi.mock("./mission/hooks/useMissionControl", () => ({
@@ -146,42 +164,25 @@ describe("App", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { level: 1, name: "Mission Control" })).toBeInTheDocument();
-    expect(await screen.findByTestId("mission-scene")).toBeInTheDocument();
+    expect(await screen.findByTestId("org-chart")).toBeInTheDocument();
   });
 
-  it("keeps the connector token draft during live connector refreshes", () => {
+  it("renders settings view with connector config", () => {
     mockMissionControlState = createMissionControlState("settings");
 
-    const { rerender } = render(<App />);
-    const tokenInput = screen.getByLabelText("Bearer token") as HTMLInputElement;
+    render(<App />);
 
-    fireEvent.change(tokenInput, { target: { value: "openclaw-secret" } });
-    expect(tokenInput).toHaveValue("openclaw-secret");
+    expect(screen.getByText("Hermes")).toBeInTheDocument();
+  });
 
-    mockMissionControlState = {
-      ...mockMissionControlState,
-      missionSnapshot: {
-        ...mockMissionControlState.missionSnapshot,
-        connectors: mockMissionControlState.missionSnapshot.connectors.map((connector) => (
-          connector.provider === "openclaw"
-            ? {
-                ...connector,
-                health: {
-                  ...connector.health,
-                  status: "syncing",
-                  checkedAt: Date.now(),
-                  message: "Syncing OpenClaw...",
-                },
-                lastSyncAt: Date.now(),
-              }
-            : connector
-        )),
-        syncedAt: Date.now(),
-      },
-    };
+  it("renders agents view with agent list and form", () => {
+    mockMissionControlState = createMissionControlState("agents");
 
-    rerender(<App />);
+    render(<App />);
 
-    expect(screen.getByLabelText("Bearer token")).toHaveValue("openclaw-secret");
+    expect(screen.getByText("Office agents")).toBeInTheDocument();
+    expect(screen.getAllByText("Pickle").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("button", { name: "New agent" })).toBeInTheDocument();
+    expect(screen.getByText("Register a new office agent")).toBeInTheDocument();
   });
 });

@@ -48,8 +48,8 @@ function providerLabel(provider: AgentBackendLink["provider"]): string {
   if (provider === "codex") {
     return "Codex";
   }
-  if (provider === "openclaw") {
-    return "OpenClaw";
+  if (provider === "hermes") {
+    return "Hermes";
   }
   return "Unlinked";
 }
@@ -195,10 +195,10 @@ function buildBackendStatus(link: AgentBackendLink): string {
   if (link.provider === "unlinked") {
     return "Unlinked";
   }
-  if (link.provider === "openclaw") {
+  if (link.provider === "hermes") {
     return link.connected
-      ? `OpenClaw linked${link.agentId ? ` · ${link.agentId}` : ""}${targetSuffix}`
-      : `OpenClaw not linked${targetSuffix}`;
+      ? `Hermes linked${link.agentId ? ` · ${link.agentId}` : ""}${targetSuffix}`
+      : `Hermes not linked${targetSuffix}`;
   }
   if (link.connected) {
     return `${providerLabel(link.provider)} connected${targetSuffix}`;
@@ -350,14 +350,14 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
           <label class="creator-field">
             <span>Agent Backend</span>
             <select class="admin-select" name="backend-provider">
-              <option value="openclaw">OpenClaw Agent</option>
+              <option value="hermes">Hermes Agent</option>
               <option value="claude">Claude Code (OAuth)</option>
               <option value="codex">Codex (OAuth)</option>
               <option value="unlinked">Unlinked</option>
             </select>
           </label>
-          <label class="creator-field" data-backend-openclaw>
-            <span>OpenClaw Agent ID</span>
+          <label class="creator-field" data-backend-hermes>
+            <span>Hermes Agent ID</span>
             <input class="admin-input" name="backend-agent-id" placeholder="agent-42" />
           </label>
           <div class="creator-field" data-backend-claude hidden>
@@ -429,7 +429,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   const backendAgentIdInput = modal.querySelector<HTMLInputElement>('input[name="backend-agent-id"]');
   const backendRuntimeUrlInput = modal.querySelector<HTMLInputElement>('input[name="backend-runtime-url"]');
   const backendLaunchProfileInput = modal.querySelector<HTMLInputElement>('input[name="backend-launch-profile"]');
-  const openclawField = modal.querySelector<HTMLElement>("[data-backend-openclaw]");
+  const hermesField = modal.querySelector<HTMLElement>("[data-backend-hermes]");
   const claudeField = modal.querySelector<HTMLElement>("[data-backend-claude]");
   const codexField = modal.querySelector<HTMLElement>("[data-backend-codex]");
   const runtimeField = modal.querySelector<HTMLElement>("[data-backend-runtime]");
@@ -461,7 +461,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     !backendAgentIdInput ||
     !backendRuntimeUrlInput ||
     !backendLaunchProfileInput ||
-    !openclawField ||
+    !hermesField ||
     !claudeField ||
     !codexField ||
     !runtimeField ||
@@ -494,7 +494,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
   const backendAgentIdInputEl = backendAgentIdInput;
   const backendRuntimeUrlInputEl = backendRuntimeUrlInput;
   const backendLaunchProfileInputEl = backendLaunchProfileInput;
-  const openclawFieldEl = openclawField;
+  const hermesFieldEl = hermesField;
   const claudeFieldEl = claudeField;
   const codexFieldEl = codexField;
   const runtimeFieldEl = runtimeField;
@@ -739,7 +739,7 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     backendAgentIdInputEl.value = draft.backendLink.agentId ?? "";
     backendRuntimeUrlInputEl.value = draft.backendLink.runtimeTarget?.baseUrl ?? "";
     backendLaunchProfileInputEl.value = draft.backendLink.runtimeTarget?.launchProfile ?? "";
-    openclawFieldEl.hidden = draft.backendLink.provider !== "openclaw";
+    hermesFieldEl.hidden = draft.backendLink.provider !== "hermes";
     claudeFieldEl.hidden = draft.backendLink.provider !== "claude";
     codexFieldEl.hidden = draft.backendLink.provider !== "codex";
     runtimeFieldEl.hidden = draft.backendLink.provider === "unlinked";
@@ -823,17 +823,11 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     const runtimeTarget = draft.backendLink.runtimeTarget;
     if (provider === "unlinked") {
       draft.backendLink = { provider, connected: false };
-    } else if (provider === "openclaw") {
+    } else if (provider === "hermes") {
       draft.backendLink = {
         provider,
         agentId: backendAgentIdInputEl.value.trim() || draft.backendLink.agentId,
         connected: Boolean((backendAgentIdInputEl.value.trim() || draft.backendLink.agentId)?.trim()),
-        runtimeTarget,
-      };
-    } else if (provider === "hermes") {
-      draft.backendLink = {
-        provider,
-        connected: true,
         runtimeTarget,
       };
     } else {
@@ -1030,10 +1024,10 @@ export function createCharacterCreator({ apiBase, getExistingAgents }: Character
     setBackendProvider(backendProviderInputEl.value as AgentBackendLink["provider"]);
   });
   backendAgentIdInputEl.addEventListener("input", () => {
-    if (draft.backendLink.provider === "openclaw") {
+    if (draft.backendLink.provider === "hermes") {
       updateRuntimeTargetDraft();
       draft.backendLink = {
-        provider: "openclaw",
+        provider: "hermes",
         agentId: backendAgentIdInputEl.value.trim(),
         connected: Boolean(backendAgentIdInputEl.value.trim()),
         runtimeTarget: draft.backendLink.runtimeTarget,

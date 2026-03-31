@@ -1,109 +1,47 @@
 import type { AgentRuntimeState } from "../../types";
 import type { OrgTreeNode } from "./types";
 
-const ORCHESTRATOR_MATCHER = /(orchestrat|cio|chief|director)/i;
-const LEAD_MATCHER = /(lead|head|manager|senior)/i;
-
-function classify(agent: AgentRuntimeState): "orchestrator" | "lead" | "ic" {
-  if (ORCHESTRATOR_MATCHER.test(agent.role)) {
-    return "orchestrator";
-  }
-  if (LEAD_MATCHER.test(agent.role)) {
-    return "lead";
-  }
-  return "ic";
-}
-
-function syntheticRoot(): AgentRuntimeState {
-  return {
-    id: "__orchestrator__",
-    name: "Orchestrator",
-    role: "System Orchestrator",
-    emoji: "\u{1F3AF}",
-    connected: true,
-    status: "idle",
-    timestamp: Date.now(),
-  };
-}
-
-export function buildHierarchy(agents: AgentRuntimeState[]): OrgTreeNode {
+/**
+ * Build org-chart trees from the flat agents array.
+ *
+ * The hierarchy is determined by `parentAgentId`:
+ *   - Agents with no parent (undefined/null) are roots.
+ *   - Each root becomes an independent tree.
+ *   - If every agent has a parent but the referenced parent doesn't exist,
+ *     the agent falls back to root level.
+ *
+ * Returns one OrgTreeNode per root, sorted alphabetically.
+ */
+export function buildHierarchy(agents: AgentRuntimeState[]): OrgTreeNode[] {
   if (agents.length === 0) {
-    return { agent: syntheticRoot(), children: [], depth: 0, isSynthetic: true };
+    return [];
   }
 
-  const orchestrators: AgentRuntimeState[] = [];
-  const leads: AgentRuntimeState[] = [];
-  const ics: AgentRuntimeState[] = [];
+  const agentMap = new Map<string, AgentRuntimeState>();
+  agents.forEach((agent) => agentMap.set(agent.id, agent));
+
+  // Group children by parent id
+  const childrenOf = new Map<string, AgentRuntimeState[]>();
+  const roots: AgentRuntimeState[] = [];
 
   agents.forEach((agent) => {
-    switch (classify(agent)) {
-      case "orchestrator":
-        orchestrators.push(agent);
-        break;
-      case "lead":
-        leads.push(agent);
-        break;
-      default:
-        ics.push(agent);
-        break;
+    const parentId = agent.parentAgentId;
+    if (!parentId || !agentMap.has(parentId)) {
+      roots.push(agent);
+    } else {
+      const siblings = childrenOf.get(parentId) ?? [];
+      siblings.push(agent);
+      childrenOf.set(parentId, siblings);
     }
   });
 
-  const rootAgent = orchestrators[0] ?? syntheticRoot();
-  const isSynthetic = orchestrators.length === 0;
-
-  // Remaining orchestrators become leads
-  orchestrators.slice(1).forEach((agent) => leads.push(agent));
-
-  // If no leads, all ICs go directly under root
-  if (leads.length === 0) {
-    return {
-      agent: rootAgent,
-      children: ics.map((agent) => ({ agent, children: [], depth: 1 })),
-      depth: 0,
-      isSynthetic,
-    };
+  function buildNode(agent: AgentRuntimeState, depth: number): OrgTreeNode {
+    const children = (childrenOf.get(agent.id) ?? [])
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((child) => buildNode(child, depth + 1));
+    return { agent, children, depth };
   }
 
-  // Assign ICs to the closest lead by matching provider, then round-robin
-  const leadChildren = new Map<string, AgentRuntimeState[]>();
-  leads.forEach((lead) => leadChildren.set(lead.id, []));
-
-  const unassigned: AgentRuntimeState[] = [];
-
-  ics.forEach((ic) => {
-    const icProvider = (ic as AgentRuntimeState & { backendLink?: { provider?: string } }).backendLink?.provider;
-
-    // Try to match by provider
-    if (icProvider) {
-      const matchingLead = leads.find((lead) => {
-        const leadProvider = (lead as AgentRuntimeState & { backendLink?: { provider?: string } }).backendLink?.provider;
-        return leadProvider === icProvider;
-      });
-      if (matchingLead) {
-        leadChildren.get(matchingLead.id)!.push(ic);
-        return;
-      }
-    }
-
-    unassigned.push(ic);
-  });
-
-  // Round-robin unassigned ICs across leads
-  unassigned.forEach((ic, index) => {
-    const lead = leads[index % leads.length]!;
-    leadChildren.get(lead.id)!.push(ic);
-  });
-
-  const children: OrgTreeNode[] = leads.map((lead) => ({
-    agent: lead,
-    children: (leadChildren.get(lead.id) ?? []).map((ic) => ({
-      agent: ic,
-      children: [],
-      depth: 2,
-    })),
-    depth: 1,
-  }));
-
-  return { agent: rootAgent, children, depth: 0, isSynthetic };
+  const sortedRoots = [...roots].sort((a, b) => a.name.localeCompare(b.name));
+  return sortedRoots.map((root) => buildNode(root, 0));
 }

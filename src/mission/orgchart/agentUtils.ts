@@ -53,8 +53,6 @@ export function providerLabel(provider: string | undefined): string {
   switch (provider) {
     case "hermes":
       return "Hermes";
-    case "openclaw":
-      return "OpenClaw";
     case "claude":
       return "Claude";
     case "codex":

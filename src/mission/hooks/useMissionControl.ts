@@ -1,7 +1,8 @@
 import { useEffect, useEffectEvent, useState } from "react";
 import { OfficeWebSocketClient } from "../../network/websocket";
-import type { AgentEvent, AgentRuntimeState, AgentSnapshotState, ServerMessage } from "../../types";
+import type { ActivityLogEntry, AgentEvent, AgentRegistration, AgentRuntimeState, AgentSnapshotState, ServerMessage } from "../../types";
 import type {
+  AgentMessage,
   MissionControlSnapshot,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
@@ -13,19 +14,27 @@ import type {
   ProviderConnectorUpdateRequest,
 } from "../types";
 import {
+  createMissionConnector,
   createMissionTaskComment,
   createMissionTaskHandoff,
+  deleteAgent,
+  deleteMissionConnector,
+  fetchActivityLog,
+  fetchAgentMessages,
   fetchAgents,
   fetchMissionSnapshot,
   fetchMissionTaskDetail,
+  registerAgent,
   respondMissionTaskHandoff,
+  sendAgentMessage,
   syncMissionConnector,
   testMissionConnector,
+  updateAgent,
   updateMissionConnector,
   updateMissionTask,
 } from "../api";
 
-export type MissionView = "mission" | "tasks" | "schedules" | "settings";
+export type MissionView = "mission" | "tasks" | "schedules" | "settings" | "agents";
 type ConnectionState = "connecting" | "connected" | "offline";
 
 const EMPTY_SNAPSHOT: MissionControlSnapshot = {
@@ -89,6 +98,9 @@ export function useMissionControl() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<MissionTaskDetail | null>(null);
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+  const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
+  const [agentMessagesLoading, setAgentMessagesLoading] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,9 +109,14 @@ export function useMissionControl() {
   const hydrate = useEffectEvent(async () => {
     setLoading(true);
     try {
-      const [nextAgents, nextMission] = await Promise.all([fetchAgents(), fetchMissionSnapshot()]);
+      const [nextAgents, nextMission, nextActivity] = await Promise.all([
+        fetchAgents(),
+        fetchMissionSnapshot(),
+        fetchActivityLog().catch(() => [] as ActivityLogEntry[]),
+      ]);
       setAgents(sortAgents(nextAgents));
       setMissionSnapshot(nextMission);
+      setActivityLog(nextActivity);
       setError(null);
       if (!selectedTaskId && nextMission.tasks[0]) {
         setSelectedTaskId(nextMission.tasks[0].id);
@@ -147,6 +164,11 @@ export function useMissionControl() {
 
     if (message.type === "agent-removed") {
       setAgents((current) => current.filter((agent) => agent.id !== message.agentId));
+      return;
+    }
+
+    if (message.type === "activity-log") {
+      setActivityLog((current) => [message.entry, ...current].slice(0, 100));
     }
   });
 
@@ -175,6 +197,18 @@ export function useMissionControl() {
     }
     void hydrateTaskDetail(selectedTaskId);
   }, [selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedAgentId) {
+      setAgentMessages([]);
+      return;
+    }
+    setAgentMessagesLoading(true);
+    fetchAgentMessages(selectedAgentId)
+      .then(setAgentMessages)
+      .catch(() => setAgentMessages([]))
+      .finally(() => setAgentMessagesLoading(false));
+  }, [selectedAgentId]);
 
   useEffect(() => {
     if (selectedTaskId && !missionSnapshot.tasks.some((task) => task.id === selectedTaskId)) {
@@ -248,44 +282,119 @@ export function useMissionControl() {
     }
   }
 
-  async function saveConnector(provider: ProviderConnector["provider"], input: ProviderConnectorUpdateRequest): Promise<void> {
-    const connector = await runBusyAction(`connector:${provider}:save`, () => updateMissionConnector(provider, input));
+  async function saveConnector(connectorId: string, input: ProviderConnectorUpdateRequest): Promise<void> {
+    const connector = await runBusyAction(`connector:${connectorId}:save`, () => updateMissionConnector(connectorId, input));
     if (connector) {
       setMissionSnapshot((current) => ({
         ...current,
-        connectors: current.connectors.map((entry) => (entry.provider === provider ? connector : entry)),
+        connectors: current.connectors.map((entry) => (entry.id === connectorId ? connector : entry)),
       }));
       const nextMission = await fetchMissionSnapshot();
       setMissionSnapshot(nextMission);
     }
   }
 
-  async function syncConnector(provider: ProviderConnector["provider"]): Promise<void> {
-    const connector = await runBusyAction(`connector:${provider}:sync`, () => syncMissionConnector(provider));
+  async function syncConnector(connectorId: string): Promise<void> {
+    const connector = await runBusyAction(`connector:${connectorId}:sync`, () => syncMissionConnector(connectorId));
     if (connector) {
       const nextMission = await fetchMissionSnapshot();
       setMissionSnapshot(nextMission);
     }
   }
 
-  async function testConnectorHealth(provider: ProviderConnector["provider"]): Promise<void> {
-    const connector = await runBusyAction(`connector:${provider}:test`, () => testMissionConnector(provider));
+  async function testConnectorHealth(connectorId: string): Promise<void> {
+    const connector = await runBusyAction(`connector:${connectorId}:test`, () => testMissionConnector(connectorId));
     if (connector) {
       setMissionSnapshot((current) => ({
         ...current,
-        connectors: current.connectors.map((entry) => (entry.provider === provider ? connector : entry)),
+        connectors: current.connectors.map((entry) => (entry.id === connectorId ? connector : entry)),
       }));
     }
+  }
+
+  async function addConnector(provider: string, label?: string): Promise<void> {
+    await runBusyAction("connector:create", async () => {
+      await createMissionConnector(provider, label);
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function removeConnector(connectorId: string): Promise<void> {
+    await runBusyAction(`connector:${connectorId}:delete`, async () => {
+      await deleteMissionConnector(connectorId);
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function createAgent(input: AgentRegistration): Promise<void> {
+    await runBusyAction("agent:create", async () => {
+      await registerAgent(input);
+      const [nextAgents, nextMission] = await Promise.all([fetchAgents(), fetchMissionSnapshot()]);
+      setAgents(sortAgents(nextAgents));
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function editAgent(agentId: string, input: Partial<AgentRegistration>): Promise<void> {
+    await runBusyAction(`agent:${agentId}:update`, async () => {
+      await updateAgent(agentId, input);
+      const [nextAgents, nextMission] = await Promise.all([fetchAgents(), fetchMissionSnapshot()]);
+      setAgents(sortAgents(nextAgents));
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function removeAgent(agentId: string): Promise<void> {
+    await runBusyAction(`agent:${agentId}:delete`, async () => {
+      await deleteAgent(agentId);
+      const nextAgents = await fetchAgents();
+      setAgents(sortAgents(nextAgents));
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
+    });
   }
 
   async function refreshMission(): Promise<void> {
     await runBusyAction("mission:refresh", hydrate);
   }
 
+  async function sendMessageToAgent(agentId: string, message: string): Promise<void> {
+    // Optimistically add user message
+    const userMsg: AgentMessage = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      content: message,
+      timestamp: Date.now(),
+    };
+    setAgentMessages((current) => [...current, userMsg]);
+
+    const response = await runBusyAction(`agent:${agentId}:message`, () => sendAgentMessage(agentId, message));
+    if (response) {
+      setAgentMessages((current) => [...current, response]);
+    }
+  }
+
+  async function refreshAgentMessages(agentId: string): Promise<void> {
+    setAgentMessagesLoading(true);
+    try {
+      const messages = await fetchAgentMessages(agentId);
+      setAgentMessages(messages);
+    } catch {
+      // keep existing
+    } finally {
+      setAgentMessagesLoading(false);
+    }
+  }
+
   return {
     activeView,
     setActiveView,
     agents,
+    activityLog,
+    agentMessages,
+    agentMessagesLoading,
     missionSnapshot,
     selectedAgentId,
     setSelectedAgentId,
@@ -297,6 +406,9 @@ export function useMissionControl() {
     error,
     loading,
     refreshMission,
+    createAgent,
+    editAgent,
+    removeAgent,
     saveTaskUpdate,
     addComment,
     createHandoff,
@@ -304,5 +416,9 @@ export function useMissionControl() {
     saveConnector,
     syncConnector,
     testConnectorHealth,
+    addConnector,
+    removeConnector,
+    sendMessageToAgent,
+    refreshAgentMessages,
   };
 }

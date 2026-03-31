@@ -27,12 +27,10 @@ import {
   upsertRegistration,
 } from "./agents";
 import { MeetingEngine } from "./meeting";
-import { normalizeToolSessions, openClawStates, applyOpenClawSessions, startOpenClawSync } from "./openclaw-sync";
 import { loadPersistedAgents, queuePersistAgents } from "./persistence";
 import { configureRemoteOfficeMirror, startRemoteOfficeMirror } from "./remote-mirror";
 import { launchAgentOnRuntimeTarget } from "./runtime-launcher";
 import { DEFAULT_HEADERS, PORT, RequestBodyError } from "./types";
-import type { MissionProvider } from "../src/mission/types";
 import { readJson, sendJson } from "./utils";
 import {
   buildWorkflowSnapshot,
@@ -61,9 +59,13 @@ import {
 import {
   addMissionTaskComment,
   configureMissionControlRuntime,
+  createMissionConnector,
   createMissionTaskHandoff,
+  deleteMissionConnector,
+  fetchAgentMessages,
   getMissionControlSnapshot,
   getMissionTaskDetail,
+  isConnectorCreateRequest,
   isMissionTaskCommentCreateRequest,
   isMissionTaskHandoffCreateRequest,
   isMissionTaskHandoffResponseRequest,
@@ -74,6 +76,7 @@ import {
   listMissionTasks,
   listProviderAgents,
   respondMissionTaskHandoff,
+  sendAgentMessage,
   startMissionControl,
   syncMissionConnector,
   testMissionConnector,
@@ -255,33 +258,49 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
-    const connectorMatch = (method === "PATCH" || method === "PUT" || method === "POST")
+    if (method === "POST" && url.pathname === "/api/mission/connectors") {
+      const body = await readJson<unknown>(request);
+      if (!isConnectorCreateRequest(body)) {
+        throw new RequestBodyError("Invalid connector create payload");
+      }
+      const connector = await createMissionConnector(body.provider, body.label);
+      sendJson(response, 201, { connector });
+      return;
+    }
+
+    const connectorMatch = (method === "PATCH" || method === "PUT" || method === "POST" || method === "DELETE")
       ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)$/)
       : null;
     if (connectorMatch && (method === "PATCH" || method === "PUT")) {
-      const provider = decodeURIComponent(connectorMatch[1] ?? "") as MissionProvider;
+      const connectorId = decodeURIComponent(connectorMatch[1] ?? "");
       const body = await readJson<unknown>(request);
       if (!isProviderConnectorUpdateRequest(body)) {
         throw new RequestBodyError("Invalid connector update payload");
       }
 
-      const connector = await updateMissionConnector(provider, body);
+      const connector = await updateMissionConnector(connectorId, body);
       sendJson(response, 200, { connector });
+      return;
+    }
+    if (connectorMatch && method === "DELETE") {
+      const connectorId = decodeURIComponent(connectorMatch[1] ?? "");
+      await deleteMissionConnector(connectorId);
+      sendJson(response, 200, { ok: true });
       return;
     }
 
     const connectorTestMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)\/test$/) : null;
     if (connectorTestMatch) {
-      const provider = decodeURIComponent(connectorTestMatch[1] ?? "") as MissionProvider;
-      const connector = await testMissionConnector(provider);
+      const connectorId = decodeURIComponent(connectorTestMatch[1] ?? "");
+      const connector = await testMissionConnector(connectorId);
       sendJson(response, 200, { connector });
       return;
     }
 
     const connectorSyncMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)\/sync$/) : null;
     if (connectorSyncMatch) {
-      const provider = decodeURIComponent(connectorSyncMatch[1] ?? "") as MissionProvider;
-      const connector = await syncMissionConnector(provider);
+      const connectorId = decodeURIComponent(connectorSyncMatch[1] ?? "");
+      const connector = await syncMissionConnector(connectorId);
       sendJson(response, 200, { connector });
       return;
     }
@@ -556,14 +575,6 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
-    if (method === "POST" && url.pathname === "/api/openclaw/sessions") {
-      const body = await readJson<{ sessions?: unknown[] }>(request);
-      const sessions = normalizeToolSessions(body);
-      await applyOpenClawSessions(sessions);
-      sendJson(response, 200, { ok: true, processed: sessions.length });
-      return;
-    }
-
     if (method === "POST" && url.pathname === "/api/agent/spawn") {
       const body = await readJson<unknown>(request);
       if (!isAgentSpawnRequest(body)) {
@@ -661,7 +672,6 @@ const httpServer = createServer(async (request, response) => {
           agentStates.delete(deleteAgentId);
           residentDeskAssignments.delete(deleteAgentId);
           agentAppearances.delete(deleteAgentId);
-          openClawStates.delete(deleteAgentId);
           await queuePersistAgents();
           broadcast({ type: "agent-removed", agentId: deleteAgentId });
           pushActivity("agent-status", `Removed agent ${existing.name}.`, deleteAgentId);
@@ -670,6 +680,24 @@ const httpServer = createServer(async (request, response) => {
           console.error(`Failed to remove agent ${deleteAgentId}`, error);
         });
       }, 350);
+      return;
+    }
+
+    const agentMessagesMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/messages$/);
+    if (agentMessagesMatch && method === "GET") {
+      const agentId = decodeURIComponent(agentMessagesMatch[1] ?? "");
+      const messages = await fetchAgentMessages(agentId);
+      sendJson(response, 200, { messages });
+      return;
+    }
+    if (agentMessagesMatch && method === "POST") {
+      const agentId = decodeURIComponent(agentMessagesMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (typeof body !== "object" || body === null || typeof (body as Record<string, unknown>).message !== "string") {
+        throw new RequestBodyError("Expected { message: string }");
+      }
+      const result = await sendAgentMessage(agentId, (body as { message: string }).message);
+      sendJson(response, 200, { message: result });
       return;
     }
 
@@ -741,117 +769,11 @@ const httpServer = createServer(async (request, response) => {
   }
 });
 
-const CORE_MISSION_TEAM = [
-  {
-    id: "lead-engineer",
-    name: "Lead Engineer",
-    role: "Lead Engineer",
-    emoji: "🧠",
-    appearance: {
-      height: 1.08,
-      headShape: "square",
-      skinColor: "#D7B394",
-      hairStyle: "short",
-      hairColor: "#3A2A22",
-      bodyColor: "#6E56CF",
-      pantsColor: "#1E2130",
-      accessories: ["tie"],
-    },
-  },
-  {
-    id: "ios-dev",
-    name: "iOS Dev",
-    role: "iOS Developer",
-    emoji: "📱",
-    appearance: {
-      height: 0.98,
-      headShape: "oval",
-      skinColor: "#D9B08A",
-      hairStyle: "slicked",
-      hairColor: "#151515",
-      bodyColor: "#111827",
-      pantsColor: "#2D3748",
-      accessories: ["glasses"],
-    },
-  },
-  {
-    id: "fullstack-dev",
-    name: "Full-stack Dev",
-    role: "Full-stack Developer",
-    emoji: "💻",
-    appearance: {
-      height: 1.02,
-      headShape: "oval",
-      skinColor: "#E2BC97",
-      hairStyle: "messy",
-      hairColor: "#6B4423",
-      bodyColor: "#0F766E",
-      pantsColor: "#1F2937",
-      accessories: [],
-    },
-  },
-  {
-    id: "qa",
-    name: "QA",
-    role: "QA Engineer",
-    emoji: "🧪",
-    appearance: {
-      height: 0.96,
-      headShape: "round",
-      skinColor: "#D4AA84",
-      hairStyle: "buzz",
-      hairColor: "#5B3A29",
-      bodyColor: "#F8FAFC",
-      pantsColor: "#475569",
-      accessories: [],
-    },
-  },
-  {
-    id: "support",
-    name: "Support",
-    role: "Support Specialist",
-    emoji: "🎧",
-    appearance: {
-      height: 0.94,
-      headShape: "round",
-      skinColor: "#CFA27F",
-      hairStyle: "curly",
-      hairColor: "#2B1D16",
-      bodyColor: "#EF4444",
-      pantsColor: "#1F2937",
-      accessories: ["glasses"],
-    },
-  },
-] satisfies Array<{
-  id: string;
-  name: string;
-  role: string;
-  emoji: string;
-  appearance: {
-    height: number;
-    headShape: "round" | "oval" | "square";
-    skinColor: string;
-    hairStyle: "none" | "short" | "long" | "mohawk" | "messy" | "slicked" | "buzz" | "curly";
-    hairColor: string;
-    bodyColor: string;
-    pantsColor: string;
-    accessories: Array<"glasses" | "hat" | "tie" | "beard">;
-  };
-}>;
-
-async function ensureCoreMissionTeam(): Promise<void> {
-  for (const member of CORE_MISSION_TEAM) {
-    await upsertRegistration({
-      ...member,
-      type: "resident",
-    }, agentStates.has(member.id) ? "update" : "create");
-  }
-}
+// Agents are now discovered from providers (Hermes) or created manually via the Agents page.
 
 export async function start(): Promise<void> {
   await loadPersistedAgents();
   await loadPersistedWorkflow();
-  await ensureCoreMissionTeam();
   await startMissionControl();
 
   websocketServer = new WebSocketServer({ server: httpServer });
@@ -886,7 +808,6 @@ export async function start(): Promise<void> {
     console.log(`Realtime server listening on ${listeningUrls(PORT).join(", ")}`);
   });
 
-  startOpenClawSync();
   startRemoteOfficeMirror();
 }
 

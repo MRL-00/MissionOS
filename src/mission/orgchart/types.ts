@@ -4,7 +4,6 @@ export interface OrgTreeNode {
   agent: AgentRuntimeState;
   children: OrgTreeNode[];
   depth: number;
-  isSynthetic?: boolean;
 }
 
 export interface NodePosition {

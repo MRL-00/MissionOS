@@ -1,4 +1,14 @@
-export type MissionProvider = "openclaw" | "hermes";
+export type MissionProvider = "hermes" | "claude-local" | "codex-local";
+
+export interface AdapterConfigField {
+  key: string;
+  label: string;
+  type: "text" | "url" | "password" | "number" | "boolean";
+  placeholder?: string;
+  hint?: string;
+  required?: boolean;
+  colSpan?: 1 | 2;
+}
 export type MissionHealthStatus = "idle" | "syncing" | "ok" | "error" | "disabled";
 export type MissionScheduleStatus = "scheduled" | "running" | "paused" | "error" | "unknown";
 export type MissionSyncState = "idle" | "syncing" | "ok" | "error";
@@ -23,6 +33,7 @@ export interface ProviderHealth {
 }
 
 export interface ProviderConnector {
+  id: string;
   provider: MissionProvider;
   label: string;
   enabled: boolean;
@@ -35,6 +46,8 @@ export interface ProviderConnector {
   capabilities: MissionProviderCapabilities;
   health: ProviderHealth;
   lastSyncAt?: number | undefined;
+  adapterConfig?: Record<string, unknown> | undefined;
+  configFields?: AdapterConfigField[] | undefined;
 }
 
 export interface ProviderConnectorUpdateRequest {
@@ -45,9 +58,11 @@ export interface ProviderConnectorUpdateRequest {
   syncIntervalMs?: number | undefined;
   authMode?: "none" | "bearer" | undefined;
   token?: string | undefined;
+  adapterConfig?: Record<string, unknown> | undefined;
 }
 
 export interface ProviderAgentRecord {
+  connectorId: string;
   provider: MissionProvider;
   externalId: string;
   name: string;
@@ -61,6 +76,7 @@ export interface ProviderAgentRecord {
 }
 
 export interface ProviderScheduleEntry {
+  connectorId: string;
   id: string;
   provider: MissionProvider;
   name: string;
@@ -213,6 +229,14 @@ export interface MissionTaskHandoffCreateRequest {
 
 export interface MissionTaskHandoffResponseRequest {
   status: Extract<MissionHandoffStatus, "accepted" | "declined">;
+}
+
+export interface AgentMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp?: number | undefined;
+  agentName?: string | undefined;
 }
 
 export interface MissionTaskMutationResult {
