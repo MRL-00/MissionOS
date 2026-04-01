@@ -290,7 +290,7 @@ function AgentChatPanel(props: {
         </div>
         <div
           ref={messagesScrollRef}
-          className="mission-scroll flex-1 space-y-3 rounded-xl border border-linear-line bg-mission-900 p-3"
+          className="mission-scroll max-h-[400px] space-y-3 rounded-xl border border-linear-line bg-mission-900 p-3"
         >
           {!hasProvider ? (
             <div className="py-6 text-center text-sm text-linear-muted">
@@ -303,7 +303,10 @@ function AgentChatPanel(props: {
               No messages yet. Send a message to start a conversation.
             </div>
           ) : (
-            props.messages.map((msg) => (
+            props.messages.filter((msg) => {
+              const t = msg.content.trimStart();
+              return !(t.startsWith("{") && /\"(output|exit_code)\"/.test(t));
+            }).map((msg) => (
               <div
                 key={msg.id}
                 className={cx(
@@ -1459,7 +1462,7 @@ export function App() {
             </header>
           )}
 
-          {mission.error ? (
+          {mission.error && mission.connectionState !== "connecting" ? (
             <div className="rounded-[10px] border border-linear-red/25 bg-linear-red/10 px-4 py-3 text-[13px] font-medium text-linear-red">
               {mission.error}
             </div>

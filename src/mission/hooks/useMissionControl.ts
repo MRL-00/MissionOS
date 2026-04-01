@@ -173,10 +173,11 @@ export function useMissionControl() {
   });
 
   useEffect(() => {
-    void hydrate();
-
     const client = new OfficeWebSocketClient({
-      onOpen: () => setConnectionState("connected"),
+      onOpen: () => {
+        setConnectionState("connected");
+        void hydrate();
+      },
       onClose: () => setConnectionState("offline"),
       onEvent: (event) => setAgents((current) => applyAgentEvent(current, event)),
       onSnapshot: (message) => setAgents(sortAgents(message.agents)),
