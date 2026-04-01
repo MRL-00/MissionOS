@@ -761,7 +761,7 @@ const CORE_MISSION_TEAM = [
   {
     id: "ios-dev",
     name: "iOS Dev",
-    role: "iOS Developer",
+    role: "iOS developer",
     emoji: "📱",
     appearance: {
       height: 0.98,
