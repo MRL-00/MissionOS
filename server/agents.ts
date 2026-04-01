@@ -288,6 +288,7 @@ export function normalizeBackendLink(
 
   return {
     provider: base.provider,
+    connectorId: base.connectorId,
     connected: base.connected,
     agentId: base.agentId,
     tokenId: base.tokenId,

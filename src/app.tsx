@@ -9,6 +9,7 @@ import { compareMissionTasksForBoard, getMissionTaskBoardStage } from "./mission
 import type { ActivityLogEntry, AgentBackendProvider, AgentRegistration, AgentRuntimeState } from "./types";
 import type {
   AgentMessage,
+  HermesDefaults,
   MissionTask,
   ProviderAgentRecord,
   MissionTaskDetail,
@@ -76,6 +77,15 @@ function formatRelativeUpdate(timestamp?: number): string {
 
   const diffHours = Math.round(diffMinutes / 60);
   return `Updated ${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
+}
+
+function parseHermesRuntimePort(runtimeBaseUrl: string | undefined, runtimeHost: string | undefined): string {
+  const runtimeUrl = runtimeBaseUrl?.trim() ?? "";
+  const sharedHost = runtimeHost?.trim().replace(/\/+$/, "") ?? "";
+  if (!runtimeUrl || !sharedHost || !runtimeUrl.startsWith(`${sharedHost}:`)) {
+    return "";
+  }
+  return runtimeUrl.slice(sharedHost.length + 1).trim();
 }
 
 function formatRelativeStamp(timestamp?: number): string {
@@ -181,6 +191,26 @@ function taskWorkflowTone(task: MissionTask): string {
       return "bg-emerald-500/15 text-emerald-200 border-emerald-400/25";
     default:
       return statusTone(task.state.name);
+  }
+}
+
+/** Solid accent-bar color for task cards based on workflow stage */
+function taskAccentColor(task: MissionTask): string {
+  switch (getMissionTaskBoardStage(task.state)) {
+    case "todo":
+      return "#38bdf8"; // sky-400
+    case "in_progress":
+      return "#fbbf24"; // amber-400
+    case "qa_review":
+      return "#fb923c"; // orange-400
+    case "uat_review":
+      return "#fb7185"; // rose-400
+    case "ready_to_deploy":
+      return "#22d3ee"; // cyan-400
+    case "deployed":
+      return "#34d399"; // emerald-400
+    default:
+      return "#3b4252"; // muted gray
   }
 }
 
@@ -419,6 +449,156 @@ function ActivityFeed(props: { entries: ActivityLogEntry[]; limit?: number; clas
   );
 }
 
+// ---------------------------------------------------------------------------
+// Lightweight markdown renderer – handles images, bold, headings, and links
+// without adding any external dependencies.
+// ---------------------------------------------------------------------------
+function MarkdownContent({ text }: { text: string }) {
+  if (!text) return null;
+
+  // Split by markdown image pattern: ![alt](url)
+  // and inline link pattern: [text](url)
+  // We process line-by-line to also handle headings.
+  const lines = text.split("\n");
+
+  const elements: React.ReactNode[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+
+    // Heading lines: ### Heading
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      const level = (headingMatch[1] ?? "").length;
+      const content = headingMatch[2] ?? "";
+      const cls =
+        level === 1
+          ? "text-base font-semibold text-white mt-3 mb-1"
+          : level === 2
+            ? "text-sm font-semibold text-white mt-3 mb-1"
+            : "text-sm font-medium text-white/80 mt-2 mb-1";
+      elements.push(
+        <div key={i} className={cls}>
+          {renderInline(content)}
+        </div>,
+      );
+      continue;
+    }
+
+    // Regular line – process inline tokens
+    const inlineContent = renderInline(line);
+
+    // Check if line contains only an image (standalone image block)
+    const standaloneImg = line.match(/^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+    if (standaloneImg) {
+      const imgUrl = standaloneImg[2] ?? "";
+      const imgAlt = standaloneImg[1] || "image";
+      elements.push(
+        <a
+          key={i}
+          href={imgUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="my-2 block"
+        >
+          <img
+            src={imgUrl}
+            alt={imgAlt}
+            className="mission-md-img"
+          />
+        </a>,
+      );
+    } else {
+      // Render the line. If it's empty, render a blank line spacer.
+      elements.push(
+        <span key={i}>
+          {i > 0 ? "\n" : null}
+          {inlineContent}
+        </span>,
+      );
+    }
+  }
+
+  return <div className="mission-md-content whitespace-pre-wrap text-sm leading-6 text-linear-ink">{elements}</div>;
+}
+
+/** Parse inline markdown tokens: images, links, bold, and code */
+function renderInline(text: string): React.ReactNode[] {
+  // Combined regex for images, links, bold, and inline code
+  const inlineRe = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|`([^`]+)`/g;
+
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = inlineRe.exec(text)) !== null) {
+    // Push preceding text
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+
+    if (match[1] !== undefined || match[2] !== undefined) {
+      // Inline image: ![alt](url)
+      const imgUrl = match[2];
+      const imgAlt = match[1] || "image";
+      parts.push(
+        <a
+          key={`img-${match.index}`}
+          href={imgUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="my-1 inline-block"
+        >
+          <img
+            src={imgUrl}
+            alt={imgAlt}
+            className="mission-md-img"
+          />
+        </a>,
+      );
+    } else if (match[3] !== undefined) {
+      // Link: [text](url)
+      parts.push(
+        <a
+          key={`link-${match.index}`}
+          href={match[4]}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-linear-teal underline decoration-linear-teal/30 underline-offset-2 transition hover:decoration-linear-teal/60"
+        >
+          {match[3]}
+        </a>,
+      );
+    } else if (match[5] !== undefined) {
+      // Bold: **text**
+      parts.push(
+        <strong key={`b-${match.index}`} className="font-semibold text-white">
+          {match[5]}
+        </strong>,
+      );
+    } else if (match[6] !== undefined) {
+      // Inline code: `code`
+      parts.push(
+        <code
+          key={`code-${match.index}`}
+          className="rounded bg-linear-surface px-1.5 py-0.5 text-[12px] text-linear-teal"
+        >
+          {match[6]}
+        </code>,
+      );
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Remaining text
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts;
+}
+
 function TaskDetailPanel(props: {
   detail: MissionTaskDetail | null;
   agentNames: string[];
@@ -516,7 +696,9 @@ function TaskDetailPanel(props: {
           {task.description ? (
             <div className="rounded-xl border border-linear-line bg-linear-surface p-3.5">
               <h3 className="font-display text-sm font-semibold text-white">Description</h3>
-              <p className="mission-wrap mt-3 whitespace-pre-wrap text-sm leading-6 text-linear-ink">{task.description}</p>
+              <div className="mission-wrap mt-3">
+                <MarkdownContent text={task.description} />
+              </div>
             </div>
           ) : null}
 
@@ -537,7 +719,9 @@ function TaskDetailPanel(props: {
                       <strong className="mission-wrap text-sm text-white">{comment.authorName}</strong>
                       <span className="mission-muted shrink-0">{formatDateTime(comment.createdAt)}</span>
                     </div>
-                    <p className="mission-wrap mt-3 whitespace-pre-wrap text-sm leading-6 text-linear-ink">{comment.body}</p>
+                    <div className="mission-wrap mt-3">
+                      <MarkdownContent text={comment.body} />
+                    </div>
                   </article>
                 ))
               )}
@@ -661,7 +845,9 @@ function HandoffCard(props: { handoff: MissionTaskHandoff; onRespond(status: "ac
         </div>
         <span className={cx("mission-badge border", statusTone(props.handoff.status))}>{props.handoff.status}</span>
       </div>
-      <p className="mission-wrap mt-3 text-sm leading-6 text-linear-ink">{props.handoff.note}</p>
+      <div className="mission-wrap mt-3">
+        <MarkdownContent text={props.handoff.note} />
+      </div>
       {props.handoff.status === "pending" ? (
         <div className="mt-4 flex flex-wrap gap-2">
           <button
@@ -682,8 +868,87 @@ function HandoffCard(props: { handoff: MissionTaskHandoff; onRespond(status: "ac
   );
 }
 
+function HermesDefaultsCard(props: {
+  defaults: HermesDefaults;
+  busyKey: string | null;
+  onSave(input: { sshHost: string; runtimeHost: string; token?: string }): Promise<void>;
+}) {
+  const [sshHost, setSshHost] = useState(props.defaults.sshHost ?? "");
+  const [runtimeHost, setRuntimeHost] = useState(props.defaults.runtimeHost ?? "");
+  const [token, setToken] = useState("");
+
+  useEffect(() => {
+    setSshHost(props.defaults.sshHost ?? "");
+    setRuntimeHost(props.defaults.runtimeHost ?? "");
+    setToken("");
+  }, [props.defaults.sshHost, props.defaults.runtimeHost, props.defaults.tokenConfigured]);
+
+  const isBusy = props.busyKey === "hermes-defaults:save";
+
+  return (
+    <SectionCard
+      title="Hermes Host Defaults"
+      subtitle="Shared SSH host, runtime host, and API token for Hermes-family connectors."
+      action={<span className="mission-badge">{props.defaults.tokenConfigured ? "Token configured" : "No token"}</span>}
+    >
+      <div className="grid gap-3">
+        <label className="space-y-1.5">
+          <span className="mission-section-label">SSH host</span>
+          <input
+            className="mission-input"
+            value={sshHost}
+            onChange={(event) => setSshHost(event.target.value)}
+            placeholder="matt@192.168.1.113"
+          />
+          <p className="mission-muted text-[10px]">Used by Hermes connectors that inherit shared defaults.</p>
+        </label>
+        <label className="space-y-1.5">
+          <span className="mission-section-label">Runtime host</span>
+          <input
+            className="mission-input"
+            value={runtimeHost}
+            onChange={(event) => setRuntimeHost(event.target.value)}
+            placeholder="http://192.168.1.113"
+          />
+          <p className="mission-muted text-[10px]">Connectors can derive their runtime bridge URL from this host plus their own port.</p>
+        </label>
+        <label className="space-y-1.5">
+          <span className="mission-section-label">API token</span>
+          <input
+            className="mission-input"
+            type="password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder={props.defaults.tokenConfigured ? "Leave blank to keep current" : "Bearer token for /events"}
+          />
+          <p className="mission-muted text-[10px]">Shared bearer token for Hermes `/events` and API auth.</p>
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          className="mission-button"
+          disabled={isBusy}
+          onClick={() => {
+            void props.onSave({
+              sshHost,
+              runtimeHost,
+              ...(token.trim() ? { token: token.trim() } : {}),
+            });
+          }}
+        >
+          {isBusy ? "Saving..." : "Save shared defaults"}
+        </button>
+        <span className="mission-muted">
+          Shared values apply to Hermes, Scout, Atlas, and Orbit when inheritance is enabled.
+        </span>
+      </div>
+    </SectionCard>
+  );
+}
+
 function ConnectorSettingsCard(props: {
   connector: ProviderConnector;
+  hermesDefaults: HermesDefaults;
   busyKey: string | null;
   onSave(
     connectorId: string,
@@ -694,6 +959,7 @@ function ConnectorSettingsCard(props: {
       runtimeBaseUrl: string;
       token?: string;
       adapterConfig?: Record<string, unknown>;
+      useHermesDefaults?: boolean;
     },
   ): Promise<void>;
   onTest(connectorId: string): Promise<void>;
@@ -701,7 +967,9 @@ function ConnectorSettingsCard(props: {
   onRemove(connectorId: string): void;
 }) {
   const fields = props.connector.configFields;
+  const isHermes = props.connector.provider === "hermes";
   const [enabled, setEnabled] = useState(props.connector.enabled);
+  const [useHermesDefaults, setUseHermesDefaults] = useState(props.connector.useHermesDefaults ?? isHermes);
   const [fieldValues, setFieldValues] = useState<Record<string, unknown>>(() => {
     if (!fields) return {};
     const initial: Record<string, unknown> = {};
@@ -713,14 +981,18 @@ function ConnectorSettingsCard(props: {
 
   useEffect(() => {
     setEnabled(props.connector.enabled);
+    setUseHermesDefaults(props.connector.useHermesDefaults ?? isHermes);
     if (fields) {
       const next: Record<string, unknown> = {};
       for (const field of fields) {
         next[field.key] = field.type === "password" ? "" : (props.connector.adapterConfig?.[field.key] ?? "");
       }
+      if (isHermes) {
+        next.runtimePort = props.connector.adapterConfig?.runtimePort ?? parseHermesRuntimePort(props.connector.runtimeBaseUrl, props.hermesDefaults.runtimeHost);
+      }
       setFieldValues(next);
     }
-  }, [props.connector.id, props.connector.enabled, props.connector.adapterConfig]);
+  }, [props.connector.id, props.connector.enabled, props.connector.adapterConfig, props.connector.useHermesDefaults, props.hermesDefaults.runtimeHost, isHermes, fields]);
 
   const isBusy = props.busyKey?.startsWith(`connector:${props.connector.id}`) ?? false;
 
@@ -728,18 +1000,25 @@ function ConnectorSettingsCard(props: {
     const tokenValue = String(fieldValues.token ?? "").trim();
     // Collect any field values that aren't the well-known connector keys
     // into adapterConfig so adapters can define custom fields freely.
-    const knownKeys = new Set(["baseUrl", "websocketUrl", "runtimeBaseUrl", "token"]);
+    const knownKeys = new Set(["baseUrl", "websocketUrl", "runtimeBaseUrl", "runtimePort", "token"]);
     const extras: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fieldValues)) {
       if (!knownKeys.has(key)) extras[key] = value;
     }
+    const runtimePortValue = String(fieldValues.runtimePort ?? "").trim();
+    if (isHermes && useHermesDefaults && runtimePortValue) {
+      extras.runtimePort = Number(runtimePortValue);
+    }
     await props.onSave(props.connector.id, {
       enabled,
       baseUrl: String(fieldValues.baseUrl ?? props.connector.baseUrl ?? ""),
-      websocketUrl: String(fieldValues.websocketUrl ?? props.connector.websocketUrl ?? ""),
-      runtimeBaseUrl: String(fieldValues.runtimeBaseUrl ?? props.connector.runtimeBaseUrl ?? ""),
+      websocketUrl: isHermes && useHermesDefaults ? "" : String(fieldValues.websocketUrl ?? props.connector.websocketUrl ?? ""),
+      runtimeBaseUrl: isHermes && useHermesDefaults
+        ? ""
+        : String(fieldValues.runtimeBaseUrl ?? props.connector.runtimeBaseUrl ?? ""),
       ...(tokenValue ? { token: tokenValue } : {}),
       ...(Object.keys(extras).length > 0 ? { adapterConfig: extras } : {}),
+      ...(isHermes ? { useHermesDefaults } : {}),
     });
     setFieldValues((prev) => ({ ...prev, token: "" }));
   }
@@ -754,7 +1033,83 @@ function ConnectorSettingsCard(props: {
       subtitle={props.connector.health.message ?? "No connector message."}
       action={<span className={cx("mission-badge border", connectorTone(props.connector.health.status))}>{props.connector.health.status}</span>}
     >
-      {fields && fields.length > 0 ? (
+      {isHermes ? (
+        <div className="grid gap-3">
+          <label className="space-y-1.5">
+            <span className="mission-section-label">CLI command</span>
+            <input
+              className="mission-input"
+              value={String(fieldValues.baseUrl ?? "")}
+              onChange={(event) => updateField("baseUrl", event.target.value)}
+              placeholder="hermes"
+            />
+            <p className="mission-muted text-[10px]">CLI binary name or full path. Use wrapper commands for profile-specific agents.</p>
+          </label>
+          <label className="inline-flex items-center gap-3 rounded-lg border border-linear-line px-3 py-2 text-sm text-white">
+            <input
+              type="checkbox"
+              checked={useHermesDefaults}
+              onChange={(event) => setUseHermesDefaults(event.target.checked)}
+            />
+            Use shared Hermes host defaults
+          </label>
+          {useHermesDefaults ? (
+            <>
+              <div className="rounded-xl border border-linear-line bg-mission-950 px-3 py-3 text-sm text-linear-muted">
+                <div>SSH host: <span className="text-white">{props.hermesDefaults.sshHost || "not set"}</span></div>
+                <div className="mt-1">Runtime host: <span className="text-white">{props.hermesDefaults.runtimeHost || "not set"}</span></div>
+                <div className="mt-1">API token: <span className="text-white">{props.hermesDefaults.tokenConfigured ? "configured" : "not set"}</span></div>
+              </div>
+              <label className="space-y-1.5">
+                <span className="mission-section-label">Runtime port</span>
+                <input
+                  className="mission-input"
+                  type="number"
+                  value={String(fieldValues.runtimePort ?? "")}
+                  onChange={(event) => updateField("runtimePort", event.target.value)}
+                  placeholder="8642"
+                />
+                <p className="mission-muted text-[10px]">
+                  Derived URL: {props.hermesDefaults.runtimeHost && String(fieldValues.runtimePort ?? "").trim()
+                    ? `${props.hermesDefaults.runtimeHost.replace(/\/+$/, "")}:${String(fieldValues.runtimePort ?? "").trim()}`
+                    : "set shared runtime host and a port"}
+                </p>
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="space-y-1.5">
+                <span className="mission-section-label">SSH host</span>
+                <input
+                  className="mission-input"
+                  value={String(fieldValues.websocketUrl ?? "")}
+                  onChange={(event) => updateField("websocketUrl", event.target.value)}
+                  placeholder="matt@192.168.1.113"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="mission-section-label">Runtime bridge URL</span>
+                <input
+                  className="mission-input"
+                  value={String(fieldValues.runtimeBaseUrl ?? "")}
+                  onChange={(event) => updateField("runtimeBaseUrl", event.target.value)}
+                  placeholder="http://192.168.1.113:8642"
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="mission-section-label">API token</span>
+                <input
+                  className="mission-input"
+                  type="password"
+                  value={String(fieldValues.token ?? "")}
+                  onChange={(event) => updateField("token", event.target.value)}
+                  placeholder={props.connector.tokenConfigured ? "Leave blank to keep current" : "Bearer token"}
+                />
+              </label>
+            </>
+          )}
+        </div>
+      ) : fields && fields.length > 0 ? (
         <div className="grid gap-3">
           {fields.map((field) => (
             <label key={field.key} className="space-y-1.5">
@@ -789,7 +1144,8 @@ function ConnectorSettingsCard(props: {
           Connector enabled
         </label>
         <span className="mission-muted">
-          {props.connector.tokenConfigured ? "Token configured" : ""}{props.connector.lastSyncAt ? ` · Last sync ${formatRelativeUpdate(props.connector.lastSyncAt)}` : ""}
+          {(props.connector.tokenConfigured || (isHermes && useHermesDefaults && props.hermesDefaults.tokenConfigured)) ? "Token configured" : ""}
+          {props.connector.lastSyncAt ? ` · Last sync ${formatRelativeUpdate(props.connector.lastSyncAt)}` : ""}
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-3">
@@ -935,8 +1291,10 @@ const INTEGRATION_OPTIONS: Array<{ provider: ProviderConnector["provider"]; labe
 
 function SettingsView(props: {
   connectors: ProviderConnector[];
+  hermesDefaults: HermesDefaults;
   providerAgents: ProviderAgentRecord[];
   busyKey: string | null;
+  onSaveHermesDefaults(input: { sshHost: string; runtimeHost: string; token?: string }): Promise<void>;
   onSave(
     connectorId: string,
     input: {
@@ -946,6 +1304,7 @@ function SettingsView(props: {
       runtimeBaseUrl: string;
       token?: string;
       adapterConfig?: Record<string, unknown>;
+      useHermesDefaults?: boolean;
     },
   ): Promise<void>;
   onTest(connectorId: string): Promise<void>;
@@ -953,10 +1312,18 @@ function SettingsView(props: {
   onRemove(connectorId: string): Promise<void>;
 }) {
   const enabledConnectors = props.connectors.filter((c) => c.enabled);
+  const hermesConnectors = props.connectors.filter((connector) => connector.provider === "hermes");
 
   return (
     <div className="grid flex-1 gap-5 xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="mission-scroll space-y-5">
+        {hermesConnectors.length > 0 ? (
+          <HermesDefaultsCard
+            defaults={props.hermesDefaults}
+            busyKey={props.busyKey}
+            onSave={(input) => props.onSaveHermesDefaults(input)}
+          />
+        ) : null}
         {enabledConnectors.length === 0 ? (
           <SectionCard
             title="No integrations configured"
@@ -972,6 +1339,7 @@ function SettingsView(props: {
               <ConnectorSettingsCard
                 key={connector.id}
                 connector={connector}
+                hermesDefaults={props.hermesDefaults}
                 busyKey={props.busyKey}
                 onSave={(connectorId, input) => props.onSave(connectorId, input)}
                 onTest={(connectorId) => props.onTest(connectorId)}
@@ -1586,7 +1954,7 @@ export function App() {
                     <span className="mission-badge">Active cycle only</span>
                   </div>
                 </div>
-                <div className="mission-issue-list mt-1 flex-1 space-y-1.5">
+                <div className="mission-issue-list mt-1 flex-1 space-y-2">
                   {visibleTasks.length === 0 ? (
                     <div className="px-4 py-6 text-sm text-linear-muted">No tasks matched the current active cycle filter.</div>
                   ) : (
@@ -1594,9 +1962,9 @@ export function App() {
                       <button
                         key={task.id}
                         className={cx(
-                          "mission-issue-row",
+                          "mission-task-card",
                           mission.selectedTaskId === task.id
-                            ? "mission-issue-row--selected"
+                            ? "mission-task-card--selected"
                             : "",
                         )}
                         onClick={() => {
@@ -1605,20 +1973,21 @@ export function App() {
                           });
                         }}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
+                        <div className="mission-task-card-accent" style={{ background: taskAccentColor(task) }} />
+                        <div className="mission-task-card-body">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
                               <span className="mission-issue-key">{task.identifier}</span>
                               <span className="mission-muted truncate">{task.team.key ?? task.team.name}</span>
                             </div>
+                            <span className="shrink-0 text-[11px] text-linear-muted">{formatRelativeStamp(task.updatedAt)}</span>
                           </div>
-                          <span className="shrink-0 text-[11px] text-linear-muted">{formatRelativeStamp(task.updatedAt)}</span>
-                        </div>
-                        <div className="mission-clamp-2 mission-wrap mt-2 text-sm font-medium leading-5 text-white">{task.title}</div>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-linear-muted">
-                          <span className={cx("mission-badge border", taskWorkflowTone(task))}>{task.state.name}</span>
-                          <span className="mission-wrap">{task.assignee?.name ?? "Unassigned"}</span>
-                          <span className="mission-wrap">{taskCycleLabel(task)}</span>
+                          <div className="mission-clamp-2 mission-wrap mt-1.5 text-[13px] font-medium leading-[1.4] text-white">{task.title}</div>
+                          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                            <span className={cx("mission-badge border", taskWorkflowTone(task))}>{task.state.name}</span>
+                            <span className="mission-task-chip">{task.assignee?.name ?? "Unassigned"}</span>
+                            <span className="mission-task-chip">{taskCycleLabel(task)}</span>
+                          </div>
                         </div>
                       </button>
                     ))
@@ -1710,8 +2079,10 @@ export function App() {
           {mission.activeView === "settings" ? (
             <SettingsView
               connectors={mission.missionSnapshot.connectors}
+              hermesDefaults={mission.missionSnapshot.hermesDefaults}
               providerAgents={mission.missionSnapshot.providerAgents}
               busyKey={mission.busyKey}
+              onSaveHermesDefaults={(input) => mission.saveHermesSharedDefaults(input)}
               onSave={(connectorId, input) => mission.saveConnector(connectorId, input)}
               onTest={(connectorId) => mission.testConnectorHealth(connectorId)}
               onSync={(connectorId) => mission.syncConnector(connectorId)}

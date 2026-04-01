@@ -28,8 +28,10 @@ function createMissionControlState(activeView: "mission" | "tasks" | "schedules"
         message: "Healthy",
       },
       lastSyncAt: Date.now(),
+      useHermesDefaults: true,
       adapterConfig: {
         baseUrl: "hermes",
+        runtimePort: 8642,
       },
       configFields: [
         { key: "baseUrl", label: "CLI command", type: "text" as const, placeholder: "hermes", required: true },
@@ -59,6 +61,11 @@ function createMissionControlState(activeView: "mission" | "tasks" | "schedules"
     ],
     missionSnapshot: {
       connectors,
+      hermesDefaults: {
+        sshHost: "matt@192.168.1.113",
+        runtimeHost: "http://192.168.1.113",
+        tokenConfigured: true,
+      },
       providerAgents: [],
       schedules: [
         {

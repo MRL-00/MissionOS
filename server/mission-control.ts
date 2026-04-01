@@ -4,6 +4,7 @@ import {
   HERMES_COMMAND,
   HERMES_RUNTIME_URL,
   HERMES_TOKEN,
+  HERMES_TOKEN_CONFIGURED,
   HERMES_URL,
   HERMES_WS_URL,
   LINEAR_SYNC_INTERVAL_MS,
@@ -11,11 +12,14 @@ import {
   RequestBodyError,
   dataDir,
   missionControlFilePath,
+  type PersistedHermesDefaults,
   type PersistedMissionConnector,
   type PersistedMissionControlFile,
 } from "./types";
 import type { ServerMessage } from "../src/types";
 import type {
+  HermesDefaults,
+  HermesDefaultsUpdateRequest,
   MissionControlSnapshot,
   MissionProvider,
   MissionRosterImportStatus,
@@ -64,6 +68,10 @@ interface ProviderConnectorState extends ProviderConnector {
   token?: string | undefined;
 }
 
+interface HermesDefaultsState extends HermesDefaults {
+  token?: string | undefined;
+}
+
 interface HermesConnectorRuntime {
   deferredIdleTimers: Map<string, NodeJS.Timeout>;
   eventReconnectTimer: NodeJS.Timeout | null;
@@ -99,16 +107,85 @@ let rosterImport: MissionRosterImportStatus = {
   updatedAt: Date.now(),
 };
 let taskHandoffs: MissionTaskHandoff[] = [];
+let hermesDefaults: HermesDefaultsState = {
+  sshHost: HERMES_WS_URL || undefined,
+  runtimeHost: HERMES_RUNTIME_URL || HERMES_URL || undefined,
+  token: HERMES_TOKEN.trim() || undefined,
+  tokenConfigured: HERMES_TOKEN_CONFIGURED,
+};
+
+function publicHermesDefaultsShape(): HermesDefaults {
+  return {
+    sshHost: hermesDefaults.sshHost,
+    runtimeHost: hermesDefaults.runtimeHost,
+    tokenConfigured: hermesDefaults.tokenConfigured,
+  };
+}
+
+function normalizeHermesRuntimeHost(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  return trimmed;
+}
+
+function joinRuntimeHostAndPort(runtimeHost: string, runtimePort: number): string {
+  return `${normalizeHermesRuntimeHost(runtimeHost)}:${runtimePort}`;
+}
+
+function parseRuntimePortFromUrl(runtimeBaseUrl: string | undefined, runtimeHost: string | undefined): number | undefined {
+  const runtimeUrl = runtimeBaseUrl?.trim() ?? "";
+  const sharedHost = runtimeHost?.trim().replace(/\/+$/, "") ?? "";
+  if (!runtimeUrl || !sharedHost || !runtimeUrl.startsWith(`${sharedHost}:`)) {
+    return undefined;
+  }
+  const port = Number(runtimeUrl.slice(sharedHost.length + 1).trim());
+  return Number.isFinite(port) && port > 0 ? Math.trunc(port) : undefined;
+}
+
+function connectorRuntimePort(connector: ProviderConnectorState): number | undefined {
+  const value = connector.adapterConfig?.runtimePort;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : undefined;
+}
+
+function connectorUsesHermesDefaults(connector: ProviderConnectorState): boolean {
+  return connector.provider === "hermes" && connector.useHermesDefaults !== false;
+}
 
 function defaultHermesToken(): string {
-  return HERMES_TOKEN.trim();
+  return hermesDefaults.token?.trim() || HERMES_TOKEN.trim();
+}
+
+function resolvedHermesSshHost(connector: ProviderConnectorState): string {
+  const own = connector.websocketUrl?.trim() ?? "";
+  if (own) {
+    return own;
+  }
+  if (!connectorUsesHermesDefaults(connector)) {
+    return "";
+  }
+  return hermesDefaults.sshHost?.trim() ?? "";
+}
+
+function resolvedHermesRuntimeBaseUrl(connector: ProviderConnectorState): string {
+  const own = connector.runtimeBaseUrl?.trim() ?? "";
+  if (own) {
+    return own;
+  }
+  if (!connectorUsesHermesDefaults(connector)) {
+    return "";
+  }
+  const runtimeHost = hermesDefaults.runtimeHost?.trim() ?? "";
+  const runtimePort = connectorRuntimePort(connector);
+  if (runtimeHost && runtimePort) {
+    return joinRuntimeHostAndPort(runtimeHost, runtimePort);
+  }
+  return runtimeHost;
 }
 
 function connectorAccessToken(connector: ProviderConnectorState): string {
   if (connector.provider !== "hermes") {
     return connector.token?.trim() ?? "";
   }
-  return connector.token?.trim() || defaultHermesToken();
+  return connector.token?.trim() || (connectorUsesHermesDefaults(connector) ? defaultHermesToken() : "");
 }
 
 function providerCapabilities(provider: MissionProvider): ProviderConnector["capabilities"] {
@@ -133,12 +210,14 @@ function publicConnectorShape(connector: ProviderConnectorState): ProviderConnec
 }
 
 function adapterConfigFromConnector(connector: ProviderConnectorState): Record<string, unknown> {
+  const runtimePort = connectorRuntimePort(connector);
   return {
     ...connector.adapterConfig,
     baseUrl: connector.baseUrl ?? "",
     websocketUrl: connector.websocketUrl ?? "",
     runtimeBaseUrl: connector.runtimeBaseUrl ?? "",
     token: connector.tokenConfigured ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "",
+    runtimePort: runtimePort ?? "",
   };
 }
 
@@ -146,18 +225,18 @@ function defaultConnector(provider: MissionProvider, id: string, label?: string)
   const displayLabel = label ?? MISSION_PROVIDER_LABELS[provider];
 
   if (provider === "hermes") {
-    const token = defaultHermesToken();
     return {
       id,
       provider,
       label: displayLabel,
       enabled: HERMES_COMMAND !== "hermes" || Boolean(process.env.HERMES_COMMAND),
       baseUrl: HERMES_COMMAND || undefined,
-      websocketUrl: HERMES_WS_URL || undefined,
-      runtimeBaseUrl: HERMES_RUNTIME_URL || HERMES_URL || undefined,
-      authMode: token ? "bearer" as const : "none" as const,
-      token: token || undefined,
-      tokenConfigured: Boolean(token),
+      websocketUrl: undefined,
+      runtimeBaseUrl: undefined,
+      authMode: defaultHermesToken() ? "bearer" as const : "none" as const,
+      token: undefined,
+      tokenConfigured: false,
+      useHermesDefaults: true,
       capabilities: providerCapabilities(provider),
       health: {
         provider,
@@ -206,6 +285,7 @@ function persistedConnectorShape(connector: ProviderConnectorState): PersistedMi
     token: connector.token,
     lastSyncAt: connector.lastSyncAt,
     adapterConfig: connector.adapterConfig,
+    useHermesDefaults: connector.useHermesDefaults,
   };
 }
 
@@ -215,7 +295,29 @@ function hydrateConnector(provider: MissionProvider, id: string, persisted?: Per
     return base;
   }
 
-  const token = persisted.token?.trim() || (base.token ?? "");
+  let token = persisted.token?.trim() || (base.token ?? "");
+  let websocketUrl = persisted.websocketUrl ?? base.websocketUrl;
+  let runtimeBaseUrl = persisted.runtimeBaseUrl ?? base.runtimeBaseUrl;
+  let adapterConfig = persisted.adapterConfig ?? base.adapterConfig;
+  const useHermesDefaults = persisted.useHermesDefaults ?? base.useHermesDefaults;
+
+  if (provider === "hermes" && useHermesDefaults) {
+    if ((websocketUrl?.trim() ?? "") === (hermesDefaults.sshHost?.trim() ?? "")) {
+      websocketUrl = undefined;
+    }
+    if ((token || "") === (hermesDefaults.token ?? "")) {
+      token = "";
+    }
+    const derivedRuntimePort = parseRuntimePortFromUrl(runtimeBaseUrl, hermesDefaults.runtimeHost);
+    if (derivedRuntimePort) {
+      adapterConfig = {
+        ...adapterConfig,
+        runtimePort: derivedRuntimePort,
+      };
+      runtimeBaseUrl = undefined;
+    }
+  }
+
   const authMode = persisted.token?.trim()
     ? (persisted.authMode ?? "bearer")
     : (token ? "bearer" : (persisted.authMode ?? base.authMode));
@@ -224,18 +326,71 @@ function hydrateConnector(provider: MissionProvider, id: string, persisted?: Per
     ...base,
     enabled: persisted.enabled,
     baseUrl: persisted.baseUrl ?? base.baseUrl,
-    websocketUrl: persisted.websocketUrl ?? base.websocketUrl,
-    runtimeBaseUrl: persisted.runtimeBaseUrl ?? base.runtimeBaseUrl,
+    websocketUrl,
+    runtimeBaseUrl,
     authMode,
     token: token || undefined,
     tokenConfigured: Boolean(token),
     lastSyncAt: persisted.lastSyncAt,
-    adapterConfig: persisted.adapterConfig ?? base.adapterConfig,
+    adapterConfig,
+    useHermesDefaults,
   };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isPersistedHermesDefaults(value: unknown): value is PersistedHermesDefaults {
+  return isRecord(value)
+    && (value.sshHost === undefined || typeof value.sshHost === "string")
+    && (value.runtimeHost === undefined || typeof value.runtimeHost === "string")
+    && (value.token === undefined || typeof value.token === "string");
+}
+
+function hydrateHermesDefaults(persisted?: PersistedHermesDefaults): HermesDefaultsState {
+  const token = persisted?.token?.trim() || HERMES_TOKEN.trim();
+  return {
+    sshHost: persisted?.sshHost?.trim() || HERMES_WS_URL || undefined,
+    runtimeHost: persisted?.runtimeHost?.trim() || HERMES_RUNTIME_URL || HERMES_URL || undefined,
+    token: token || undefined,
+    tokenConfigured: Boolean(token),
+  };
+}
+
+function persistedHermesDefaultsShape(): PersistedHermesDefaults {
+  return {
+    sshHost: hermesDefaults.sshHost,
+    runtimeHost: hermesDefaults.runtimeHost,
+    token: hermesDefaults.token,
+  };
+}
+
+function extractRuntimeHost(runtimeBaseUrl: string | undefined): string | undefined {
+  const raw = runtimeBaseUrl?.trim() ?? "";
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(raw);
+    const hostname = parsed.hostname.includes(":") ? `[${parsed.hostname}]` : parsed.hostname;
+    return `${parsed.protocol}//${hostname}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function inferHermesDefaultsFromConnectors(connectors: PersistedMissionConnector[]): PersistedHermesDefaults | undefined {
+  const hermesConnectors = connectors.filter((connector) => connector.provider === "hermes");
+  if (hermesConnectors.length === 0) {
+    return undefined;
+  }
+  const first = hermesConnectors[0];
+  return {
+    sshHost: first?.websocketUrl?.trim() || undefined,
+    runtimeHost: extractRuntimeHost(first?.runtimeBaseUrl),
+    token: first?.token?.trim() || undefined,
+  };
 }
 
 function isPersistedMissionConnector(value: unknown): value is PersistedMissionConnector {
@@ -247,6 +402,7 @@ function isPersistedMissionConnector(value: unknown): value is PersistedMissionC
     && (value.runtimeBaseUrl === undefined || typeof value.runtimeBaseUrl === "string")
     && (value.authMode === "none" || value.authMode === "bearer")
     && (value.token === undefined || typeof value.token === "string")
+    && (value.useHermesDefaults === undefined || typeof value.useHermesDefaults === "boolean")
     && (value.lastSyncAt === undefined || typeof value.lastSyncAt === "number");
 }
 
@@ -458,8 +614,9 @@ function buildWatcherHealth(
   connector: ProviderConnectorState,
   snapshot: HermesAgentStateSnapshot,
 ): ProviderHealth {
-  const source = connector.websocketUrl?.trim()
-    ? `${connector.websocketUrl.trim()}:${snapshot.path}`
+  const sshHost = resolvedHermesSshHost(connector);
+  const source = sshHost
+    ? `${sshHost}:${snapshot.path}`
     : snapshot.path;
   return buildHermesStateHealth(connector, snapshot.agents, source);
 }
@@ -586,13 +743,13 @@ function commitHermesRuntimeAgent(
     exists: true,
     empty: nextAgents.length === 0,
     mtimeMs: Date.now(),
-    path: `${connector.runtimeBaseUrl?.trim() || ""}/events`,
+    path: `${resolvedHermesRuntimeBaseUrl(connector) || ""}/events`,
   };
   runtime.lastAppliedSignature = snapshotSignature(runtime.lastSnapshot);
 
   applyProviderSyncResult(
     connectorId,
-    buildHermesStateHealth(connector, nextAgents, `${connector.runtimeBaseUrl?.trim() || ""}/events`),
+    buildHermesStateHealth(connector, nextAgents, `${resolvedHermesRuntimeBaseUrl(connector) || ""}/events`),
     nextAgents,
     connectorSchedules(connectorId),
   );
@@ -686,7 +843,7 @@ function markHermesRuntimeConnected(connectorId: string): void {
   if (resetAgents.some((agent, i) => agent !== currentAgents[i])) {
     applyProviderSyncResult(
       connectorId,
-      buildHermesStateHealth(connector, resetAgents, `${connector.runtimeBaseUrl?.trim() || ""}/events`),
+      buildHermesStateHealth(connector, resetAgents, `${resolvedHermesRuntimeBaseUrl(connector) || ""}/events`),
       resetAgents,
       connectorSchedules(connectorId),
     );
@@ -698,7 +855,7 @@ function markHermesRuntimeConnected(connectorId: string): void {
     health: buildHermesStateHealth(
       connector,
       currentAgents,
-      `${connector.runtimeBaseUrl?.trim() || ""}/events`,
+      `${resolvedHermesRuntimeBaseUrl(connector) || ""}/events`,
     ),
   });
   broadcastMissionSnapshot();
@@ -721,7 +878,7 @@ function scheduleHermesRuntimeReconnect(connectorId: string): void {
 function startHermesRuntimeSubscription(connectorId: string): void {
   const connector = connectorInstances.get(connectorId);
   const runtime = hermesConnectorRuntimes.get(connectorId);
-  const runtimeBaseUrl = connector?.runtimeBaseUrl?.trim() ?? "";
+  const runtimeBaseUrl = connector ? resolvedHermesRuntimeBaseUrl(connector) : "";
 
   if (!connector || connector.provider !== "hermes" || !connector.enabled || !runtime || !runtimeBaseUrl) {
     return;
@@ -765,7 +922,7 @@ function startHermesRuntimeSubscription(connectorId: string): void {
 async function refreshRemoteHermesState(connectorId: string): Promise<void> {
   const connector = connectorInstances.get(connectorId);
   const runtime = hermesConnectorRuntimes.get(connectorId);
-  const sshHost = connector?.websocketUrl?.trim() ?? "";
+  const sshHost = connector ? resolvedHermesSshHost(connector) : "";
 
   if (!connector || connector.provider !== "hermes" || !connector.enabled || !runtime || !sshHost) {
     return;
@@ -808,6 +965,7 @@ function markConnectorRuntimeError(connectorId: string, message: string): void {
 function buildMissionSnapshot(): MissionControlSnapshot {
   return {
     connectors: Array.from(connectorInstances.values()).map(publicConnectorShape),
+    hermesDefaults: publicHermesDefaultsShape(),
     providerAgents: [...providerAgents],
     schedules: [...schedules],
     tasks: [...taskSnapshot],
@@ -834,6 +992,7 @@ async function readPersistedMissionControl(): Promise<PersistedMissionControlFil
     const parsed = JSON.parse(raw) as Partial<PersistedMissionControlFile>;
     return {
       connectors: Array.isArray(parsed.connectors) ? parsed.connectors.filter(isPersistedMissionConnector) : [],
+      hermesDefaults: isPersistedHermesDefaults(parsed.hermesDefaults) ? parsed.hermesDefaults : undefined,
       handoffs: Array.isArray(parsed.handoffs) ? parsed.handoffs.filter(isMissionTaskHandoff) : [],
     };
   } catch (error) {
@@ -848,6 +1007,7 @@ async function readPersistedMissionControl(): Promise<PersistedMissionControlFil
 async function persistMissionControl(): Promise<void> {
   const payload: PersistedMissionControlFile = {
     connectors: Array.from(connectorInstances.values()).map(persistedConnectorShape),
+    hermesDefaults: persistedHermesDefaultsShape(),
     handoffs: [...taskHandoffs].sort((left, right) => right.createdAt - left.createdAt),
   };
   const serialized = `${JSON.stringify(payload, null, 2)}\n`;
@@ -897,6 +1057,7 @@ export function configureMissionControlRuntime(callback: (message: ServerMessage
 export async function loadMissionControl(): Promise<void> {
   clearTimers();
   const persisted = await readPersistedMissionControl();
+  hermesDefaults = hydrateHermesDefaults(persisted.hermesDefaults ?? inferHermesDefaultsFromConnectors(persisted.connectors));
 
   for (const saved of persisted.connectors) {
     const id = saved.id ?? saved.provider; // backward compat
@@ -954,6 +1115,7 @@ export async function updateMissionConnector(connectorId: string, updates: Provi
     token: nextToken || undefined,
     tokenConfigured: Boolean(nextToken),
     adapterConfig: mergedAdapterConfig,
+    useHermesDefaults: updates.useHermesDefaults ?? current.useHermesDefaults,
   };
 
   connectorInstances.set(connectorId, next);
@@ -966,6 +1128,24 @@ export async function updateMissionConnector(connectorId: string, updates: Provi
   await reconcileConnectorRuntime(connectorId);
   broadcastMissionSnapshot();
   return publicConnectorShape(connectorInstances.get(connectorId) ?? next);
+}
+
+export async function updateHermesDefaults(updates: HermesDefaultsUpdateRequest): Promise<HermesDefaults> {
+  const nextToken = updates.token !== undefined ? updates.token.trim() : (hermesDefaults.token ?? "");
+  hermesDefaults = {
+    sshHost: updates.sshHost !== undefined ? (updates.sshHost.trim() || undefined) : hermesDefaults.sshHost,
+    runtimeHost: updates.runtimeHost !== undefined ? (normalizeHermesRuntimeHost(updates.runtimeHost) || undefined) : hermesDefaults.runtimeHost,
+    token: nextToken || undefined,
+    tokenConfigured: Boolean(nextToken),
+  };
+  await queuePersistMissionControl();
+  await Promise.allSettled(
+    Array.from(connectorInstances.values())
+      .filter((connector) => connector.provider === "hermes" && connectorUsesHermesDefaults(connector))
+      .map((connector) => reconcileConnectorRuntime(connector.id)),
+  );
+  broadcastMissionSnapshot();
+  return publicHermesDefaultsShape();
 }
 
 export async function testMissionConnector(connectorId: string): Promise<ProviderConnector> {
@@ -1178,8 +1358,8 @@ function adapterConfigForConnector(connectorId: string): Record<string, unknown>
   return {
     ...connector.adapterConfig,
     baseUrl: connector.baseUrl,
-    websocketUrl: connector.websocketUrl,
-    runtimeBaseUrl: connector.runtimeBaseUrl,
+    websocketUrl: connector.provider === "hermes" ? resolvedHermesSshHost(connector) : connector.websocketUrl,
+    runtimeBaseUrl: connector.provider === "hermes" ? resolvedHermesRuntimeBaseUrl(connector) : connector.runtimeBaseUrl,
     token: connectorAccessToken(connector) || undefined,
   };
 }
@@ -1292,8 +1472,8 @@ async function reconcileConnectorRuntime(connectorId: string): Promise<void> {
   }
 
   const runtime = ensureHermesConnectorRuntime(connectorId);
-  const sshHost = connector.websocketUrl?.trim() ?? "";
-  const runtimeBaseUrl = connector.runtimeBaseUrl?.trim() ?? "";
+  const sshHost = resolvedHermesSshHost(connector);
+  const runtimeBaseUrl = resolvedHermesRuntimeBaseUrl(connector);
 
   const eventStream = runtime.eventStream;
   runtime.eventStream = null;
@@ -1344,7 +1524,15 @@ export function isProviderConnectorUpdateRequest(value: unknown): value is Provi
     && (value.runtimeBaseUrl === undefined || typeof value.runtimeBaseUrl === "string")
     && (value.authMode === undefined || value.authMode === "none" || value.authMode === "bearer")
     && (value.token === undefined || typeof value.token === "string")
+    && (value.useHermesDefaults === undefined || typeof value.useHermesDefaults === "boolean")
     && (value.adapterConfig === undefined || isRecord(value.adapterConfig));
+}
+
+export function isHermesDefaultsUpdateRequest(value: unknown): value is HermesDefaultsUpdateRequest {
+  return isRecord(value)
+    && (value.sshHost === undefined || typeof value.sshHost === "string")
+    && (value.runtimeHost === undefined || typeof value.runtimeHost === "string")
+    && (value.token === undefined || typeof value.token === "string");
 }
 
 export function isMissionTaskUpdateRequest(value: unknown): value is MissionTaskUpdateRequest {

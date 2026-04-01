@@ -2,6 +2,8 @@ import { getApiBase } from "../config/api";
 import type { ActivityLogEntry, AgentRegistration, AgentRuntimeState } from "../types";
 import type {
   AgentMessage,
+  HermesDefaults,
+  HermesDefaultsUpdateRequest,
   MissionControlSnapshot,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
@@ -91,6 +93,14 @@ export async function updateMissionConnector(connectorId: string, input: Provide
     body: JSON.stringify(input),
   });
   return payload.connector;
+}
+
+export async function updateHermesDefaults(input: HermesDefaultsUpdateRequest): Promise<HermesDefaults> {
+  const payload = await requestJson<{ defaults: HermesDefaults }>("/api/mission/hermes-defaults", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return payload.defaults;
 }
 
 export async function testMissionConnector(connectorId: string): Promise<ProviderConnector> {

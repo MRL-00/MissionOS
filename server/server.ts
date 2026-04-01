@@ -65,6 +65,7 @@ import {
   fetchAgentMessages,
   getMissionControlSnapshot,
   getMissionTaskDetail,
+  isHermesDefaultsUpdateRequest,
   isConnectorCreateRequest,
   isMissionTaskCommentCreateRequest,
   isMissionTaskHandoffCreateRequest,
@@ -80,6 +81,7 @@ import {
   startMissionControl,
   syncMissionConnector,
   testMissionConnector,
+  updateHermesDefaults,
   updateMissionConnector,
   updateMissionTask,
 } from "./mission-control";
@@ -235,6 +237,16 @@ const httpServer = createServer(async (request, response) => {
 
     if (method === "GET" && url.pathname === "/api/mission") {
       sendJson(response, 200, getMissionControlSnapshot());
+      return;
+    }
+
+    if ((method === "PATCH" || method === "PUT") && url.pathname === "/api/mission/hermes-defaults") {
+      const body = await readJson<unknown>(request);
+      if (!isHermesDefaultsUpdateRequest(body)) {
+        throw new RequestBodyError("Invalid Hermes defaults payload");
+      }
+      const defaults = await updateHermesDefaults(body);
+      sendJson(response, 200, { defaults });
       return;
     }
 

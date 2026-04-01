@@ -200,28 +200,105 @@
     scrollbar-gutter: stable;
   }
 
-  .mission-issue-row {
+  /* ── Task Card (list item) ── */
+
+  .mission-task-card {
+    position: relative;
+    display: flex;
     width: 100%;
     min-width: 0;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: transparent;
+    overflow: hidden;
+    border: 1px solid #1e222c;
+    border-radius: 10px;
+    background: #14171d;
+    text-align: left;
+    transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+  }
+
+  .mission-task-card:hover {
+    border-color: #2a2f3c;
+    background: #181c24;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  }
+
+  .mission-task-card--selected {
+    border-color: rgba(94, 106, 210, 0.5);
+    background: rgba(94, 106, 210, 0.08);
+    box-shadow:
+      0 0 0 1px rgba(94, 106, 210, 0.15),
+      0 2px 12px rgba(94, 106, 210, 0.08);
+  }
+
+  .mission-task-card--selected:hover {
+    border-color: rgba(94, 106, 210, 0.6);
+    background: rgba(94, 106, 210, 0.1);
+  }
+
+  .mission-task-card-accent {
+    flex-shrink: 0;
+    width: 3px;
+    border-radius: 3px 0 0 3px;
+    background: #3b4252;
+    transition: background 180ms ease;
+  }
+
+  /* Accent color based on workflow tone classes */
+  .mission-task-card-accent.tone-warn {
+    background: #f59e0b;
+  }
+
+  .mission-task-card-accent.tone-good {
+    background: #22c55e;
+  }
+
+  .mission-task-card-accent.tone-info {
+    background: #5e6ad2;
+  }
+
+  .mission-task-card-accent.tone-error {
+    background: #ef4444;
+  }
+
+  .mission-task-card-accent.tone-muted {
+    background: #3b4252;
+  }
+
+  .mission-task-card-body {
+    flex: 1 1 auto;
+    min-width: 0;
     padding: 10px 12px;
-    transition: background 160ms ease, border-color 160ms ease;
   }
 
-  .mission-issue-row:hover {
-    border-color: #262a33;
-    background: #1b1e26;
-  }
-
-  .mission-issue-row--selected {
-    border-color: rgba(94, 106, 210, 0.45);
-    background: rgba(94, 106, 210, 0.12);
+  .mission-task-chip {
+    @apply inline-flex items-center rounded-[5px] bg-white/[0.04] px-1.5 py-[1px] text-[11px] text-linear-muted;
   }
 
   .mission-issue-key {
     @apply inline-flex items-center rounded-[6px] border border-linear-line bg-linear-surface px-2 py-0.5 text-[11px] font-medium text-white;
+  }
+
+  /* ── Markdown content ── */
+
+  .mission-md-content {
+    overflow-wrap: anywhere;
+  }
+
+  .mission-md-img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    border: 1px solid #262a33;
+    background: #0d0f13;
+    transition: opacity 180ms ease;
+  }
+
+  .mission-md-img:hover {
+    opacity: 0.88;
+  }
+
+  a:has(> .mission-md-img) {
+    cursor: zoom-in;
   }
 
   /* ── Org Chart ── */

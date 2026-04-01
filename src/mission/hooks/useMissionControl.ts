@@ -3,6 +3,7 @@ import { OfficeWebSocketClient } from "../../network/websocket";
 import type { ActivityLogEntry, AgentEvent, AgentRegistration, AgentRuntimeState, AgentSnapshotState, ServerMessage } from "../../types";
 import type {
   AgentMessage,
+  HermesDefaultsUpdateRequest,
   MissionControlSnapshot,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
@@ -29,6 +30,7 @@ import {
   sendAgentMessage,
   syncMissionConnector,
   testMissionConnector,
+  updateHermesDefaults,
   updateAgent,
   updateMissionConnector,
   updateMissionTask,
@@ -39,6 +41,9 @@ type ConnectionState = "connecting" | "connected" | "offline";
 
 const EMPTY_SNAPSHOT: MissionControlSnapshot = {
   connectors: [],
+  hermesDefaults: {
+    tokenConfigured: false,
+  },
   providerAgents: [],
   schedules: [],
   tasks: [],
@@ -295,6 +300,14 @@ export function useMissionControl() {
     }
   }
 
+  async function saveHermesSharedDefaults(input: HermesDefaultsUpdateRequest): Promise<void> {
+    await runBusyAction("hermes-defaults:save", async () => {
+      await updateHermesDefaults(input);
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
+    });
+  }
+
   async function syncConnector(connectorId: string): Promise<void> {
     const connector = await runBusyAction(`connector:${connectorId}:sync`, () => syncMissionConnector(connectorId));
     if (connector) {
@@ -415,6 +428,7 @@ export function useMissionControl() {
     createHandoff,
     respondToHandoff,
     saveConnector,
+    saveHermesSharedDefaults,
     syncConnector,
     testConnectorHealth,
     addConnector,

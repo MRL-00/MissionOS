@@ -15,6 +15,7 @@ import type {
   RealtimeAgentStatus,
 } from "../src/types";
 import type {
+  HermesDefaults,
   MissionTaskHandoff,
   MissionProvider,
   ProviderConnector,
@@ -90,8 +91,13 @@ export interface PersistedMissionConnector extends Omit<ProviderConnector, "heal
   token?: string | undefined;
 }
 
+export interface PersistedHermesDefaults extends Omit<HermesDefaults, "tokenConfigured"> {
+  token?: string | undefined;
+}
+
 export interface PersistedMissionControlFile {
   connectors: PersistedMissionConnector[];
+  hermesDefaults?: PersistedHermesDefaults | undefined;
   handoffs: MissionTaskHandoff[];
 }
 

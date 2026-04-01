@@ -55,6 +55,7 @@ export interface ProviderConnector {
   lastSyncAt?: number | undefined;
   adapterConfig?: Record<string, unknown> | undefined;
   configFields?: AdapterConfigField[] | undefined;
+  useHermesDefaults?: boolean | undefined;
 }
 
 export interface ProviderConnectorUpdateRequest {
@@ -65,6 +66,19 @@ export interface ProviderConnectorUpdateRequest {
   authMode?: "none" | "bearer" | undefined;
   token?: string | undefined;
   adapterConfig?: Record<string, unknown> | undefined;
+  useHermesDefaults?: boolean | undefined;
+}
+
+export interface HermesDefaults {
+  sshHost?: string | undefined;
+  runtimeHost?: string | undefined;
+  tokenConfigured: boolean;
+}
+
+export interface HermesDefaultsUpdateRequest {
+  sshHost?: string | undefined;
+  runtimeHost?: string | undefined;
+  token?: string | undefined;
 }
 
 export interface ProviderAgentRecord {
@@ -207,6 +221,7 @@ export interface MissionRosterImportStatus {
 
 export interface MissionControlSnapshot {
   connectors: ProviderConnector[];
+  hermesDefaults: HermesDefaults;
   providerAgents: ProviderAgentRecord[];
   schedules: ProviderScheduleEntry[];
   tasks: MissionTask[];
