@@ -30,6 +30,7 @@ import {
   sendAgentMessage,
   syncMissionConnector,
   testMissionConnector,
+  startMissionTaskWorkflow,
   updateHermesDefaults,
   updateAgent,
   updateMissionConnector,
@@ -276,6 +277,18 @@ export function useMissionControl() {
     return handoff;
   }
 
+  async function runTaskWorkflow(taskId: string): Promise<void> {
+    const automation = await runBusyAction(`task:${taskId}:run`, () => startMissionTaskWorkflow(taskId));
+    if (automation) {
+      const [nextMission, detail] = await Promise.all([
+        fetchMissionSnapshot(),
+        fetchMissionTaskDetail(taskId),
+      ]);
+      setMissionSnapshot(nextMission);
+      setSelectedTaskDetail(detail);
+    }
+  }
+
   async function respondToHandoff(handoffId: string, input: MissionTaskHandoffResponseRequest, taskId: string): Promise<void> {
     const updated = await runBusyAction(`handoff:${handoffId}`, () => respondMissionTaskHandoff(handoffId, input));
     if (updated) {
@@ -426,6 +439,7 @@ export function useMissionControl() {
     saveTaskUpdate,
     addComment,
     createHandoff,
+    runTaskWorkflow,
     respondToHandoff,
     saveConnector,
     saveHermesSharedDefaults,

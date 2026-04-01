@@ -78,6 +78,7 @@ import {
   listProviderAgents,
   respondMissionTaskHandoff,
   sendAgentMessage,
+  startMissionTaskWorkflow,
   startMissionControl,
   syncMissionConnector,
   testMissionConnector,
@@ -357,6 +358,14 @@ const httpServer = createServer(async (request, response) => {
       }
       const handoff = await createMissionTaskHandoff(taskId, body);
       sendJson(response, 201, { handoff });
+      return;
+    }
+
+    const missionTaskRunMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/tasks\/([^/]+)\/run$/) : null;
+    if (missionTaskRunMatch) {
+      const taskId = decodeURIComponent(missionTaskRunMatch[1] ?? "");
+      const automation = startMissionTaskWorkflow(taskId);
+      sendJson(response, 202, { ok: true, automation });
       return;
     }
 

@@ -25,6 +25,8 @@ import type {
   MissionRosterImportStatus,
   MissionSyncStatus,
   MissionTask,
+  MissionTaskAutomation,
+  MissionTaskAutomationStatus,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
   MissionTaskHandoff,
@@ -107,12 +109,49 @@ let rosterImport: MissionRosterImportStatus = {
   updatedAt: Date.now(),
 };
 let taskHandoffs: MissionTaskHandoff[] = [];
+const taskAutomationStates = new Map<string, MissionTaskAutomation>();
+const runningTaskAutomations = new Map<string, Promise<void>>();
+const optimisticTaskAgentChains = new Map<string, string[]>();
+const optimisticAgentTaskLabels = new Map<string, Map<string, string>>();
 let hermesDefaults: HermesDefaultsState = {
   sshHost: HERMES_WS_URL || undefined,
   runtimeHost: HERMES_RUNTIME_URL || HERMES_URL || undefined,
   token: HERMES_TOKEN.trim() || undefined,
   tokenConfigured: HERMES_TOKEN_CONFIGURED,
 };
+
+type WorkerRoute = "ios" | "fullstack";
+type WorkerAgentId = "Atlas" | "Orbit";
+
+interface HermesIntakeDecision {
+  action: "ready" | "needs_info";
+  reason: string;
+  commentBody?: string | undefined;
+  implementationSummary?: string | undefined;
+}
+
+interface ScoutRoutingDecision {
+  route: WorkerRoute;
+  reason: string;
+  implementationPrompt: string;
+  acceptanceCriteria: string[];
+  riskNotes?: string[] | undefined;
+}
+
+interface WorkerExecutionResult {
+  status: "implemented" | "blocked";
+  branch?: string | undefined;
+  pullRequestUrl?: string | undefined;
+  summary: string;
+  reviewPrompt?: string | undefined;
+  blockingReason?: string | undefined;
+}
+
+interface ScoutReviewDecision {
+  decision: "approved" | "changes_requested";
+  summary: string;
+  linearComment: string;
+}
 
 function publicHermesDefaultsShape(): HermesDefaults {
   return {
@@ -522,20 +561,7 @@ function syncConnectorOfficeAgents(connectorId: string, entries: ProviderAgentRe
     }
 
     const providerState = byExternalId.get(backendAgentId);
-    const nextStatus = providerState && isProviderAgentActivelyExecuting(providerState) ? "working" : "idle";
-    const nextTask = providerState?.taskStage ?? providerState?.task ?? providerState?.currentTicket ?? "";
-
-    if (state.status === nextStatus && (state.task ?? "") === nextTask) {
-      continue;
-    }
-
-    applyEvent({
-      agentId: state.id,
-      status: nextStatus,
-      task: nextTask,
-      location: "desk",
-      timestamp: Date.now(),
-    });
+    syncOfficeAgentRuntimeState(state.id, providerState);
   }
 }
 
@@ -962,13 +988,385 @@ function markConnectorRuntimeError(connectorId: string, message: string): void {
   broadcastMissionSnapshot();
 }
 
+function publicTaskShape(task: MissionTask): MissionTask {
+  const automation = taskAutomationStates.get(task.id);
+  if (!automation) {
+    return task;
+  }
+  return {
+    ...task,
+    automation: { ...automation },
+  };
+}
+
+function taskById(taskId: string): MissionTask | undefined {
+  return taskSnapshot.find((task) => task.id === taskId);
+}
+
+function taskAutomationLabel(taskId: string, step?: string): string {
+  const task = taskById(taskId);
+  const prefix = task?.identifier ?? taskId;
+  return step?.trim() ? `${prefix} · ${step.trim()}` : prefix;
+}
+
+function agentParentChain(agentId: string): string[] {
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  let currentId: string | undefined = agentId;
+
+  while (currentId && !seen.has(currentId)) {
+    seen.add(currentId);
+    const state = agentStates.get(currentId);
+    if (!state) {
+      break;
+    }
+    chain.unshift(state.id);
+    currentId = state.parentAgentId ?? undefined;
+  }
+
+  return chain;
+}
+
+function providerStateForOfficeAgent(agentId: string): ProviderAgentRecord | null {
+  const state = agentStates.get(agentId);
+  const backendLink = state?.backendLink;
+  const backendAgentId = backendLink?.agentId?.trim();
+  if (!state || !backendLink || !backendAgentId) {
+    return null;
+  }
+
+  const aliases = providerExternalIdAliases(backendAgentId);
+  return providerAgents.find((entry) => {
+    if (backendLink.connectorId && entry.connectorId !== backendLink.connectorId) {
+      return false;
+    }
+    return aliases.has(entry.externalId);
+  }) ?? null;
+}
+
+function optimisticTaskLabelForAgent(agentId: string): string | null {
+  const entries = optimisticAgentTaskLabels.get(agentId);
+  if (!entries || entries.size === 0) {
+    return null;
+  }
+  const values = Array.from(entries.values());
+  return values[values.length - 1] ?? null;
+}
+
+function syncOfficeAgentRuntimeState(agentId: string, providerState?: ProviderAgentRecord | null): void {
+  const state = agentStates.get(agentId);
+  if (!state) {
+    return;
+  }
+
+  const optimisticLabel = optimisticTaskLabelForAgent(agentId);
+  const linkedProviderState = providerState ?? providerStateForOfficeAgent(agentId);
+  const nextStatus = optimisticLabel
+    ? "working"
+    : linkedProviderState && isProviderAgentActivelyExecuting(linkedProviderState)
+      ? "working"
+      : "idle";
+  const nextTask = optimisticLabel
+    ?? linkedProviderState?.taskStage
+    ?? linkedProviderState?.task
+    ?? linkedProviderState?.currentTicket
+    ?? "";
+
+  if (state.status === nextStatus && (state.task ?? "") === nextTask) {
+    return;
+  }
+
+  applyEvent({
+    agentId,
+    status: nextStatus,
+    task: nextTask,
+    location: "desk",
+    timestamp: Date.now(),
+  });
+}
+
+function reconcileTaskAgentChain(taskId: string, nextChain: string[], label: string): void {
+  const previousChain = optimisticTaskAgentChains.get(taskId) ?? [];
+  const touched = new Set<string>([...previousChain, ...nextChain]);
+
+  previousChain.forEach((agentId) => {
+    const labels = optimisticAgentTaskLabels.get(agentId);
+    if (!labels) {
+      return;
+    }
+    labels.delete(taskId);
+    if (labels.size === 0) {
+      optimisticAgentTaskLabels.delete(agentId);
+    }
+  });
+
+  if (nextChain.length > 0) {
+    optimisticTaskAgentChains.set(taskId, nextChain);
+    nextChain.forEach((agentId) => {
+      const labels = optimisticAgentTaskLabels.get(agentId) ?? new Map<string, string>();
+      labels.set(taskId, label);
+      optimisticAgentTaskLabels.set(agentId, labels);
+    });
+  } else {
+    optimisticTaskAgentChains.delete(taskId);
+  }
+
+  touched.forEach((agentId) => syncOfficeAgentRuntimeState(agentId));
+}
+
+function updateTaskAutomation(
+  taskId: string,
+  input: {
+    runId?: string | undefined;
+    status: MissionTaskAutomationStatus;
+    ownerAgentName?: string | undefined;
+    route?: WorkerRoute | undefined;
+    step?: string | undefined;
+    message?: string | undefined;
+  },
+): MissionTaskAutomation {
+  const current = taskAutomationStates.get(taskId);
+  const next: MissionTaskAutomation = {
+    runId: input.runId ?? current?.runId ?? generateId(),
+    status: input.status,
+    ownerAgentName: input.ownerAgentName ?? current?.ownerAgentName,
+    route: input.route ?? current?.route,
+    step: input.step ?? current?.step,
+    message: input.message ?? current?.message,
+    updatedAt: Date.now(),
+  };
+  taskAutomationStates.set(taskId, next);
+  const shouldShowActiveChain = next.status === "running" || next.status === "in_review";
+  const chain = shouldShowActiveChain && next.ownerAgentName
+    ? agentParentChain(next.ownerAgentName)
+    : [];
+  reconcileTaskAgentChain(taskId, chain, taskAutomationLabel(taskId, next.step ?? next.message));
+  broadcastMissionSnapshot();
+  return next;
+}
+
+function extractJsonCandidate(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch?.[1]) {
+    return fencedMatch[1].trim();
+  }
+
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      JSON.parse(trimmed);
+      return trimmed;
+    } catch {
+      // Fall through to balanced extraction when additional tool output trails
+      // an otherwise valid JSON prefix.
+    }
+  }
+
+  for (let start = 0; start < trimmed.length; start += 1) {
+    const first = trimmed[start];
+    if (first !== "{" && first !== "[") {
+      continue;
+    }
+
+    const stack: string[] = [first === "{" ? "}" : "]"];
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start + 1; index < trimmed.length; index += 1) {
+      const char = trimmed[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (char === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (char === "\"") {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === "\"") {
+        inString = true;
+        continue;
+      }
+
+      if (char === "{" || char === "[") {
+        stack.push(char === "{" ? "}" : "]");
+        continue;
+      }
+
+      if (char === "}" || char === "]") {
+        const expected = stack.pop();
+        if (expected !== char) {
+          break;
+        }
+        if (stack.length === 0) {
+          return trimmed.slice(start, index + 1);
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseAgentJson<T>(content: string, label: string): T {
+  const candidate = extractJsonCandidate(content);
+  if (!candidate) {
+    throw new RequestBodyError(`${label} did not return JSON.`, 502);
+  }
+
+  try {
+    return JSON.parse(candidate) as T;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown JSON parse error";
+    throw new RequestBodyError(`${label} returned invalid JSON: ${message}`, 502);
+  }
+}
+
+function requireNonEmptyString(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizeHermesIntakeDecision(raw: HermesIntakeDecision): HermesIntakeDecision {
+  return {
+    action: raw.action === "needs_info" ? "needs_info" : "ready",
+    reason: requireNonEmptyString(raw.reason, "No reason provided."),
+    commentBody: requireNonEmptyString(raw.commentBody),
+    implementationSummary: requireNonEmptyString(raw.implementationSummary),
+  };
+}
+
+function normalizeScoutRoutingDecision(raw: ScoutRoutingDecision): ScoutRoutingDecision {
+  return {
+    route: raw.route === "ios" ? "ios" : "fullstack",
+    reason: requireNonEmptyString(raw.reason, "No routing reason provided."),
+    implementationPrompt: requireNonEmptyString(raw.implementationPrompt, "Implement the requested fix."),
+    acceptanceCriteria: normalizeStringArray(raw.acceptanceCriteria),
+    riskNotes: normalizeStringArray(raw.riskNotes),
+  };
+}
+
+function normalizeWorkerExecutionResult(raw: WorkerExecutionResult): WorkerExecutionResult {
+  return {
+    status: raw.status === "blocked" ? "blocked" : "implemented",
+    branch: requireNonEmptyString(raw.branch),
+    pullRequestUrl: requireNonEmptyString(raw.pullRequestUrl),
+    summary: requireNonEmptyString(raw.summary, "No implementation summary provided."),
+    reviewPrompt: requireNonEmptyString(raw.reviewPrompt),
+    blockingReason: requireNonEmptyString(raw.blockingReason),
+  };
+}
+
+function normalizeScoutReviewDecision(raw: ScoutReviewDecision): ScoutReviewDecision {
+  return {
+    decision: raw.decision === "changes_requested" ? "changes_requested" : "approved",
+    summary: requireNonEmptyString(raw.summary, "No review summary provided."),
+    linearComment: requireNonEmptyString(raw.linearComment, "^Scout"),
+  };
+}
+
+function buildTaskContext(detail: MissionTaskDetail): string {
+  const { task } = detail;
+  const lines = [
+    `Ticket: ${task.identifier}`,
+    `Title: ${task.title}`,
+    `Team: ${task.team.name}`,
+    `State: ${task.state.name}`,
+    `Assignee: ${task.assignee?.name ?? "Unassigned"}`,
+    `URL: ${task.url ?? "N/A"}`,
+    `Description:`,
+    task.description?.trim() || "(empty)",
+  ];
+
+  if (detail.comments.length > 0) {
+    lines.push("", "Recent comments:");
+    detail.comments.slice(-5).forEach((comment) => {
+      lines.push(`- ${comment.authorName}: ${comment.body.replace(/\s+/g, " ").trim().slice(0, 400)}`);
+    });
+  }
+
+  return lines.join("\n");
+}
+
+async function sendAgentJsonMessage<T>(agentId: string, prompt: string, label: string, schema: string): Promise<T> {
+  const response = await sendAgentMessage(agentId, prompt);
+  const content = response?.content?.trim() ?? "";
+  if (!content) {
+    throw new RequestBodyError(`${label} returned no content.`, 502);
+  }
+
+  try {
+    return parseAgentJson<T>(content, label);
+  } catch (error) {
+    const repairResponse = await sendAgentMessage(
+      agentId,
+      [
+        "Reformat the following content as valid JSON only.",
+        "Do not include markdown fences, commentary, plans, or tool output.",
+        `Use exactly this schema: ${schema}`,
+        "",
+        "Content to reformat:",
+        content,
+      ].join("\n"),
+    );
+    const repairedContent = repairResponse?.content?.trim() ?? "";
+    if (!repairedContent) {
+      throw error;
+    }
+    return parseAgentJson<T>(repairedContent, label);
+  }
+}
+
+async function createAcceptedHandoff(
+  taskId: string,
+  fromAgentName: string,
+  toAgentName: string,
+  note: string,
+): Promise<void> {
+  const handoff = await createMissionTaskHandoff(taskId, {
+    fromAgentId: fromAgentName,
+    fromAgentName,
+    toAgentId: toAgentName,
+    toAgentName,
+    note,
+  });
+  await respondMissionTaskHandoff(handoff.id, { status: "accepted" });
+}
+
+function ensureAgentSuffix(body: string, suffix: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return suffix;
+  }
+  return trimmed.endsWith(suffix) ? trimmed : `${trimmed} ${suffix}`;
+}
+
 function buildMissionSnapshot(): MissionControlSnapshot {
   return {
     connectors: Array.from(connectorInstances.values()).map(publicConnectorShape),
     hermesDefaults: publicHermesDefaultsShape(),
     providerAgents: [...providerAgents],
     schedules: [...schedules],
-    tasks: [...taskSnapshot],
+    tasks: taskSnapshot.map(publicTaskShape),
     rosterImport: { ...rosterImport },
     taskSync: { ...taskSync },
     syncedAt: Date.now(),
@@ -1232,6 +1630,13 @@ export async function syncMissionTasks(): Promise<MissionTask[]> {
   try {
     const snapshot = await syncLinearTasks(taskHandoffs);
     taskSnapshot = snapshot.tasks;
+    const liveTaskIds = new Set(snapshot.tasks.map((task) => task.id));
+    Array.from(taskAutomationStates.keys()).forEach((taskId) => {
+      if (!liveTaskIds.has(taskId)) {
+        taskAutomationStates.delete(taskId);
+        reconcileTaskAgentChain(taskId, [], taskId);
+      }
+    });
     taskSync = {
       state: snapshot.syncState,
       updatedAt: snapshot.syncedAt,
@@ -1252,11 +1657,15 @@ export async function syncMissionTasks(): Promise<MissionTask[]> {
 }
 
 export function listMissionTasks(): MissionTask[] {
-  return [...taskSnapshot];
+  return taskSnapshot.map(publicTaskShape);
 }
 
 export async function getMissionTaskDetail(taskId: string): Promise<MissionTaskDetail> {
-  return fetchLinearTaskDetail(taskId, taskHandoffs);
+  const detail = await fetchLinearTaskDetail(taskId, taskHandoffs);
+  return {
+    ...detail,
+    task: publicTaskShape(detail.task),
+  };
 }
 
 export async function updateMissionTask(taskId: string, input: MissionTaskUpdateRequest): Promise<MissionTask> {
@@ -1418,6 +1827,267 @@ export async function sendAgentMessage(agentId: string, message: string): Promis
   );
 
   return result;
+}
+
+async function runMissionTaskWorkflow(taskId: string, runId: string): Promise<void> {
+  const detail = await getMissionTaskDetail(taskId);
+  const context = buildTaskContext(detail);
+  const issueKey = detail.task.identifier;
+
+  pushActivity("workflow-item", `${issueKey}: automated workflow started.`, "Hermes");
+  updateTaskAutomation(taskId, {
+    runId,
+    status: "running",
+    ownerAgentName: "Hermes",
+    step: "Hermes intake",
+    message: "Checking whether the ticket has enough information.",
+  });
+
+  const hermesDecision = normalizeHermesIntakeDecision(await sendAgentJsonMessage<HermesIntakeDecision>(
+    "Hermes",
+    [
+      "You are Hermes, the intake orchestrator for a software ticket workflow.",
+      "Assess whether the task has enough information for implementation.",
+      "Reply with JSON only, no markdown.",
+      '{"action":"ready|needs_info","reason":"short explanation","commentBody":"Linear comment if info is missing, end with ^Hermes","implementationSummary":"brief handoff summary for Scout"}',
+      "",
+      context,
+    ].join("\n"),
+    "Hermes intake",
+    '{"action":"ready|needs_info","reason":"short explanation","commentBody":"Linear comment if info is missing, end with ^Hermes","implementationSummary":"brief handoff summary for Scout"}',
+  ));
+
+  if (hermesDecision.action === "needs_info") {
+    const commentBody = ensureAgentSuffix(
+      hermesDecision.commentBody || `Hey can you please provide more information for this ticket. ${hermesDecision.reason}`,
+      "^Hermes",
+    );
+    await addMissionTaskComment(taskId, { body: commentBody });
+    updateTaskAutomation(taskId, {
+      runId,
+      status: "needs_info",
+      ownerAgentName: "Hermes",
+      step: "Awaiting clarification",
+      message: hermesDecision.reason,
+    });
+    pushActivity("workflow-comment", `${issueKey}: Hermes requested more information.`, "Hermes");
+    return;
+  }
+
+  const hermesSummary = hermesDecision.implementationSummary || hermesDecision.reason;
+  await createAcceptedHandoff(taskId, "Hermes", "Scout", hermesSummary);
+  updateTaskAutomation(taskId, {
+    runId,
+    status: "running",
+    ownerAgentName: "Scout",
+    step: "Scout triage",
+    message: "Routing the task to the right implementation agent.",
+  });
+
+  const scoutDecision = normalizeScoutRoutingDecision(await sendAgentJsonMessage<ScoutRoutingDecision>(
+    "Scout",
+    [
+      "You are Scout, the lead engineer.",
+      "Route the task to either Orbit (iOS) or Atlas (fullstack).",
+      "Choose ios only when the issue is clearly iOS/native/mobile focused. Otherwise choose fullstack.",
+      "Reply with JSON only, no markdown.",
+      '{"route":"ios|fullstack","reason":"why","implementationPrompt":"precise implementation prompt for the worker","acceptanceCriteria":["criterion"],"riskNotes":["optional risk"]}',
+      "",
+      `Hermes intake summary: ${hermesSummary}`,
+      "",
+      context,
+    ].join("\n"),
+    "Scout routing",
+    '{"route":"ios|fullstack","reason":"why","implementationPrompt":"precise implementation prompt for the worker","acceptanceCriteria":["criterion"],"riskNotes":["optional risk"]}',
+  ));
+
+  const workerAgentId: WorkerAgentId = scoutDecision.route === "ios" ? "Orbit" : "Atlas";
+  const workerRouteLabel = scoutDecision.route === "ios" ? "iOS" : "full stack";
+  const workerHandoffNote = [
+    `${scoutDecision.reason}`,
+    "",
+    `Route: ${workerRouteLabel}`,
+    `Implementation prompt: ${scoutDecision.implementationPrompt}`,
+    scoutDecision.acceptanceCriteria.length > 0
+      ? `Acceptance criteria:\n${scoutDecision.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`
+      : "",
+    scoutDecision.riskNotes && scoutDecision.riskNotes.length > 0
+      ? `Risk notes:\n${scoutDecision.riskNotes.map((note) => `- ${note}`).join("\n")}`
+      : "",
+  ].filter(Boolean).join("\n");
+
+  await createAcceptedHandoff(taskId, "Scout", workerAgentId, workerHandoffNote);
+  updateTaskAutomation(taskId, {
+    runId,
+    status: "running",
+    ownerAgentName: workerAgentId,
+    route: scoutDecision.route,
+    step: `${workerAgentId} implementation`,
+    message: `Implementing as a ${workerRouteLabel} task.`,
+  });
+
+  const branchSlug = detail.task.identifier.toLowerCase();
+  const workerResult = normalizeWorkerExecutionResult(await sendAgentJsonMessage<WorkerExecutionResult>(
+    workerAgentId,
+    [
+      `You are ${workerAgentId}, the implementation agent.`,
+      "Work in the current repository and reply with JSON only, no markdown.",
+      `Create a feature branch named ${workerAgentId.toLowerCase()}/${branchSlug}.`,
+      "Implement the fix, push the branch, and open a PR if your environment allows it.",
+      'If you cannot complete that, return {"status":"blocked",...} with the exact reason.',
+      '{"status":"implemented|blocked","branch":"branch name","pullRequestUrl":"https://...","summary":"what changed","reviewPrompt":"prompt for Scout to review the PR and diff","blockingReason":"why blocked"}',
+      "",
+      `Scout route: ${workerRouteLabel}`,
+      `Scout reason: ${scoutDecision.reason}`,
+      `Implementation prompt: ${scoutDecision.implementationPrompt}`,
+      scoutDecision.acceptanceCriteria.length > 0
+        ? `Acceptance criteria:\n${scoutDecision.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`
+        : "",
+      "",
+      context,
+    ].filter(Boolean).join("\n"),
+    `${workerAgentId} execution`,
+    '{"status":"implemented|blocked","branch":"branch name","pullRequestUrl":"https://...","summary":"what changed","reviewPrompt":"prompt for Scout to review the PR and diff","blockingReason":"why blocked"}',
+  ));
+
+  if (workerResult.status === "blocked") {
+    const blockerSummary = workerResult.blockingReason || workerResult.summary;
+    await createAcceptedHandoff(taskId, workerAgentId, "Scout", `Blocked: ${blockerSummary}`);
+    const blockerComment = ensureAgentSuffix(`Blocked during implementation: ${blockerSummary}`, "^Scout");
+    await addMissionTaskComment(taskId, { body: blockerComment });
+    updateTaskAutomation(taskId, {
+      runId,
+      status: "failed",
+      ownerAgentName: "Scout",
+      route: scoutDecision.route,
+      step: "Worker blocked",
+      message: blockerSummary,
+    });
+    pushActivity("workflow-item", `${issueKey}: ${workerAgentId} reported a blocker.`, workerAgentId);
+    return;
+  }
+
+  const implementationSummary = [
+    workerResult.summary,
+    workerResult.branch ? `Branch: ${workerResult.branch}` : "",
+    workerResult.pullRequestUrl ? `PR: ${workerResult.pullRequestUrl}` : "",
+  ].filter(Boolean).join("\n");
+
+  await createAcceptedHandoff(taskId, workerAgentId, "Scout", implementationSummary);
+  updateTaskAutomation(taskId, {
+    runId,
+    status: "in_review",
+    ownerAgentName: "Scout",
+    route: scoutDecision.route,
+    step: "Scout review",
+    message: "Reviewing the implementation and PR.",
+  });
+
+  const scoutReview = normalizeScoutReviewDecision(await sendAgentJsonMessage<ScoutReviewDecision>(
+    "Scout",
+    [
+      "You are Scout, the reviewer.",
+      "Review the implementation summary and PR information.",
+      "Reply with JSON only, no markdown.",
+      '{"decision":"approved|changes_requested","summary":"review summary","linearComment":"comment to post to Linear, end with ^Scout"}',
+      "",
+      `Worker: ${workerAgentId}`,
+      `Route: ${workerRouteLabel}`,
+      `Implementation summary: ${workerResult.summary}`,
+      workerResult.branch ? `Branch: ${workerResult.branch}` : "",
+      workerResult.pullRequestUrl ? `PR URL: ${workerResult.pullRequestUrl}` : "",
+      workerResult.reviewPrompt ? `Worker review prompt: ${workerResult.reviewPrompt}` : "",
+      "",
+      context,
+    ].filter(Boolean).join("\n"),
+    "Scout review",
+    '{"decision":"approved|changes_requested","summary":"review summary","linearComment":"comment to post to Linear, end with ^Scout"}',
+  ));
+
+  await addMissionTaskComment(taskId, { body: ensureAgentSuffix(scoutReview.linearComment, "^Scout") });
+
+  if (scoutReview.decision === "changes_requested") {
+    await createAcceptedHandoff(taskId, "Scout", workerAgentId, `Changes requested: ${scoutReview.summary}`);
+    updateTaskAutomation(taskId, {
+      runId,
+      status: "failed",
+      ownerAgentName: workerAgentId,
+      route: scoutDecision.route,
+      step: "Changes requested",
+      message: scoutReview.summary,
+    });
+    pushActivity("workflow-item", `${issueKey}: Scout requested follow-up changes from ${workerAgentId}.`, "Scout");
+    return;
+  }
+
+  await createAcceptedHandoff(taskId, "Scout", "Hermes", `Approved for final review. ${scoutReview.summary}`);
+  updateTaskAutomation(taskId, {
+    runId,
+    status: "completed",
+    ownerAgentName: "Hermes",
+    route: scoutDecision.route,
+    step: "Final review",
+    message: scoutReview.summary,
+  });
+  pushActivity("workflow-item", `${issueKey}: ready for final review.`, "Hermes");
+
+  try {
+    await sendAgentMessage(
+      "Hermes",
+      [
+        "Scout approved the task for final review.",
+        `Ticket: ${issueKey}`,
+        `Worker: ${workerAgentId}`,
+        `Route: ${workerRouteLabel}`,
+        `Summary: ${scoutReview.summary}`,
+        workerResult.pullRequestUrl ? `PR URL: ${workerResult.pullRequestUrl}` : "",
+      ].filter(Boolean).join("\n"),
+    );
+  } catch (error) {
+    console.warn(`[mission-control] Final Hermes notification failed for ${issueKey}:`, error);
+  }
+}
+
+export function startMissionTaskWorkflow(taskId: string): MissionTaskAutomation {
+  const task = taskSnapshot.find((entry) => entry.id === taskId);
+  if (!task) {
+    throw new RequestBodyError("Mission task not found.", 404);
+  }
+
+  if (runningTaskAutomations.has(taskId)) {
+    throw new RequestBodyError("Task workflow is already running.", 409);
+  }
+
+  const runId = generateId();
+  const automation = updateTaskAutomation(taskId, {
+    runId,
+    status: "running",
+    ownerAgentName: "Hermes",
+    step: "Queued",
+    message: "Queued for the Hermes workflow runner.",
+  });
+
+  const run = (async () => {
+    try {
+      await runMissionTaskWorkflow(taskId, runId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown workflow failure.";
+      updateTaskAutomation(taskId, {
+        runId,
+        status: "failed",
+        step: "Failed",
+        message,
+      });
+      const issueKey = taskSnapshot.find((entry) => entry.id === taskId)?.identifier ?? taskId;
+      pushActivity("workflow-item", `${issueKey}: automated workflow failed. ${message}`, "Hermes");
+      console.error(`[mission-control] automated task workflow failed for ${taskId}:`, error);
+    } finally {
+      runningTaskAutomations.delete(taskId);
+    }
+  })();
+
+  runningTaskAutomations.set(taskId, run);
+  return automation;
 }
 
 export async function startMissionControl(): Promise<void> {

@@ -145,6 +145,24 @@ export interface MissionTaskCycle {
   number?: number | undefined;
 }
 
+export type MissionTaskAutomationStatus =
+  | "idle"
+  | "running"
+  | "needs_info"
+  | "in_review"
+  | "completed"
+  | "failed";
+
+export interface MissionTaskAutomation {
+  runId: string;
+  status: MissionTaskAutomationStatus;
+  ownerAgentName?: string | undefined;
+  route?: "ios" | "fullstack" | undefined;
+  step?: string | undefined;
+  message?: string | undefined;
+  updatedAt: number;
+}
+
 export interface MissionTask {
   id: string;
   identifier: string;
@@ -167,6 +185,7 @@ export interface MissionTask {
   updatedAt: number;
   handoffCount: number;
   commentCount: number;
+  automation?: MissionTaskAutomation | undefined;
 }
 
 export interface MissionTaskComment {

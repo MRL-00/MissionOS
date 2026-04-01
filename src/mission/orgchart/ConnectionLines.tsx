@@ -12,25 +12,40 @@ interface Edge {
   parentId: string;
   childId: string;
   childAgent: AgentRuntimeState;
+  childSubtreeWorking: boolean;
+  childSubtreeMeeting: boolean;
 }
 
-function collectEdges(node: OrgTreeNode): Edge[] {
+function collectEdges(node: OrgTreeNode): { edges: Edge[]; subtreeWorking: boolean; subtreeMeeting: boolean } {
   const edges: Edge[] = [];
+  let subtreeWorking = node.agent.connected && node.agent.status === "working";
+  let subtreeMeeting = node.agent.connected && node.agent.status === "meeting";
+
   node.children.forEach((child) => {
-    edges.push({ parentId: node.agent.id, childId: child.agent.id, childAgent: child.agent });
-    edges.push(...collectEdges(child));
+    const childTree = collectEdges(child);
+    edges.push({
+      parentId: node.agent.id,
+      childId: child.agent.id,
+      childAgent: child.agent,
+      childSubtreeWorking: childTree.subtreeWorking,
+      childSubtreeMeeting: childTree.subtreeMeeting,
+    });
+    edges.push(...childTree.edges);
+    subtreeWorking = subtreeWorking || childTree.subtreeWorking;
+    subtreeMeeting = subtreeMeeting || childTree.subtreeMeeting;
   });
-  return edges;
+
+  return { edges, subtreeWorking, subtreeMeeting };
 }
 
-function lineClass(agent: AgentRuntimeState): string {
-  if (!agent.connected) {
+function lineClass(childAgent: AgentRuntimeState, childSubtreeWorking: boolean, childSubtreeMeeting: boolean): string {
+  if (!childAgent.connected) {
     return "org-line org-line--disconnected";
   }
-  if (agent.status === "working") {
+  if (childSubtreeWorking) {
     return "org-line org-line--active";
   }
-  if (agent.status === "meeting") {
+  if (childSubtreeMeeting) {
     return "org-line org-line--meeting";
   }
   return "org-line";
@@ -41,7 +56,7 @@ export function ConnectionLines({ trees, positions, width, height }: ConnectionL
     return null;
   }
 
-  const edges = trees.flatMap((tree) => collectEdges(tree));
+  const edges = trees.flatMap((tree) => collectEdges(tree).edges);
 
   return (
     <svg className="org-chart__svg" width={width} height={height} aria-hidden="true">
@@ -64,7 +79,7 @@ export function ConnectionLines({ trees, positions, width, height }: ConnectionL
           <path
             key={`${edge.parentId}-${edge.childId}`}
             d={path}
-            className={lineClass(edge.childAgent)}
+            className={lineClass(edge.childAgent, edge.childSubtreeWorking, edge.childSubtreeMeeting)}
           />
         );
       })}

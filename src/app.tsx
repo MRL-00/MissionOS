@@ -194,6 +194,23 @@ function taskWorkflowTone(task: MissionTask): string {
   }
 }
 
+function taskAutomationTone(task: MissionTask): string {
+  const status = task.automation?.status ?? "idle";
+  switch (status) {
+    case "running":
+      return "bg-sky-500/15 text-sky-200 border-sky-400/25";
+    case "in_review":
+      return "bg-amber-500/15 text-amber-200 border-amber-400/25";
+    case "completed":
+      return "bg-emerald-500/15 text-emerald-200 border-emerald-400/25";
+    case "needs_info":
+    case "failed":
+      return "bg-linear-red/15 text-linear-red border-linear-red/25";
+    default:
+      return "bg-linear-surfaceAlt text-linear-muted border-linear-lineStrong";
+  }
+}
+
 /** Solid accent-bar color for task cards based on workflow stage */
 function taskAccentColor(task: MissionTask): string {
   switch (getMissionTaskBoardStage(task.state)) {
@@ -607,6 +624,7 @@ function TaskDetailPanel(props: {
   onUpdate(taskId: string, input: MissionTaskUpdateRequest): Promise<void>;
   onComment(taskId: string, body: string): Promise<void>;
   onHandoff(taskId: string, note: string, toAgentName: string): Promise<void>;
+  onRun(taskId: string): Promise<void>;
   onRespond(handoffId: string, taskId: string, status: "accepted" | "declined"): Promise<void>;
 }) {
   const task = props.detail?.task ?? null;
@@ -653,11 +671,49 @@ function TaskDetailPanel(props: {
     <SectionCard
       title={task.title}
       subtitle={`${task.identifier} · ${task.team.name}${task.cycle ? ` · ${taskCycleLabel(task)}` : ""}`}
-      action={<span className={cx("mission-badge border", taskWorkflowTone(task))}>{task.state.name}</span>}
+      action={
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {task.automation ? (
+            <span className={cx("mission-badge border", taskAutomationTone(task))}>
+              workflow {task.automation.status}
+            </span>
+          ) : null}
+          <span className={cx("mission-badge border", taskWorkflowTone(task))}>{task.state.name}</span>
+        </div>
+      }
       className="h-full min-h-0 overflow-hidden"
     >
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_288px]">
         <div className="mission-scroll space-y-4 pr-1">
+          <div className="rounded-xl border border-linear-line bg-linear-surface p-3.5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="font-display text-sm font-semibold text-white">Workflow runner</h3>
+                <p className="mission-muted mt-1">
+                  Start the Hermes → Scout → Atlas/Orbit → Scout flow for this ticket.
+                </p>
+                {task.automation ? (
+                  <p className="mission-muted mt-3">
+                    {task.automation.ownerAgentName ? `${task.automation.ownerAgentName} · ` : ""}
+                    {task.automation.step ?? task.automation.status}
+                    {task.automation.message ? ` · ${task.automation.message}` : ""}
+                  </p>
+                ) : null}
+              </div>
+              <button
+                className="mission-button"
+                disabled={isBusy || task.automation?.status === "running" || task.automation?.status === "in_review"}
+                onClick={() => props.onRun(task.id)}
+              >
+                {isBusy && props.busyKey === `${busyPrefix}:run`
+                  ? "Starting..."
+                  : task.automation?.status === "running" || task.automation?.status === "in_review"
+                    ? "Workflow running"
+                    : "Run workflow"}
+              </button>
+            </div>
+          </div>
+
           <div className="rounded-xl border border-linear-line bg-linear-surface p-3.5">
             <label className="mission-section-label">Title</label>
             <input
@@ -765,6 +821,15 @@ function TaskDetailPanel(props: {
                 <dt className="mission-section-label">Updated</dt>
                 <dd className="mt-1 text-sm text-white">{formatDateTime(task.updatedAt)}</dd>
               </div>
+              {task.automation ? (
+                <div>
+                  <dt className="mission-section-label">Automation</dt>
+                  <dd className="mission-wrap mt-1 text-sm text-white">
+                    {task.automation.ownerAgentName ? `${task.automation.ownerAgentName} · ` : ""}
+                    {task.automation.step ?? task.automation.status}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </div>
 
@@ -1985,6 +2050,11 @@ export function App() {
                           <div className="mission-clamp-2 mission-wrap mt-1.5 text-[13px] font-medium leading-[1.4] text-white">{task.title}</div>
                           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                             <span className={cx("mission-badge border", taskWorkflowTone(task))}>{task.state.name}</span>
+                            {task.automation ? (
+                              <span className={cx("mission-badge border", taskAutomationTone(task))}>
+                                {task.automation.ownerAgentName ?? "workflow"} · {task.automation.status}
+                              </span>
+                            ) : null}
                             <span className="mission-task-chip">{task.assignee?.name ?? "Unassigned"}</span>
                             <span className="mission-task-chip">{taskCycleLabel(task)}</span>
                           </div>
@@ -2005,6 +2075,7 @@ export function App() {
                 onHandoff={async (taskId, note, toAgentName) => {
                   await mission.createHandoff(taskId, { note, toAgentName });
                 }}
+                onRun={(taskId) => mission.runTaskWorkflow(taskId)}
                 onRespond={(handoffId, taskId, status) => mission.respondToHandoff(handoffId, { status }, taskId)}
               />
             </div>

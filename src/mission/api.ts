@@ -5,6 +5,7 @@ import type {
   HermesDefaults,
   HermesDefaultsUpdateRequest,
   MissionControlSnapshot,
+  MissionTaskAutomation,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
   MissionTaskHandoff,
@@ -77,6 +78,13 @@ export async function createMissionTaskHandoff(taskId: string, input: MissionTas
     body: JSON.stringify(input),
   });
   return payload.handoff;
+}
+
+export async function startMissionTaskWorkflow(taskId: string): Promise<MissionTaskAutomation> {
+  const payload = await requestJson<{ ok: boolean; automation: MissionTaskAutomation }>(`/api/mission/tasks/${encodeURIComponent(taskId)}/run`, {
+    method: "POST",
+  });
+  return payload.automation;
 }
 
 export async function respondMissionTaskHandoff(handoffId: string, input: MissionTaskHandoffResponseRequest): Promise<MissionTaskHandoff> {
