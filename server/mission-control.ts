@@ -1549,7 +1549,8 @@ export async function addMissionTaskComment(taskId: string, input: MissionTaskCo
     throw new RequestBodyError("Comment body is required.");
   }
 
-  await createLinearTaskComment(taskId, body);
+  const parentCommentId = input.parentCommentId?.trim() || undefined;
+  await createLinearTaskComment(taskId, body, parentCommentId);
   const detail = await fetchLinearTaskDetail(taskId, taskHandoffs);
   taskSnapshot = taskSnapshot.map((entry) => (entry.id === detail.task.id ? detail.task : entry));
   taskSync = {
@@ -1900,7 +1901,9 @@ export function isMissionTaskUpdateRequest(value: unknown): value is MissionTask
 }
 
 export function isMissionTaskCommentCreateRequest(value: unknown): value is MissionTaskCommentCreateRequest {
-  return isRecord(value) && typeof value.body === "string";
+  return isRecord(value)
+    && typeof value.body === "string"
+    && (value.parentCommentId === undefined || typeof value.parentCommentId === "string");
 }
 
 export function isMissionTaskHandoffCreateRequest(value: unknown): value is MissionTaskHandoffCreateRequest {

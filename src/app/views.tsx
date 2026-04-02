@@ -6,7 +6,6 @@ import { AgentChatPanel, AgentFormPanel, AgentListPanel, ConnectorSettingsCard, 
 import {
   ActivityFeed,
   HandoffCard,
-  MetricCard,
   SectionCard,
   cx,
   formatClockTime,
@@ -28,7 +27,6 @@ export function MissionView(props: { mission: MissionControlState }) {
   const { mission } = props;
   const selectedAgent = mission.agents.find((agent) => agent.id === mission.selectedAgentId) ?? null;
   const pendingHandoffs = mission.selectedTaskDetail?.handoffs.filter((handoff) => handoff.status === "pending") ?? [];
-  const discoveredAgents = mission.missionSnapshot.providerAgents.length;
 
   const activeExecutingAgentIds = new Set(
     mission.agents
@@ -42,87 +40,9 @@ export function MissionView(props: { mission: MissionControlState }) {
   });
 
   return (
-    <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_460px] 2xl:grid-cols-[minmax(0,1fr)_540px]">
-      <div className="flex min-h-0 flex-col gap-3">
-        <SectionCard
-          title="Command map"
-          subtitle="Office agents, provider runtimes, and the current command topology."
-          action={<span className="mission-badge">{activeExecutingAgentIds.size} actively executing</span>}
-          className="flex-1 min-h-0 overflow-hidden"
-        >
-          <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <div className="flex flex-wrap gap-2">
-              <MetricCard label="Cycle tasks" value={mission.missionSnapshot.tasks.length} />
-              <MetricCard
-                label="Office agents"
-                value={mission.agents.length}
-                hint={mission.agents.map((agent) => agent.name).join(", ") || "None registered"}
-                tone="good"
-              />
-              <MetricCard label="Discovered runtimes" value={discoveredAgents} />
-              <MetricCard
-                label="Queued imports"
-                value={mission.missionSnapshot.rosterImport.staged}
-                tone={mission.missionSnapshot.rosterImport.staged > 0 ? "warn" : "default"}
-              />
-            </div>
-            <div className="flex min-h-[320px] flex-1 xl:min-h-0">
-              <Suspense
-                fallback={
-                  <div className="flex h-full min-h-[320px] items-center justify-center rounded-[10px] border border-linear-line bg-linear-surface/40 text-sm text-linear-muted xl:min-h-0">
-                    Loading org chart...
-                  </div>
-                }
-              >
-                <OrgChart
-                  agents={mission.agents}
-                  providerAgents={mission.missionSnapshot.providerAgents}
-                  selectedAgentId={mission.selectedAgentId}
-                  thinkingAgentId={mission.busyKey?.match(/^agent:(.+):message$/)?.[1] ?? null}
-                  onSelectAgent={(agentId) => mission.setSelectedAgentId(agentId)}
-                />
-              </Suspense>
-            </div>
-          </div>
-        </SectionCard>
-      </div>
-
+    <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-cols-[300px_minmax(0,1fr)_460px] 2xl:grid-cols-[320px_minmax(0,1fr)_540px]">
       <div className="flex min-h-0 flex-col overflow-hidden">
         <div className="mission-scroll flex min-h-0 flex-1 flex-col gap-3 pr-1">
-          {selectedAgent ? (
-            <AgentChatPanel
-              agent={selectedAgent}
-              messages={mission.agentMessages}
-              loading={mission.agentMessagesLoading}
-              busyKey={mission.busyKey}
-              onSend={(agentId, message) => mission.sendMessageToAgent(agentId, message)}
-              onRefresh={(agentId) => mission.refreshAgentMessages(agentId)}
-            />
-          ) : (
-            <SectionCard title="Selected agent" subtitle="No agent selected" className="min-h-[220px] shrink-0">
-              <div className="rounded-xl border border-dashed border-linear-line px-4 py-12 text-center text-linear-muted">
-                Select an agent from the roster or scene.
-              </div>
-            </SectionCard>
-          )}
-
-          <SectionCard title="Upcoming jobs" subtitle="Provider-imported cron and scheduled runs" className="shrink-0">
-            <div className="space-y-2">
-              {mission.missionSnapshot.schedules.slice(0, 3).map((schedule) => (
-                <div key={schedule.id} className="mission-list-item">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="mission-wrap font-semibold text-white">{schedule.name}</div>
-                      <div className="mission-muted mission-wrap mt-1">{schedule.recurrence}</div>
-                    </div>
-                    <span className="mission-badge">{schedule.provider}</span>
-                  </div>
-                  <div className="mission-muted mt-3">Next run {formatClockTime(schedule.nextRunAt)}</div>
-                </div>
-              ))}
-            </div>
-          </SectionCard>
-
           <SectionCard title="Pending handoffs" subtitle={`${pendingHandoffs.length} waiting on response`} className="shrink-0">
             <div className="space-y-2">
               {pendingHandoffs.length === 0 ? (
@@ -140,6 +60,72 @@ export function MissionView(props: { mission: MissionControlState }) {
               )}
             </div>
           </SectionCard>
+
+          <SectionCard title="Upcoming jobs" subtitle="Provider-imported cron and scheduled runs" className="shrink-0">
+            <div className="space-y-2">
+              {mission.missionSnapshot.schedules.slice(0, 3).map((schedule) => (
+                <div key={schedule.id} className="mission-list-item">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="mission-wrap font-semibold text-white">{schedule.name}</div>
+                      <div className="mission-muted mission-wrap mt-1">{schedule.recurrence}</div>
+                    </div>
+                    <span className="mission-badge">{schedule.provider}</span>
+                  </div>
+                  <div className="mission-muted mt-3">Next run {formatClockTime(schedule.nextRunAt)}</div>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+        </div>
+      </div>
+
+      <div className="flex min-h-0 flex-col gap-3">
+        <SectionCard
+          title="Command map"
+          subtitle="Office agents, provider runtimes, and the current command topology."
+          action={<span className="mission-badge">{activeExecutingAgentIds.size} actively executing</span>}
+          className="flex-1 min-h-0 overflow-hidden"
+        >
+          <div className="flex min-h-[320px] flex-1 xl:min-h-0">
+            <Suspense
+              fallback={
+                <div className="flex h-full min-h-[320px] items-center justify-center rounded-[10px] border border-linear-line bg-linear-surface/40 text-sm text-linear-muted xl:min-h-0">
+                  Loading org chart...
+                </div>
+              }
+            >
+              <OrgChart
+                agents={mission.agents}
+                providerAgents={mission.missionSnapshot.providerAgents}
+                selectedAgentId={mission.selectedAgentId}
+                thinkingAgentId={mission.busyKey?.match(/^agent:(.+):message$/)?.[1] ?? null}
+                onSelectAgent={(agentId) => mission.setSelectedAgentId(agentId)}
+              />
+            </Suspense>
+          </div>
+        </SectionCard>
+      </div>
+
+      <div className="flex min-h-0 flex-col overflow-hidden">
+        <div className="mission-scroll flex min-h-0 flex-1 flex-col gap-3 pr-1">
+          {selectedAgent ? (
+            <AgentChatPanel
+              agent={selectedAgent}
+              messages={mission.agentMessages}
+              activityLog={mission.activityLog}
+              loading={mission.agentMessagesLoading}
+              busyKey={mission.busyKey}
+              onSend={(agentId, message) => mission.sendMessageToAgent(agentId, message)}
+              onRefresh={(agentId) => mission.refreshAgentMessages(agentId)}
+            />
+          ) : (
+            <SectionCard title="Selected agent" subtitle="No agent selected" className="min-h-[220px] shrink-0">
+              <div className="rounded-xl border border-dashed border-linear-line px-4 py-12 text-center text-linear-muted">
+                Select an agent from the roster or scene.
+              </div>
+            </SectionCard>
+          )}
 
           <SectionCard title="Activity feed" subtitle="Live agent messages, spawns, and status changes" className="min-h-[180px] shrink-0 overflow-hidden">
             <div className="mission-scroll max-h-[320px] flex-1 pr-1">
@@ -229,7 +215,7 @@ export function TasksView(props: {
         activityLog={mission.activityLog}
         busyKey={mission.busyKey}
         onUpdate={(taskId, input) => mission.saveTaskUpdate(taskId, input)}
-        onComment={(taskId, body) => mission.addComment(taskId, { body })}
+        onComment={(taskId, input) => mission.addComment(taskId, input)}
         onHandoff={async (taskId, note, toAgentName) => {
           await mission.createHandoff(taskId, { note, toAgentName });
         }}

@@ -172,6 +172,9 @@ describe("App", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "Mission Control" })).toBeInTheDocument();
     expect(await screen.findByTestId("org-chart")).toBeInTheDocument();
+    expect(screen.queryByText("Office roster")).not.toBeInTheDocument();
+    expect(screen.getByText("1 cycle tasks")).toBeInTheDocument();
+    expect(screen.getByText("1 office agents")).toBeInTheDocument();
   });
 
   it("renders settings view with connector config", () => {

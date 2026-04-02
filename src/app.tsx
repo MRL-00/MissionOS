@@ -2,7 +2,7 @@ import { startTransition, useDeferredValue, useEffect, useRef, useState } from "
 import { DEPLOY_BADGE_LABEL } from "./config/buildInfo";
 import { useMissionControl, type MissionView } from "./mission/hooks/useMissionControl";
 import { AgentsView, MissionView as MissionDashboardView, SchedulesView, SettingsView, TasksView } from "./app/views";
-import { avatarLabel, connectionTone, cx, formatRelativeUpdate } from "./app/shared";
+import { connectionTone, cx, formatRelativeUpdate } from "./app/shared";
 
 const NAV_ITEMS: Array<{ id: MissionView; label: string }> = [
   { id: "mission", label: "Mission Control" },
@@ -42,6 +42,7 @@ export function App() {
   const [agentFormMode, setAgentFormMode] = useState<"create" | "edit">("create");
   const [addIntegrationOpen, setAddIntegrationOpen] = useState(false);
   const addIntegrationRef = useRef<HTMLDivElement>(null);
+  const isMissionView = mission.activeView === "mission";
   const isTasksView = mission.activeView === "tasks";
 
   useEffect(() => {
@@ -107,37 +108,14 @@ export function App() {
             ))}
           </nav>
 
-          <section className="mission-sidebar-section xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
-            <div className="mission-sidebar-section-title">Office roster</div>
-            <p className="mission-muted px-2 pt-1">
-              {mission.agents.length} linked office agent{mission.agents.length === 1 ? "" : "s"}
-              {mission.missionSnapshot.rosterImport.staged ? ` · ${mission.missionSnapshot.rosterImport.staged} staged` : ""}
-            </p>
-            <div className="mission-scroll mt-2 flex-1 pr-1">
-              {mission.agents.map((agent) => (
-                <button
-                  key={agent.id}
-                  className={cx("mission-sidebar-agent", mission.selectedAgentId === agent.id ? "mission-sidebar-agent--selected" : "")}
-                  onClick={() => {
-                    startTransition(() => {
-                      mission.setSelectedAgentId(agent.id);
-                      mission.setActiveView("mission");
-                    });
-                  }}
-                >
-                  <span className="mission-avatar">{avatarLabel(agent.name, agent.emoji)}</span>
-                  <div className="mission-sidebar-meta">
-                    <div className="mission-sidebar-copy">
-                      <div className="mission-sidebar-name">{agent.name}</div>
-                      <div className="mission-sidebar-subtitle">{agent.role}</div>
-                      <div className="mission-sidebar-task mission-clamp-2 mission-wrap">{agent.task || "No active task"}</div>
-                    </div>
-                    <span className="mission-badge border border-linear-lineStrong">{agent.status}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
+          {isMissionView ? (
+            <section className="mission-sidebar-section">
+              <div className="mission-sidebar-section-title">Mission overview</div>
+              <p className="mission-muted px-2 pt-1">
+                Select agents from the command map. Pending handoffs and scheduled jobs now live in the mission view rail.
+              </p>
+            </section>
+          ) : null}
         </aside>
 
         <main className="flex min-h-screen flex-col gap-3 bg-mission-950 p-3 sm:p-4 xl:h-screen xl:min-h-0 xl:overflow-hidden xl:p-4">
@@ -165,6 +143,12 @@ export function App() {
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-linear-muted">
                   <div className="mission-badge">Task sync {mission.missionSnapshot.taskSync.state}</div>
+                  {isMissionView ? (
+                    <>
+                      <div className="mission-badge">{mission.missionSnapshot.tasks.length} cycle tasks</div>
+                      <div className="mission-badge">{mission.agents.length} office agents</div>
+                    </>
+                  ) : null}
                   <p className="mission-muted">
                     {mission.missionSnapshot.taskSync.message || formatRelativeUpdate(mission.missionSnapshot.taskSync.updatedAt)}
                   </p>

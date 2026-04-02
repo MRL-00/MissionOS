@@ -3,6 +3,8 @@ import { formatProviderAgentStatus } from "../mission/providerAgents";
 import type {
   AgentMessage,
   HermesDefaults,
+  MissionTaskComment,
+  MissionTaskCommentCreateRequest,
   MissionTaskDetail,
   MissionTaskUpdateRequest,
   ProviderAgentRecord,
@@ -31,9 +33,63 @@ import {
   taskWorkflowTone,
 } from "./shared";
 
+interface ThreadedMissionTaskComment extends MissionTaskComment {
+  replies: ThreadedMissionTaskComment[];
+}
+
+function buildThreadedMissionComments(comments: MissionTaskComment[]): ThreadedMissionTaskComment[] {
+  const nodes = new Map<string, ThreadedMissionTaskComment>();
+  comments.forEach((comment) => {
+    nodes.set(comment.id, {
+      ...comment,
+      replies: [],
+    });
+  });
+
+  const roots: ThreadedMissionTaskComment[] = [];
+  comments.forEach((comment) => {
+    const node = nodes.get(comment.id);
+    if (!node) {
+      return;
+    }
+
+    if (comment.parentCommentId) {
+      const parent = nodes.get(comment.parentCommentId);
+      if (parent) {
+        parent.replies.push(node);
+        return;
+      }
+    }
+
+    roots.push(node);
+  });
+
+  const sortNodes = (entries: ThreadedMissionTaskComment[]): void => {
+    entries.sort((left, right) => left.createdAt - right.createdAt);
+    entries.forEach((entry) => sortNodes(entry.replies));
+  };
+
+  sortNodes(roots);
+  return roots;
+}
+
+const CHAT_ACTIVITY_KINDS = new Set<ActivityLogEntry["kind"]>([
+  "agent-message",
+  "agent-status",
+  "agent-spawn",
+  "agent-complete",
+  "meeting-turn",
+]);
+
+function stripAgentPrefix(message: string, agentName: string): string {
+  const prefix = `${agentName}: `;
+  return message.startsWith(prefix) ? message.slice(prefix.length) : message;
+}
+
 export function AgentChatPanel(props: {
   agent: AgentRuntimeState | null;
   messages: AgentMessage[];
+  activityLog: ActivityLogEntry[];
   loading: boolean;
   busyKey: string | null;
   onSend(agentId: string, message: string): Promise<void>;
@@ -65,6 +121,21 @@ export function AgentChatPanel(props: {
 
   const agent = props.agent;
   const hasProvider = agent.backendLink?.provider && agent.backendLink.provider !== "unlinked";
+  const knownMessages = new Set(
+    props.messages
+      .map((message) => message.content.trim())
+      .filter(Boolean),
+  );
+  const recentUpdates = props.activityLog
+    .filter((entry) => entry.agentId === agent.id && CHAT_ACTIVITY_KINDS.has(entry.kind))
+    .filter((entry) => {
+      if (entry.kind !== "agent-message" && entry.kind !== "meeting-turn") {
+        return true;
+      }
+      const stripped = stripAgentPrefix(entry.message.trim(), agent.name).trim();
+      return stripped.length > 0 && !knownMessages.has(stripped);
+    })
+    .slice(0, 4);
 
   return (
     <SectionCard
@@ -86,6 +157,17 @@ export function AgentChatPanel(props: {
           <span className="mission-badge">{agent.location || "desk"}</span>
           {agent.task ? <span className="mission-muted mission-clamp-1 mission-wrap">{agent.task}</span> : null}
         </div>
+        {recentUpdates.length > 0 ? (
+          <div className="mb-3 overflow-hidden rounded-xl border border-linear-line bg-mission-950/75">
+            <div className="flex items-center justify-between border-b border-linear-line px-3 py-2">
+              <span className="mission-section-label">Live updates</span>
+              <span className="mission-muted">Recent agent activity</span>
+            </div>
+            <div className="max-h-[220px] overflow-y-auto">
+              <ActivityFeed entries={recentUpdates} limit={4} className="space-y-0" />
+            </div>
+          </div>
+        ) : null}
         <div
           ref={messagesScrollRef}
           className="mission-scroll max-h-[400px] space-y-3 rounded-xl border border-linear-line bg-mission-900 p-3"
@@ -181,7 +263,7 @@ export function TaskDetailPanel(props: {
   activityLog: ActivityLogEntry[];
   busyKey: string | null;
   onUpdate(taskId: string, input: MissionTaskUpdateRequest): Promise<void>;
-  onComment(taskId: string, body: string): Promise<void>;
+  onComment(taskId: string, input: MissionTaskCommentCreateRequest): Promise<void>;
   onHandoff(taskId: string, note: string, toAgentName: string): Promise<void>;
   onRun(taskId: string): Promise<void>;
   onRespond(handoffId: string, taskId: string, status: "accepted" | "declined"): Promise<void>;
@@ -191,6 +273,8 @@ export function TaskDetailPanel(props: {
   const [stateName, setStateName] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [commentBody, setCommentBody] = useState("");
+  const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
   const [handoffNote, setHandoffNote] = useState("");
   const [handoffTarget, setHandoffTarget] = useState("");
 
@@ -200,6 +284,8 @@ export function TaskDetailPanel(props: {
       setStateName("");
       setAssigneeId("");
       setCommentBody("");
+      setReplyTargetCommentId(null);
+      setReplyBody("");
       setHandoffNote("");
       setHandoffTarget("");
       return;
@@ -209,6 +295,8 @@ export function TaskDetailPanel(props: {
     setStateName(task.state.name);
     setAssigneeId(task.assignee?.id ?? "");
     setCommentBody("");
+    setReplyTargetCommentId(null);
+    setReplyBody("");
     setHandoffNote("");
     setHandoffTarget("");
   }, [task?.id]);
@@ -225,6 +313,129 @@ export function TaskDetailPanel(props: {
 
   const busyPrefix = `task:${task.id}`;
   const isBusy = props.busyKey?.startsWith(busyPrefix) ?? false;
+  const threadedComments = buildThreadedMissionComments(props.detail.comments);
+
+  const renderCommentThread = (comment: ThreadedMissionTaskComment, depth = 0) => {
+    const isReply = depth > 0;
+    const isThreadStarter = depth === 0 && comment.replies.length > 0;
+
+    return (
+      <div
+        key={comment.id}
+        className={cx(
+          isReply ? "ml-4 border-l-2 border-linear-teal/20 pl-4" : "",
+          isThreadStarter ? "rounded-2xl border border-linear-lineStrong bg-mission-950/55 p-3.5 shadow-[0_8px_30px_rgba(0,0,0,0.18)]" : "",
+          depth === 0 && !isThreadStarter ? "rounded-xl border border-linear-line bg-mission-950/55 p-3.5" : "",
+        )}
+      >
+        <article
+          className={cx(
+            "min-w-0",
+            isReply ? "rounded-xl border border-linear-line bg-mission-950/70 px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]" : "",
+          )}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <strong className="mission-wrap text-sm text-white">{comment.authorName}</strong>
+                <span
+                  className={cx(
+                    "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em]",
+                    isReply
+                      ? "border-linear-line bg-mission-900 text-linear-muted"
+                      : isThreadStarter
+                        ? "border-linear-teal/25 bg-linear-teal/10 text-linear-teal"
+                        : "border-linear-line bg-linear-surface text-linear-muted",
+                  )}
+                >
+                  {isReply ? "Reply" : isThreadStarter ? "Thread" : "Comment"}
+                </span>
+                {isThreadStarter ? (
+                  <span className="mission-muted">{comment.replies.length + 1} messages</span>
+                ) : null}
+              </div>
+            </div>
+            <span className="mission-muted shrink-0">{formatDateTime(comment.createdAt)}</span>
+          </div>
+          {!isReply && isThreadStarter ? (
+            <div className="mt-2 border-t border-linear-line/80 pt-2">
+              <span className="mission-section-label">Thread starter</span>
+            </div>
+          ) : null}
+          <div className="mission-wrap mt-3">
+            <MarkdownContent text={comment.body} />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              className="mission-button-muted"
+              disabled={isBusy}
+              onClick={() => {
+                setReplyTargetCommentId((current) => (current === comment.id ? null : comment.id));
+                setReplyBody("");
+              }}
+            >
+              {replyTargetCommentId === comment.id ? "Cancel reply" : "Reply"}
+            </button>
+            {comment.replies.length > 0 ? (
+              <span className="mission-muted">{comment.replies.length} repl{comment.replies.length === 1 ? "y" : "ies"}</span>
+            ) : null}
+          </div>
+          {replyTargetCommentId === comment.id ? (
+            <div className="mt-3 rounded-xl border border-linear-teal/20 bg-mission-900/80 p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="mission-section-label">Replying in thread</span>
+                <span className="mission-muted">{comment.authorName}</span>
+              </div>
+              <textarea
+                className="mission-input min-h-[96px] resize-y"
+                placeholder={`Reply to ${comment.authorName}...`}
+                value={replyBody}
+                onChange={(event) => setReplyBody(event.target.value)}
+              />
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  className="mission-button-muted"
+                  disabled={isBusy || !replyBody.trim()}
+                  onClick={async () => {
+                    const body = replyBody.trim();
+                    if (!body) {
+                      return;
+                    }
+                    await props.onComment(task.id, { body, parentCommentId: comment.id });
+                    setReplyBody("");
+                    setReplyTargetCommentId(null);
+                  }}
+                >
+                  Reply in thread
+                </button>
+                <button
+                  className="mission-button-muted"
+                  disabled={isBusy}
+                  onClick={() => {
+                    setReplyBody("");
+                    setReplyTargetCommentId(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </article>
+        {comment.replies.length > 0 ? (
+          <div className={cx("space-y-3", isThreadStarter ? "mt-4" : "mt-3")}>
+            {isThreadStarter ? (
+              <div className="flex items-center gap-2">
+                <span className="mission-section-label">Replies</span>
+                <div className="h-px flex-1 bg-linear-line/80" />
+              </div>
+            ) : null}
+            {comment.replies.map((reply) => renderCommentThread(reply, depth + 1))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <SectionCard
@@ -320,17 +531,7 @@ export function TaskDetailPanel(props: {
                   No comments synced yet.
                 </div>
               ) : (
-                props.detail.comments.map((comment) => (
-                  <article key={comment.id} className="mission-list-item">
-                    <div className="flex items-start justify-between gap-3">
-                      <strong className="mission-wrap text-sm text-white">{comment.authorName}</strong>
-                      <span className="mission-muted shrink-0">{formatDateTime(comment.createdAt)}</span>
-                    </div>
-                    <div className="mission-wrap mt-3">
-                      <MarkdownContent text={comment.body} />
-                    </div>
-                  </article>
-                ))
+                threadedComments.map((comment) => renderCommentThread(comment))
               )}
             </div>
             <textarea
@@ -343,7 +544,7 @@ export function TaskDetailPanel(props: {
               className="mission-button-muted mt-3"
               disabled={isBusy || !commentBody.trim()}
               onClick={async () => {
-                await props.onComment(task.id, commentBody.trim());
+                await props.onComment(task.id, { body: commentBody.trim() });
                 setCommentBody("");
               }}
             >

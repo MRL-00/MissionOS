@@ -26,14 +26,20 @@ import {
   normalizeHermesIntakeDecision,
   normalizeScoutReviewDecision,
   normalizeScoutRoutingDecision,
+  preferredThreadReplyCommentId,
   normalizeWorkerExecutionResult,
+  uniqueStrings,
   workerAgentIdForRoute,
   workerExecutionContextFromTask,
   workerRouteLabel,
   type WorkerExecutionResult,
+  type WorkerExecutionContext,
   type WorkerRoute,
 } from "./mission-workflow";
 import { RequestBodyError } from "./types";
+
+const REVIEW_ARTIFACT_SYNC_ATTEMPTS = 8;
+const REVIEW_ARTIFACT_SYNC_DELAY_MS = 15_000;
 
 interface UpdateTaskAutomationInput {
   runId?: string | undefined;
@@ -45,7 +51,7 @@ interface UpdateTaskAutomationInput {
 }
 
 export interface MissionTaskWorkflowDeps {
-  addMissionTaskComment(taskId: string, input: { body: string }): Promise<unknown>;
+  addMissionTaskComment(taskId: string, input: { body: string; parentCommentId?: string }): Promise<unknown>;
   createAcceptedHandoff(taskId: string, fromAgentName: string, toAgentName: string, note: string): Promise<void>;
   ensureAgentSuffix(body: string, suffix: string): string;
   getMissionTaskDetail(taskId: string): Promise<MissionTaskDetail>;
@@ -55,13 +61,60 @@ export interface MissionTaskWorkflowDeps {
   updateTaskAutomation(taskId: string, input: UpdateTaskAutomationInput): void;
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mergeTaskDetailExecutionContext(
+  current: WorkerExecutionContext,
+  detail: MissionTaskDetail,
+): WorkerExecutionContext {
+  const taskContext = workerExecutionContextFromTask(detail);
+  return {
+    branch: taskContext.branch || current.branch,
+    pullRequestUrls: uniqueStrings([...current.pullRequestUrls, ...taskContext.pullRequestUrls]),
+  };
+}
+
+export async function syncWorkerArtifactsForReview(
+  taskId: string,
+  getMissionTaskDetail: (taskId: string) => Promise<MissionTaskDetail>,
+  current: WorkerExecutionContext,
+  options?: {
+    maxAttempts?: number | undefined;
+    delayMs?: number | undefined;
+  },
+): Promise<{ detail: MissionTaskDetail; executionContext: WorkerExecutionContext }> {
+  const maxAttempts = options?.maxAttempts ?? REVIEW_ARTIFACT_SYNC_ATTEMPTS;
+  const delayMs = options?.delayMs ?? REVIEW_ARTIFACT_SYNC_DELAY_MS;
+
+  let detail = await getMissionTaskDetail(taskId);
+  let executionContext = mergeTaskDetailExecutionContext(current, detail);
+
+  if (executionContext.pullRequestUrls.length > 0 || maxAttempts <= 0) {
+    return { detail, executionContext };
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await delay(delayMs);
+    detail = await getMissionTaskDetail(taskId);
+    executionContext = mergeTaskDetailExecutionContext(current, detail);
+    if (executionContext.pullRequestUrls.length > 0) {
+      break;
+    }
+  }
+
+  return { detail, executionContext };
+}
+
 export async function runMissionTaskWorkflow(
   taskId: string,
   runId: string,
   deps: MissionTaskWorkflowDeps,
 ): Promise<void> {
-  const detail = await deps.getMissionTaskDetail(taskId);
-  const context = buildTaskContext(detail);
+  let detail = await deps.getMissionTaskDetail(taskId);
+  let context = buildTaskContext(detail);
+  const preferredReplyParentId = preferredThreadReplyCommentId(detail);
   const issueKey = detail.task.identifier;
 
   deps.pushActivity("workflow-item", `${issueKey}: automated workflow started.`, "Hermes");
@@ -85,7 +138,10 @@ export async function runMissionTaskWorkflow(
       hermesDecision.commentBody || `Hey can you please provide more information for this ticket. ${hermesDecision.reason}`,
       "^Hermes",
     );
-    await deps.addMissionTaskComment(taskId, { body: commentBody });
+    await deps.addMissionTaskComment(taskId, {
+      body: commentBody,
+      ...(preferredReplyParentId ? { parentCommentId: preferredReplyParentId } : {}),
+    });
     deps.updateTaskAutomation(taskId, {
       runId,
       status: "needs_info",
@@ -224,7 +280,10 @@ export async function runMissionTaskWorkflow(
           blockerDecision.commentBody || `Blocked during implementation: ${blockerDecision.reason}`,
           "^Hermes",
         );
-        await deps.addMissionTaskComment(taskId, { body: commentBody });
+        await deps.addMissionTaskComment(taskId, {
+          body: commentBody,
+          ...(preferredReplyParentId ? { parentCommentId: preferredReplyParentId } : {}),
+        });
         deps.updateTaskAutomation(taskId, {
           runId,
           status: "needs_info",
@@ -246,7 +305,10 @@ export async function runMissionTaskWorkflow(
           blockerDecision.commentBody || `Workflow stopped after implementation blocker: ${failureReason}`,
           "^Hermes",
         );
-        await deps.addMissionTaskComment(taskId, { body: failureComment });
+        await deps.addMissionTaskComment(taskId, {
+          body: failureComment,
+          ...(preferredReplyParentId ? { parentCommentId: preferredReplyParentId } : {}),
+        });
         deps.updateTaskAutomation(taskId, {
           runId,
           status: "failed",
@@ -300,6 +362,26 @@ export async function runMissionTaskWorkflow(
     ].filter(Boolean).join("\n");
 
     await deps.createAcceptedHandoff(taskId, workerAgentId, "Scout", implementationSummary);
+
+    if (workerExecutionContext.pullRequestUrls.length === 0) {
+      deps.updateTaskAutomation(taskId, {
+        runId,
+        status: "running",
+        ownerAgentName: workerAgentId,
+        route: scoutDecision.route,
+        step: "Waiting for PR sync",
+        message: "Waiting for the new PR to appear before Scout reviews it.",
+      });
+      deps.pushActivity("workflow-item", `${issueKey}: waiting for PR metadata before Scout review.`, workerAgentId);
+    }
+
+    ({ detail, executionContext: workerExecutionContext } = await syncWorkerArtifactsForReview(
+      taskId,
+      deps.getMissionTaskDetail,
+      workerExecutionContext,
+    ));
+    context = buildTaskContext(detail);
+
     deps.updateTaskAutomation(taskId, {
       runId,
       status: "in_review",
@@ -324,7 +406,10 @@ export async function runMissionTaskWorkflow(
       SCOUT_REVIEW_SCHEMA,
     ));
 
-    await deps.addMissionTaskComment(taskId, { body: deps.ensureAgentSuffix(scoutReview.linearComment, "^Scout") });
+    await deps.addMissionTaskComment(taskId, {
+      body: deps.ensureAgentSuffix(scoutReview.linearComment, "^Scout"),
+      ...(preferredReplyParentId ? { parentCommentId: preferredReplyParentId } : {}),
+    });
 
     if (scoutReview.decision === "changes_requested") {
       deps.pushActivity("workflow-item", `${issueKey}: Scout requested follow-up changes from ${workerAgentId}.`, "Scout");

@@ -1,4 +1,4 @@
-import type { MissionTaskDetail } from "../src/mission/types";
+import type { MissionTaskComment, MissionTaskDetail } from "../src/mission/types";
 import { RequestBodyError } from "./types";
 
 export type WorkerRoute = "ios" | "fullstack";
@@ -70,6 +70,8 @@ const META_WORKER_RESULT_PATTERNS = [
   "does not include a pull request url",
   "from the available information",
 ] as const;
+
+const AUTOMATED_LINEAR_COMMENT_SUFFIXES = ["^Hermes", "^Scout"] as const;
 
 export function extractJsonCandidate(text: string): string | null {
   const trimmed = text.trim();
@@ -607,10 +609,79 @@ export function buildTaskContext(detail: MissionTaskDetail): string {
 
   if (detail.comments.length > 0) {
     lines.push("", "Recent comments:");
-    detail.comments.slice(-5).forEach((comment) => {
-      lines.push(`- ${comment.authorName}: ${comment.body.replace(/\s+/g, " ").trim().slice(0, 400)}`);
+    detail.comments.slice(-8).forEach((comment) => {
+      const depth = threadDepthForComment(comment, detail.comments);
+      const prefix = `${"  ".repeat(Math.min(depth, 4))}- `;
+      lines.push(`${prefix}${comment.authorName}: ${comment.body.replace(/\s+/g, " ").trim().slice(0, 400)}`);
     });
   }
 
   return lines.join("\n");
+}
+
+function isAutomatedLinearComment(comment: MissionTaskComment): boolean {
+  const trimmedBody = comment.body.trimEnd();
+  return AUTOMATED_LINEAR_COMMENT_SUFFIXES.some((suffix) => trimmedBody.endsWith(suffix));
+}
+
+function threadDepthForComment(comment: MissionTaskComment, comments: MissionTaskComment[]): number {
+  const byId = new Map(comments.map((entry) => [entry.id, entry]));
+  let depth = 0;
+  let currentParentId = comment.parentCommentId;
+
+  while (currentParentId) {
+    depth += 1;
+    currentParentId = byId.get(currentParentId)?.parentCommentId;
+  }
+
+  return depth;
+}
+
+function findThreadRootCommentId(comment: MissionTaskComment, comments: MissionTaskComment[]): string {
+  const byId = new Map(comments.map((entry) => [entry.id, entry]));
+  let current = comment;
+
+  while (current.parentCommentId) {
+    const parent = byId.get(current.parentCommentId);
+    if (!parent) {
+      break;
+    }
+    current = parent;
+  }
+
+  return current.id;
+}
+
+export function preferredThreadReplyCommentId(detail: MissionTaskDetail): string | undefined {
+  const comments = detail.comments;
+  if (comments.length === 0) {
+    return undefined;
+  }
+
+  const replyCounts = new Map<string, number>();
+  comments.forEach((comment) => {
+    if (!comment.parentCommentId) {
+      return;
+    }
+    replyCounts.set(comment.parentCommentId, (replyCounts.get(comment.parentCommentId) ?? 0) + 1);
+  });
+
+  for (let index = comments.length - 1; index >= 0; index -= 1) {
+    const comment = comments[index];
+    if (!comment || isAutomatedLinearComment(comment)) {
+      continue;
+    }
+
+    if (comment.parentCommentId) {
+      return findThreadRootCommentId(comment, comments);
+    }
+
+    if ((replyCounts.get(comment.id) ?? 0) > 0) {
+      return comment.id;
+    }
+
+    break;
+  }
+
+  return undefined;
 }

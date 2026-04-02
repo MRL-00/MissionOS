@@ -196,6 +196,7 @@ export interface MissionTaskComment {
   body: string;
   authorName: string;
   authorId?: string | undefined;
+  parentCommentId?: string | undefined;
   createdAt: number;
   source: "linear" | "office";
 }
@@ -263,6 +264,7 @@ export interface MissionTaskUpdateRequest {
 
 export interface MissionTaskCommentCreateRequest {
   body: string;
+  parentCommentId?: string | undefined;
 }
 
 export interface MissionTaskHandoffCreateRequest {

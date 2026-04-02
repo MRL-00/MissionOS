@@ -65,6 +65,7 @@ interface LinearIssueNode {
     nodes?: Array<{
       id: string;
       body?: string | null;
+      parentId?: string | null;
       createdAt: string;
       user?: {
         id?: string | null;
@@ -184,6 +185,7 @@ function missionCommentsFromIssue(issue: LinearIssueNode): MissionTaskComment[] 
       body: comment.body ?? "",
       authorName: comment.user?.displayName ?? comment.user?.name ?? "Linear user",
       authorId: comment.user?.id ?? undefined,
+      parentCommentId: comment.parentId ?? undefined,
       createdAt: parseTimestamp(comment.createdAt),
       source: "linear" as const,
     }))
@@ -426,6 +428,7 @@ export async function fetchLinearTaskDetail(taskId: string, handoffs: MissionTas
             nodes {
               id
               body
+              parentId
               createdAt
               user {
                 id
@@ -451,6 +454,7 @@ export async function fetchLinearTaskDetail(taskId: string, handoffs: MissionTas
             nodes {
               id
               body
+              parentId
               createdAt
               user {
                 id
@@ -542,16 +546,17 @@ export async function updateLinearTask(
   return detail.task;
 }
 
-export async function createLinearTaskComment(taskId: string, body: string): Promise<void> {
+export async function createLinearTaskComment(taskId: string, body: string, parentCommentId?: string): Promise<void> {
   await linearGraphQl<{ commentCreate: { success: boolean } }>(
-    `mutation MissionTaskComment($issueId: String!, $body: String!) {
-      commentCreate(input: { issueId: $issueId, body: $body }) {
+    `mutation MissionTaskComment($issueId: String!, $body: String!, $parentId: String) {
+      commentCreate(input: { issueId: $issueId, body: $body, parentId: $parentId }) {
         success
       }
     }`,
     {
       issueId: taskId,
       body,
+      parentId: parentCommentId,
     },
   );
 }
