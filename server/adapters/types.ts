@@ -28,6 +28,7 @@ export interface AdapterMessage {
   content: string;
   timestamp?: number;
   agentName?: string;
+  finishReason?: string;
 }
 
 export interface AdapterModule {

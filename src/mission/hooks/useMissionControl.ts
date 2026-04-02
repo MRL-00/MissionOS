@@ -451,3 +451,5 @@ export function useMissionControl() {
     refreshAgentMessages,
   };
 }
+
+export type MissionControlState = ReturnType<typeof useMissionControl>;

@@ -16,6 +16,8 @@ const BOX_BORDER_RE = /^[╭╮╰╯│─┌┐└┘├┤┬┴┼═║╔�
 const SESSION_ID_RE = /^session_id:\s*\S+$/i;
 // Matches lines like: ╭─ ⚕ Hermes ──────────────╮
 const HERMES_HEADER_RE = /^[╭╰│╮].*(?:hermes|⚕).*[╭╮╯╰│─]+$/i;
+const SESSION_EXPORT_RETRY_ATTEMPTS = 8;
+const SESSION_EXPORT_RETRY_DELAY_MS = 1_000;
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, "");
@@ -45,6 +47,11 @@ function stripHermesChromeFromOutput(text: string): string {
     .map((line) => line.replace(/^[│║]\s?/, "").replace(/\s?[│║]$/, ""))
     .join("\n")
     .trim();
+}
+
+function extractSessionId(text: string): string | null {
+  const match = stripAnsi(text).match(/\b(\d{8}_\d{6}_[a-f0-9]+)\b/i);
+  return match?.[1] ?? null;
 }
 
 function configCommand(config: Record<string, unknown>): string {
@@ -363,27 +370,85 @@ function parseMessagesFromJson(data: unknown): AdapterMessage[] {
       const item = candidate[i];
       if (typeof item !== "object" || item === null) continue;
       const msg = item as Record<string, unknown>;
-      const content = String(msg.content ?? msg.text ?? msg.message ?? msg.body ?? "").trim();
+      const content = extractMessageText(
+        msg.content ?? msg.text ?? msg.message ?? msg.body ?? msg.parts ?? msg.blocks ?? msg.segments ?? msg.content_blocks,
+      );
       if (!content) continue;
       const timestamp = typeof msg.timestamp === "number" ? msg.timestamp
         : typeof msg.created_at === "number" ? msg.created_at
         : typeof msg.createdAt === "number" ? msg.createdAt
+        : undefined;
+      const finishReason = typeof msg.finish_reason === "string" ? msg.finish_reason
+        : typeof msg.finishReason === "string" ? msg.finishReason
         : undefined;
       const agentName = typeof msg.agentName === "string" ? msg.agentName
         : typeof msg.name === "string" ? msg.name
         : undefined;
       messages.push({
         id: String(msg.id ?? `msg-${i}`),
-        role: normalizeMessageRole(String(msg.role ?? msg.type ?? msg.sender ?? "system")),
+        role: normalizeMessageRole(String(msg.role ?? msg.type ?? msg.sender ?? msg.author ?? msg.kind ?? "system")),
         content,
         ...(timestamp !== undefined ? { timestamp } : {}),
         ...(agentName ? { agentName } : {}),
+        ...(finishReason ? { finishReason } : {}),
       });
     }
     if (messages.length > 0) return messages;
   }
 
   return [];
+}
+
+function extractMessageText(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => extractMessageText(entry))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return "";
+  }
+
+  const record = value as Record<string, unknown>;
+  const direct = [
+    record.text,
+    record.content,
+    record.message,
+    record.body,
+    record.value,
+    record.output,
+    record.result,
+  ];
+  for (const candidate of direct) {
+    const text = extractMessageText(candidate);
+    if (text) {
+      return text;
+    }
+  }
+
+  const nested = [
+    record.parts,
+    record.blocks,
+    record.segments,
+    record.content_blocks,
+    record.items,
+    record.messages,
+  ];
+  for (const candidate of nested) {
+    const text = extractMessageText(candidate);
+    if (text) {
+      return text;
+    }
+  }
+
+  return "";
 }
 
 function parseMessagesFromText(text: string): AdapterMessage[] {
@@ -443,6 +508,163 @@ function parseMessagesFromText(text: string): AdapterMessage[] {
 
   flush();
   return messages;
+}
+
+function parseSessionExportOutput(output: string): AdapterMessage[] {
+  const trimmed = output.trim();
+  if (!trimmed || trimmed.length < 5) {
+    return [];
+  }
+
+  const jsonLines = trimmed.split("\n");
+  const messages: AdapterMessage[] = [];
+  for (let i = 0; i < jsonLines.length; i++) {
+    const json = tryParseJson(jsonLines[i]!);
+    if (!json || typeof json !== "object") continue;
+    const record = json as Record<string, unknown>;
+
+    const recordMessages = parseMessagesFromJson(record);
+    if (recordMessages.length > 0) {
+      messages.push(...recordMessages);
+      continue;
+    }
+
+      const content = extractMessageText(
+        record.content ?? record.text ?? record.message ?? record.body ?? record.parts ?? record.blocks ?? record.segments ?? record.content_blocks,
+      );
+      const role = String(record.role ?? record.type ?? record.sender ?? "");
+      const finishReason = typeof record.finish_reason === "string" ? record.finish_reason
+        : typeof record.finishReason === "string" ? record.finishReason
+        : undefined;
+      if (content) {
+        const timestamp = typeof record.timestamp === "number" ? record.timestamp : undefined;
+        messages.push({
+          id: String(record.id ?? `msg-${i}`),
+          role: normalizeMessageRole(role),
+          content: stripHermesChromeFromOutput(content),
+          ...(timestamp !== undefined ? { timestamp } : {}),
+          ...(finishReason ? { finishReason } : {}),
+        });
+      }
+  }
+  if (messages.length > 0) {
+    return messages;
+  }
+
+  const fullJson = tryParseJson(trimmed);
+  if (fullJson) {
+    const parsed = parseMessagesFromJson(fullJson);
+    if (parsed.length > 0) {
+      return parsed.map((message) => ({
+        ...message,
+        content: stripHermesChromeFromOutput(message.content),
+      }));
+    }
+  }
+
+  const cleaned = stripHermesChromeFromOutput(trimmed);
+  const textMsgs = parseMessagesFromText(cleaned);
+  if (textMsgs.length > 0) {
+    return textMsgs;
+  }
+
+  if (cleaned.length > 10) {
+    return [{ id: "raw-0", role: "system", content: cleaned, timestamp: Date.now() }];
+  }
+
+  return [];
+}
+
+async function exportSessionMessages(command: string, sshHost: string, sessionId: string): Promise<AdapterMessage[]> {
+  const exportCandidates: string[][] = [
+    ["sessions", "export", "--session-id", sessionId, "-"],
+  ];
+
+  for (const args of exportCandidates) {
+    console.log(`[hermes] trying: ${args.join(" ")}`);
+    const result = await runHermesCli(command, args, sshHost, 15_000);
+    const output = result.stdout.trim();
+
+    if (!output || output.length < 5) continue;
+    if (result.stderr.includes("error") && !result.ok) continue;
+
+    console.log(`[hermes] export returned ${output.length} chars, first 200: ${output.slice(0, 200)}`);
+
+    const messages = parseSessionExportOutput(output);
+    if (messages.length > 0) {
+      console.log(`[hermes] parsed ${messages.length} messages`);
+      return messages;
+    }
+  }
+
+  return [];
+}
+
+function latestAssistantMessage(messages: AdapterMessage[]): AdapterMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant") {
+      continue;
+    }
+    const content = stripHermesChromeFromOutput(message.content ?? "");
+    if (!content) {
+      continue;
+    }
+    return { ...message, content };
+  }
+  return null;
+}
+
+function latestTerminalAssistantMessage(messages: AdapterMessage[]): AdapterMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant" || message.finishReason !== "stop") {
+      continue;
+    }
+    const content = stripHermesChromeFromOutput(message.content ?? "");
+    if (!content) {
+      continue;
+    }
+    return { ...message, content };
+  }
+  return null;
+}
+
+async function resolveAssistantMessageFromSession(
+  command: string,
+  sshHost: string,
+  preferredSessionId?: string | null,
+): Promise<AdapterMessage | null> {
+  const attemptedSessionIds = new Set<string>();
+
+  for (let attempt = 0; attempt < SESSION_EXPORT_RETRY_ATTEMPTS; attempt += 1) {
+    const sessionIds = [preferredSessionId ?? "", await findLatestSessionId(command, sshHost)]
+      .map((value) => value?.trim() ?? "")
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index);
+
+    for (const sessionId of sessionIds) {
+      if (attemptedSessionIds.has(sessionId)) {
+        continue;
+      }
+      attemptedSessionIds.add(sessionId);
+
+      const messages = await exportSessionMessages(command, sshHost, sessionId);
+      const assistantMessage = latestTerminalAssistantMessage(messages) ?? latestAssistantMessage(messages);
+      if (assistantMessage) {
+        if (assistantMessage.finishReason && assistantMessage.finishReason !== "stop") {
+          continue;
+        }
+        return assistantMessage;
+      }
+    }
+
+    if (attempt < SESSION_EXPORT_RETRY_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, SESSION_EXPORT_RETRY_DELAY_MS));
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -597,71 +819,9 @@ export const hermesAdapter: AdapterModule = {
     const exportHelp = await runHermesCli(command, ["sessions", "export", "--help"], sshHost, 5_000);
     console.log(`[hermes] sessions export --help:\n${(exportHelp.stdout || exportHelp.stderr).slice(0, 500)}`);
 
-    // hermes sessions export --session-id <ID> <output>
-    //   output = "-" for stdout
-    //   --session-id = filter to a specific session
-    const exportCandidates: string[][] = [
-      ["sessions", "export", "--session-id", sessionId, "-"],
-    ];
-
-    for (const args of exportCandidates) {
-      console.log(`[hermes] trying: ${args.join(" ")}`);
-      const result = await runHermesCli(command, args, sshHost, 15_000);
-      const output = result.stdout.trim();
-
-      if (!output || output.length < 5) continue;
-      if (result.stderr.includes("error") && !result.ok) continue;
-
-      console.log(`[hermes] export returned ${output.length} chars, first 200: ${output.slice(0, 200)}`);
-
-      // Try JSONL parsing (one object per line)
-      const jsonLines = output.split("\n");
-      const messages: AdapterMessage[] = [];
-      for (let i = 0; i < jsonLines.length; i++) {
-        const json = tryParseJson(jsonLines[i]!);
-        if (!json || typeof json !== "object") continue;
-        const record = json as Record<string, unknown>;
-
-        const recordMessages = parseMessagesFromJson(record);
-        if (recordMessages.length > 0) {
-          messages.push(...recordMessages);
-          continue;
-        }
-
-        const content = String(record.content ?? record.text ?? record.message ?? record.body ?? "").trim();
-        const role = String(record.role ?? record.type ?? record.sender ?? "");
-        if (content) {
-          const timestamp = typeof record.timestamp === "number" ? record.timestamp : undefined;
-          messages.push({
-            id: String(record.id ?? `msg-${i}`),
-            role: normalizeMessageRole(role),
-            content: stripHermesChromeFromOutput(content),
-            ...(timestamp !== undefined ? { timestamp } : {}),
-          });
-        }
-      }
-      if (messages.length > 0) {
-        console.log(`[hermes] parsed ${messages.length} messages`);
-        return messages;
-      }
-
-      // Try full JSON array
-      const fullJson = tryParseJson(output);
-      if (fullJson) {
-        const parsed = parseMessagesFromJson(fullJson);
-        if (parsed.length > 0) return parsed;
-      }
-
-      // Try text parsing
-      const cleaned = stripHermesChromeFromOutput(output);
-      const textMsgs = parseMessagesFromText(cleaned);
-      if (textMsgs.length > 0) return textMsgs;
-
-      // Got output but couldn't parse — return as raw so user sees something
-      if (cleaned.length > 10) {
-        console.log(`[hermes] returning raw export output`);
-        return [{ id: "raw-0", role: "system", content: cleaned, timestamp: Date.now() }];
-      }
+    const messages = await exportSessionMessages(command, sshHost, sessionId);
+    if (messages.length > 0) {
+      return messages;
     }
 
     console.log("[hermes] could not fetch message history from any export variant");
@@ -686,6 +846,13 @@ export const hermesAdapter: AdapterModule = {
     console.log(`[hermes] sending: ${command} chat -q "${message.slice(0, 60)}${message.length > 60 ? "..." : ""}" -Q --yolo --source office`);
 
     const result = await runHermesCli(command, args, sshHost, 120_000);
+    const sessionId = extractSessionId(result.stdout) ?? extractSessionId(result.stderr);
+    const exportedAssistantMessage = await resolveAssistantMessageFromSession(command, sshHost, sessionId);
+
+    if (exportedAssistantMessage) {
+      return exportedAssistantMessage;
+    }
+
     const content = stripHermesChromeFromOutput(result.stdout);
 
     if (content) {
@@ -713,4 +880,13 @@ export const hermesAdapter: AdapterModule = {
       timestamp: Date.now(),
     };
   },
+};
+
+export const hermesAdapterTestExports = {
+  exportSessionMessages,
+  extractSessionId,
+  latestAssistantMessage,
+  latestTerminalAssistantMessage,
+  parseSessionExportOutput,
+  resolveAssistantMessageFromSession,
 };

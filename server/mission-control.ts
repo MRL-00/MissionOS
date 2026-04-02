@@ -122,6 +122,7 @@ let hermesDefaults: HermesDefaultsState = {
 
 type WorkerRoute = "ios" | "fullstack";
 type WorkerAgentId = "Atlas" | "Orbit";
+const MAX_WORKER_EXECUTION_ATTEMPTS = 2;
 
 interface HermesIntakeDecision {
   action: "ready" | "needs_info";
@@ -151,6 +152,13 @@ interface ScoutReviewDecision {
   decision: "approved" | "changes_requested";
   summary: string;
   linearComment: string;
+}
+
+interface HermesBlockerDecision {
+  action: "retry" | "needs_info" | "failed";
+  reason: string;
+  commentBody?: string | undefined;
+  scoutInstructions?: string | undefined;
 }
 
 function publicHermesDefaultsShape(): HermesDefaults {
@@ -1284,6 +1292,79 @@ function normalizeScoutReviewDecision(raw: ScoutReviewDecision): ScoutReviewDeci
   };
 }
 
+function normalizeHermesBlockerDecision(raw: HermesBlockerDecision): HermesBlockerDecision {
+  return {
+    action: raw.action === "needs_info" || raw.action === "failed" ? raw.action : "retry",
+    reason: requireNonEmptyString(raw.reason, "No blocker assessment provided."),
+    commentBody: requireNonEmptyString(raw.commentBody),
+    scoutInstructions: requireNonEmptyString(raw.scoutInstructions),
+  };
+}
+
+function workerAgentIdForRoute(route: WorkerRoute): WorkerAgentId {
+  return route === "ios" ? "Orbit" : "Atlas";
+}
+
+function workerRouteLabel(route: WorkerRoute): string {
+  return route === "ios" ? "iOS" : "full stack";
+}
+
+function formatAcceptanceCriteria(criteria: string[]): string {
+  return criteria.length > 0
+    ? `Acceptance criteria:\n${criteria.map((criterion) => `- ${criterion}`).join("\n")}`
+    : "";
+}
+
+function formatRiskNotes(riskNotes?: string[] | undefined): string {
+  return riskNotes && riskNotes.length > 0
+    ? `Risk notes:\n${riskNotes.map((note) => `- ${note}`).join("\n")}`
+    : "";
+}
+
+function buildWorkerHandoffNote(
+  decision: ScoutRoutingDecision,
+  routeLabel: string,
+  blockerContext?: string,
+): string {
+  return [
+    `${decision.reason}`,
+    blockerContext ? `Recovery context: ${blockerContext}` : "",
+    "",
+    `Route: ${routeLabel}`,
+    `Implementation prompt: ${decision.implementationPrompt}`,
+    formatAcceptanceCriteria(decision.acceptanceCriteria),
+    formatRiskNotes(decision.riskNotes),
+  ].filter(Boolean).join("\n");
+}
+
+function buildWorkerExecutionPrompt(
+  taskContext: string,
+  routeLabel: string,
+  workerAgentId: WorkerAgentId,
+  branchSlug: string,
+  decision: ScoutRoutingDecision,
+  attempt: number,
+  blockerContext?: string,
+): string {
+  return [
+    `You are ${workerAgentId}, the implementation agent.`,
+    "Work in the current repository and reply with JSON only, no markdown.",
+    `Create a feature branch named ${workerAgentId.toLowerCase()}/${branchSlug}.`,
+    "Implement the fix, push the branch, and open a PR if your environment allows it.",
+    'If you cannot complete that, return {"status":"blocked",...} with the exact reason.',
+    '{"status":"implemented|blocked","branch":"branch name","pullRequestUrl":"https://...","summary":"what changed","reviewPrompt":"prompt for Scout to review the PR and diff","blockingReason":"why blocked"}',
+    "",
+    `Attempt: ${attempt} of ${MAX_WORKER_EXECUTION_ATTEMPTS}`,
+    `Scout route: ${routeLabel}`,
+    `Scout reason: ${decision.reason}`,
+    `Implementation prompt: ${decision.implementationPrompt}`,
+    formatAcceptanceCriteria(decision.acceptanceCriteria),
+    blockerContext ? `Recovery context: ${blockerContext}` : "",
+    "",
+    taskContext,
+  ].filter(Boolean).join("\n");
+}
+
 function buildTaskContext(detail: MissionTaskDetail): string {
   const { task } = detail;
   const lines = [
@@ -1884,7 +1965,7 @@ async function runMissionTaskWorkflow(taskId: string, runId: string): Promise<vo
     message: "Routing the task to the right implementation agent.",
   });
 
-  const scoutDecision = normalizeScoutRoutingDecision(await sendAgentJsonMessage<ScoutRoutingDecision>(
+  let scoutDecision = normalizeScoutRoutingDecision(await sendAgentJsonMessage<ScoutRoutingDecision>(
     "Scout",
     [
       "You are Scout, the lead engineer.",
@@ -1901,70 +1982,160 @@ async function runMissionTaskWorkflow(taskId: string, runId: string): Promise<vo
     '{"route":"ios|fullstack","reason":"why","implementationPrompt":"precise implementation prompt for the worker","acceptanceCriteria":["criterion"],"riskNotes":["optional risk"]}',
   ));
 
-  const workerAgentId: WorkerAgentId = scoutDecision.route === "ios" ? "Orbit" : "Atlas";
-  const workerRouteLabel = scoutDecision.route === "ios" ? "iOS" : "full stack";
-  const workerHandoffNote = [
-    `${scoutDecision.reason}`,
-    "",
-    `Route: ${workerRouteLabel}`,
-    `Implementation prompt: ${scoutDecision.implementationPrompt}`,
-    scoutDecision.acceptanceCriteria.length > 0
-      ? `Acceptance criteria:\n${scoutDecision.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`
-      : "",
-    scoutDecision.riskNotes && scoutDecision.riskNotes.length > 0
-      ? `Risk notes:\n${scoutDecision.riskNotes.map((note) => `- ${note}`).join("\n")}`
-      : "",
-  ].filter(Boolean).join("\n");
-
-  await createAcceptedHandoff(taskId, "Scout", workerAgentId, workerHandoffNote);
-  updateTaskAutomation(taskId, {
-    runId,
-    status: "running",
-    ownerAgentName: workerAgentId,
-    route: scoutDecision.route,
-    step: `${workerAgentId} implementation`,
-    message: `Implementing as a ${workerRouteLabel} task.`,
-  });
-
   const branchSlug = detail.task.identifier.toLowerCase();
-  const workerResult = normalizeWorkerExecutionResult(await sendAgentJsonMessage<WorkerExecutionResult>(
-    workerAgentId,
-    [
-      `You are ${workerAgentId}, the implementation agent.`,
-      "Work in the current repository and reply with JSON only, no markdown.",
-      `Create a feature branch named ${workerAgentId.toLowerCase()}/${branchSlug}.`,
-      "Implement the fix, push the branch, and open a PR if your environment allows it.",
-      'If you cannot complete that, return {"status":"blocked",...} with the exact reason.',
-      '{"status":"implemented|blocked","branch":"branch name","pullRequestUrl":"https://...","summary":"what changed","reviewPrompt":"prompt for Scout to review the PR and diff","blockingReason":"why blocked"}',
-      "",
-      `Scout route: ${workerRouteLabel}`,
-      `Scout reason: ${scoutDecision.reason}`,
-      `Implementation prompt: ${scoutDecision.implementationPrompt}`,
-      scoutDecision.acceptanceCriteria.length > 0
-        ? `Acceptance criteria:\n${scoutDecision.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`
-        : "",
-      "",
-      context,
-    ].filter(Boolean).join("\n"),
-    `${workerAgentId} execution`,
-    '{"status":"implemented|blocked","branch":"branch name","pullRequestUrl":"https://...","summary":"what changed","reviewPrompt":"prompt for Scout to review the PR and diff","blockingReason":"why blocked"}',
-  ));
+  let workerAgentId: WorkerAgentId = workerAgentIdForRoute(scoutDecision.route);
+  let routeLabel = workerRouteLabel(scoutDecision.route);
+  let recoveryContext = "";
+  let workerResult: WorkerExecutionResult | null = null;
 
-  if (workerResult.status === "blocked") {
-    const blockerSummary = workerResult.blockingReason || workerResult.summary;
-    await createAcceptedHandoff(taskId, workerAgentId, "Scout", `Blocked: ${blockerSummary}`);
-    const blockerComment = ensureAgentSuffix(`Blocked during implementation: ${blockerSummary}`, "^Scout");
-    await addMissionTaskComment(taskId, { body: blockerComment });
+  for (let attempt = 1; attempt <= MAX_WORKER_EXECUTION_ATTEMPTS; attempt += 1) {
+    await createAcceptedHandoff(taskId, "Scout", workerAgentId, buildWorkerHandoffNote(scoutDecision, routeLabel, recoveryContext));
     updateTaskAutomation(taskId, {
       runId,
-      status: "failed",
-      ownerAgentName: "Scout",
+      status: "running",
+      ownerAgentName: workerAgentId,
       route: scoutDecision.route,
-      step: "Worker blocked",
+      step: `${workerAgentId} implementation${attempt > 1 ? ` (attempt ${attempt})` : ""}`,
+      message: `Implementing as a ${routeLabel} task.`,
+    });
+
+    const candidateResult = normalizeWorkerExecutionResult(await sendAgentJsonMessage<WorkerExecutionResult>(
+      workerAgentId,
+      buildWorkerExecutionPrompt(context, routeLabel, workerAgentId, branchSlug, scoutDecision, attempt, recoveryContext),
+      `${workerAgentId} execution`,
+      '{"status":"implemented|blocked","branch":"branch name","pullRequestUrl":"https://...","summary":"what changed","reviewPrompt":"prompt for Scout to review the PR and diff","blockingReason":"why blocked"}',
+    ));
+
+    if (candidateResult.status !== "blocked") {
+      workerResult = candidateResult;
+      break;
+    }
+
+    const blockerSummary = candidateResult.blockingReason || candidateResult.summary;
+    await createAcceptedHandoff(taskId, workerAgentId, "Hermes", `Blocked on attempt ${attempt}: ${blockerSummary}`);
+    updateTaskAutomation(taskId, {
+      runId,
+      status: "running",
+      ownerAgentName: "Hermes",
+      route: scoutDecision.route,
+      step: "Hermes blocker triage",
       message: blockerSummary,
     });
-    pushActivity("workflow-item", `${issueKey}: ${workerAgentId} reported a blocker.`, workerAgentId);
-    return;
+    pushActivity("workflow-item", `${issueKey}: ${workerAgentId} reported a blocker on attempt ${attempt}.`, workerAgentId);
+
+    const blockerDecision = normalizeHermesBlockerDecision(await sendAgentJsonMessage<HermesBlockerDecision>(
+      "Hermes",
+      [
+        "You are Hermes, the intake orchestrator for a software ticket workflow.",
+        "A worker reported a blocker during implementation.",
+        "Decide whether the workflow should retry with better instructions, request more human information, or fail.",
+        "Choose retry when the task appears recoverable without asking the user for new information.",
+        "Choose needs_info only when the human must provide missing information or access.",
+        "Choose failed only when the workflow should stop without another worker attempt.",
+        "Reply with JSON only, no markdown.",
+        '{"action":"retry|needs_info|failed","reason":"short explanation","commentBody":"Linear comment if human input is needed or if the workflow stops, end with ^Hermes","scoutInstructions":"concrete guidance for Scout if retrying"}',
+        "",
+        `Attempt: ${attempt} of ${MAX_WORKER_EXECUTION_ATTEMPTS}`,
+        `Worker: ${workerAgentId}`,
+        `Route: ${routeLabel}`,
+        `Scout reason: ${scoutDecision.reason}`,
+        `Implementation prompt: ${scoutDecision.implementationPrompt}`,
+        formatAcceptanceCriteria(scoutDecision.acceptanceCriteria),
+        formatRiskNotes(scoutDecision.riskNotes),
+        `Worker summary: ${candidateResult.summary}`,
+        candidateResult.branch ? `Branch: ${candidateResult.branch}` : "",
+        candidateResult.pullRequestUrl ? `PR URL: ${candidateResult.pullRequestUrl}` : "",
+        `Blocker: ${blockerSummary}`,
+        recoveryContext ? `Previous recovery context: ${recoveryContext}` : "",
+        "",
+        context,
+      ].filter(Boolean).join("\n"),
+      "Hermes blocker triage",
+      '{"action":"retry|needs_info|failed","reason":"short explanation","commentBody":"Linear comment if human input is needed or if the workflow stops, end with ^Hermes","scoutInstructions":"concrete guidance for Scout if retrying"}',
+    ));
+
+    if (blockerDecision.action === "needs_info") {
+      const commentBody = ensureAgentSuffix(
+        blockerDecision.commentBody || `Blocked during implementation: ${blockerDecision.reason}`,
+        "^Hermes",
+      );
+      await addMissionTaskComment(taskId, { body: commentBody });
+      updateTaskAutomation(taskId, {
+        runId,
+        status: "needs_info",
+        ownerAgentName: "Hermes",
+        route: scoutDecision.route,
+        step: "Awaiting clarification",
+        message: blockerDecision.reason,
+      });
+      pushActivity("workflow-item", `${issueKey}: Hermes requested more information after a worker block.`, "Hermes");
+      return;
+    }
+
+    const retryBudgetExhausted = attempt >= MAX_WORKER_EXECUTION_ATTEMPTS;
+    if (blockerDecision.action === "failed" || retryBudgetExhausted) {
+      const failureReason = retryBudgetExhausted && blockerDecision.action === "retry"
+        ? `${blockerDecision.reason} Retry budget exhausted after ${MAX_WORKER_EXECUTION_ATTEMPTS} attempts.`
+        : blockerDecision.reason;
+      const failureComment = ensureAgentSuffix(
+        blockerDecision.commentBody || `Workflow stopped after implementation blocker: ${failureReason}`,
+        "^Hermes",
+      );
+      await addMissionTaskComment(taskId, { body: failureComment });
+      updateTaskAutomation(taskId, {
+        runId,
+        status: "failed",
+        ownerAgentName: "Hermes",
+        route: scoutDecision.route,
+        step: "Worker blocked",
+        message: failureReason,
+      });
+      pushActivity("workflow-item", `${issueKey}: workflow stopped after ${workerAgentId} reported a blocker.`, "Hermes");
+      return;
+    }
+
+    recoveryContext = [blockerDecision.reason, blockerDecision.scoutInstructions].filter(Boolean).join("\n");
+    await createAcceptedHandoff(taskId, "Hermes", "Scout", `Retry requested after blocker:\n${recoveryContext}`);
+    updateTaskAutomation(taskId, {
+      runId,
+      status: "running",
+      ownerAgentName: "Scout",
+      route: scoutDecision.route,
+      step: "Scout blocker recovery",
+      message: blockerDecision.reason,
+    });
+
+    scoutDecision = normalizeScoutRoutingDecision(await sendAgentJsonMessage<ScoutRoutingDecision>(
+      "Scout",
+      [
+        "You are Scout, the lead engineer.",
+        "A worker attempt was blocked. Produce an updated routing decision and implementation prompt for the retry.",
+        "Choose ios only when the issue is clearly iOS/native/mobile focused. Otherwise choose fullstack.",
+        "You may keep the same route or switch routes if that resolves the blocker.",
+        "Reply with JSON only, no markdown.",
+        '{"route":"ios|fullstack","reason":"why","implementationPrompt":"precise implementation prompt for the worker","acceptanceCriteria":["criterion"],"riskNotes":["optional risk"]}',
+        "",
+        `Hermes recovery reason: ${blockerDecision.reason}`,
+        blockerDecision.scoutInstructions ? `Hermes recovery instructions: ${blockerDecision.scoutInstructions}` : "",
+        `Previous worker: ${workerAgentId}`,
+        `Previous route: ${routeLabel}`,
+        `Previous implementation prompt: ${scoutDecision.implementationPrompt}`,
+        `Previous blocker: ${blockerSummary}`,
+        formatAcceptanceCriteria(scoutDecision.acceptanceCriteria),
+        formatRiskNotes(scoutDecision.riskNotes),
+        "",
+        context,
+      ].filter(Boolean).join("\n"),
+      "Scout blocker recovery",
+      '{"route":"ios|fullstack","reason":"why","implementationPrompt":"precise implementation prompt for the worker","acceptanceCriteria":["criterion"],"riskNotes":["optional risk"]}',
+    ));
+
+    workerAgentId = workerAgentIdForRoute(scoutDecision.route);
+    routeLabel = workerRouteLabel(scoutDecision.route);
+  }
+
+  if (!workerResult) {
+    throw new RequestBodyError("Worker flow ended without an implementation result.", 502);
   }
 
   const implementationSummary = [
@@ -1992,7 +2163,7 @@ async function runMissionTaskWorkflow(taskId: string, runId: string): Promise<vo
       '{"decision":"approved|changes_requested","summary":"review summary","linearComment":"comment to post to Linear, end with ^Scout"}',
       "",
       `Worker: ${workerAgentId}`,
-      `Route: ${workerRouteLabel}`,
+      `Route: ${routeLabel}`,
       `Implementation summary: ${workerResult.summary}`,
       workerResult.branch ? `Branch: ${workerResult.branch}` : "",
       workerResult.pullRequestUrl ? `PR URL: ${workerResult.pullRequestUrl}` : "",
@@ -2038,7 +2209,7 @@ async function runMissionTaskWorkflow(taskId: string, runId: string): Promise<vo
         "Scout approved the task for final review.",
         `Ticket: ${issueKey}`,
         `Worker: ${workerAgentId}`,
-        `Route: ${workerRouteLabel}`,
+        `Route: ${routeLabel}`,
         `Summary: ${scoutReview.summary}`,
         workerResult.pullRequestUrl ? `PR URL: ${workerResult.pullRequestUrl}` : "",
       ].filter(Boolean).join("\n"),

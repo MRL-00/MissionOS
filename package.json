@@ -9,7 +9,6 @@
     "dev:client": "vite --host 0.0.0.0 --port 5173",
     "dev:server": "tsx server/server.ts",
     "dev:bridge": "tsx scripts/agent-runtime-bridge.ts",
-    "dev:sync": "tsx scripts/office-sync.ts",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "typecheck": "tsc --noEmit && tsc -p server/tsconfig.json --noEmit",
@@ -18,10 +17,8 @@
     "test": "pnpm test:server && pnpm test:client"
   },
   "dependencies": {
-    "phaser": "^3.90.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "three": "^0.179.1",
     "ws": "^8.18.3"
   },
   "devDependencies": {
@@ -30,7 +27,6 @@
     "@types/node": "^24.3.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.183.1",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.0",
     "autoprefixer": "^10.4.27",
