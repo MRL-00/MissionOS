@@ -168,6 +168,8 @@ export interface MissionTask {
   identifier: string;
   title: string;
   description?: string | undefined;
+  gitBranchName?: string | undefined;
+  pullRequestUrls?: string[] | undefined;
   url?: string | undefined;
   priority: number;
   state: MissionTaskStatus;

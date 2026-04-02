@@ -11,6 +11,15 @@ test("extractSessionId finds Hermes session ids inside CLI output", () => {
   assert.equal(sessionId, "20260402_102901_53ffc1");
 });
 
+test("extractHermesHttpError detects CLI transport failures", () => {
+  const error = hermesAdapterTestExports.extractHermesHttpError("[HTTP 429] Too Many Requests");
+
+  assert.deepEqual(error, {
+    statusCode: 429,
+    detail: "Too Many Requests",
+  });
+});
+
 test("parseSessionExportOutput reads exported message payloads", () => {
   const messages = hermesAdapterTestExports.parseSessionExportOutput(JSON.stringify({
     id: "20260402_102901_53ffc1",
@@ -86,4 +95,11 @@ test("latestTerminalAssistantMessage prefers the final stop turn over intermedia
 
   assert.ok(result);
   assert.equal(result.content, "{\"status\":\"implemented\",\"pullRequestUrl\":\"https://example.com/pr/562\"}");
+});
+
+test("sessionIdsToInspect stays pinned to the preferred session", () => {
+  assert.deepEqual(
+    hermesAdapterTestExports.sessionIdsToInspect("20260402_102901_53ffc1", "20260402_204455_deadbe"),
+    ["20260402_102901_53ffc1"],
+  );
 });

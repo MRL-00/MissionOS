@@ -14,6 +14,7 @@ interface LinearIssueNode {
   identifier: string;
   title: string;
   description?: string | null;
+  gitBranchName?: string | null;
   url?: string | null;
   priority?: number | null;
   dueDate?: string | null;
@@ -72,6 +73,13 @@ interface LinearIssueNode {
       } | null;
     }>;
   } | null;
+  attachments?: {
+    nodes?: Array<{
+      id: string;
+      title?: string | null;
+      url?: string | null;
+    }>;
+  } | null;
 }
 
 interface LinearCycleNode {
@@ -106,12 +114,19 @@ function parseTimestamp(value: string | number | null | undefined): number {
 function missionTaskFromIssue(issue: LinearIssueNode, handoffs: MissionTaskHandoff[]): MissionTask {
   const taskHandoffs = handoffs.filter((handoff) => handoff.taskId === issue.id);
   const comments = issue.comments?.nodes ?? [];
+  const pullRequestUrls = Array.from(new Set(
+    (issue.attachments?.nodes ?? [])
+      .map((attachment) => attachment?.url?.trim() ?? "")
+      .filter((url) => /github\.com\/.+\/pull\/\d+$/i.test(url)),
+  ));
 
   return {
     id: issue.id,
     identifier: issue.identifier,
     title: issue.title,
     description: issue.description ?? undefined,
+    gitBranchName: issue.gitBranchName ?? undefined,
+    pullRequestUrls: pullRequestUrls.length > 0 ? pullRequestUrls : undefined,
     url: issue.url ?? undefined,
     priority: typeof issue.priority === "number" ? issue.priority : 0,
     state: {
@@ -225,7 +240,15 @@ async function linearGraphQl<TData>(query: string, variables: Record<string, unk
   return payload.data;
 }
 
-const ISSUE_FIELDS = `
+function isLinearOptionalFieldError(error: unknown): boolean {
+  if (!(error instanceof RequestBodyError)) {
+    return false;
+  }
+
+  return /gitbranchname|attachments/i.test(error.message);
+}
+
+const ISSUE_FIELDS_BASE = `
   id
   identifier
   title
@@ -278,6 +301,18 @@ const ISSUE_FIELDS = `
   }
 `;
 
+const ISSUE_FIELDS_ENRICHED = `
+  ${ISSUE_FIELDS_BASE}
+  gitBranchName
+  attachments {
+    nodes {
+      id
+      title
+      url
+    }
+  }
+`;
+
 async function fetchActiveLinearCycles(): Promise<LinearCycleNode[]> {
   const data = await linearGraphQl<{ cycles: { nodes?: LinearCycleNode[] | undefined } }>(
     `query MissionActiveCycles($first: Int!) {
@@ -324,19 +359,39 @@ export async function syncLinearTasks(handoffs: MissionTaskHandoff[]): Promise<M
     };
   }
 
-  const data = await linearGraphQl<{ issues: { nodes?: LinearIssueNode[] | undefined } }>(
-    `query MissionTasks($first: Int!, $cycleIds: [ID!]!) {
-      issues(first: $first, filter: { cycle: { id: { in: $cycleIds } } }) {
-        nodes {
-          ${ISSUE_FIELDS}
+  const variables = {
+    first: LINEAR_PAGE_SIZE,
+    cycleIds: Array.from(activeCycleIds),
+  };
+
+  let data: { issues: { nodes?: LinearIssueNode[] | undefined } };
+  try {
+    data = await linearGraphQl<{ issues: { nodes?: LinearIssueNode[] | undefined } }>(
+      `query MissionTasks($first: Int!, $cycleIds: [ID!]!) {
+        issues(first: $first, filter: { cycle: { id: { in: $cycleIds } } }) {
+          nodes {
+            ${ISSUE_FIELDS_ENRICHED}
+          }
         }
-      }
-    }`,
-    {
-      first: LINEAR_PAGE_SIZE,
-      cycleIds: Array.from(activeCycleIds),
-    },
-  );
+      }`,
+      variables,
+    );
+  } catch (error) {
+    if (!isLinearOptionalFieldError(error)) {
+      throw error;
+    }
+
+    data = await linearGraphQl<{ issues: { nodes?: LinearIssueNode[] | undefined } }>(
+      `query MissionTasks($first: Int!, $cycleIds: [ID!]!) {
+        issues(first: $first, filter: { cycle: { id: { in: $cycleIds } } }) {
+          nodes {
+            ${ISSUE_FIELDS_BASE}
+          }
+        }
+      }`,
+      variables,
+    );
+  }
 
   const tasks = (data.issues.nodes ?? [])
     .filter((issue): issue is LinearIssueNode => {
@@ -359,26 +414,56 @@ export async function syncLinearTasks(handoffs: MissionTaskHandoff[]): Promise<M
 }
 
 export async function fetchLinearTaskDetail(taskId: string, handoffs: MissionTaskHandoff[]): Promise<MissionTaskDetail> {
-  const data = await linearGraphQl<{ issue: LinearIssueNode | null }>(
-    `query MissionTask($id: String!) {
-      issue(id: $id) {
-        ${ISSUE_FIELDS}
-        comments(first: 50) {
-          nodes {
-            id
-            body
-            createdAt
-            user {
+  const variables = { id: taskId };
+  let data: { issue: LinearIssueNode | null };
+
+  try {
+    data = await linearGraphQl<{ issue: LinearIssueNode | null }>(
+      `query MissionTask($id: String!) {
+        issue(id: $id) {
+          ${ISSUE_FIELDS_ENRICHED}
+          comments(first: 50) {
+            nodes {
               id
-              name
-              displayName
+              body
+              createdAt
+              user {
+                id
+                name
+                displayName
+              }
             }
           }
         }
-      }
-    }`,
-    { id: taskId },
-  );
+      }`,
+      variables,
+    );
+  } catch (error) {
+    if (!isLinearOptionalFieldError(error)) {
+      throw error;
+    }
+
+    data = await linearGraphQl<{ issue: LinearIssueNode | null }>(
+      `query MissionTask($id: String!) {
+        issue(id: $id) {
+          ${ISSUE_FIELDS_BASE}
+          comments(first: 50) {
+            nodes {
+              id
+              body
+              createdAt
+              user {
+                id
+                name
+                displayName
+              }
+            }
+          }
+        }
+      }`,
+      variables,
+    );
+  }
 
   if (!data.issue) {
     throw new RequestBodyError("Linear issue not found.", 404);

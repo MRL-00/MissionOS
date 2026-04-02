@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ProviderAgentRecord, ProviderScheduleEntry } from "../../src/mission/types";
 import type { AdapterConfigField, AdapterMessage, AdapterModule, AdapterTestResult } from "./types";
+import { logDebug, summarizeText } from "../logger";
+import { RequestBodyError } from "../types";
 import {
   readHermesAgentStateSnapshot,
   readHermesAgentStateSnapshotOverSsh,
@@ -16,6 +18,7 @@ const BOX_BORDER_RE = /^[╭╮╰╯│─┌┐└┘├┤┬┴┼═║╔�
 const SESSION_ID_RE = /^session_id:\s*\S+$/i;
 // Matches lines like: ╭─ ⚕ Hermes ──────────────╮
 const HERMES_HEADER_RE = /^[╭╰│╮].*(?:hermes|⚕).*[╭╮╯╰│─]+$/i;
+const HERMES_HTTP_ERROR_RE = /\[HTTP\s+(\d{3})\]\s*([^\n]*)/i;
 const SESSION_EXPORT_RETRY_ATTEMPTS = 8;
 const SESSION_EXPORT_RETRY_DELAY_MS = 1_000;
 
@@ -52,6 +55,28 @@ function stripHermesChromeFromOutput(text: string): string {
 function extractSessionId(text: string): string | null {
   const match = stripAnsi(text).match(/\b(\d{8}_\d{6}_[a-f0-9]+)\b/i);
   return match?.[1] ?? null;
+}
+
+function extractHermesHttpError(text: string): { statusCode: number; detail: string } | null {
+  const cleaned = stripHermesChromeFromOutput(stripAnsi(text)).trim();
+  if (!cleaned) {
+    return null;
+  }
+
+  const match = cleaned.match(HERMES_HTTP_ERROR_RE);
+  if (!match) {
+    return null;
+  }
+
+  const statusCode = Number.parseInt(match[1] ?? "", 10);
+  if (!Number.isFinite(statusCode)) {
+    return null;
+  }
+
+  return {
+    statusCode,
+    detail: match[2]?.trim() || `HTTP ${statusCode}`,
+  };
 }
 
 function configCommand(config: Record<string, unknown>): string {
@@ -581,18 +606,30 @@ async function exportSessionMessages(command: string, sshHost: string, sessionId
   ];
 
   for (const args of exportCandidates) {
-    console.log(`[hermes] trying: ${args.join(" ")}`);
+    logDebug("hermes", "Exporting session messages", {
+      sshHost: sshHost || "local",
+      sessionId,
+      command,
+      args: args.join(" "),
+    });
     const result = await runHermesCli(command, args, sshHost, 15_000);
     const output = result.stdout.trim();
 
     if (!output || output.length < 5) continue;
     if (result.stderr.includes("error") && !result.ok) continue;
 
-    console.log(`[hermes] export returned ${output.length} chars, first 200: ${output.slice(0, 200)}`);
+    logDebug("hermes", "Session export returned output", {
+      sessionId,
+      outputLength: output.length,
+      stderr: summarizeText(result.stderr),
+    });
 
     const messages = parseSessionExportOutput(output);
     if (messages.length > 0) {
-      console.log(`[hermes] parsed ${messages.length} messages`);
+      logDebug("hermes", "Parsed exported session messages", {
+        sessionId,
+        messageCount: messages.length,
+      });
       return messages;
     }
   }
@@ -630,27 +667,30 @@ function latestTerminalAssistantMessage(messages: AdapterMessage[]): AdapterMess
   return null;
 }
 
+function sessionIdsToInspect(preferredSessionId?: string | null, latestSessionId?: string | null): string[] {
+  const preferred = preferredSessionId?.trim() ?? "";
+  if (preferred) {
+    return [preferred];
+  }
+
+  const latest = latestSessionId?.trim() ?? "";
+  return latest ? [latest] : [];
+}
+
 async function resolveAssistantMessageFromSession(
   command: string,
   sshHost: string,
   preferredSessionId?: string | null,
 ): Promise<AdapterMessage | null> {
-  const attemptedSessionIds = new Set<string>();
-
   for (let attempt = 0; attempt < SESSION_EXPORT_RETRY_ATTEMPTS; attempt += 1) {
-    const sessionIds = [preferredSessionId ?? "", await findLatestSessionId(command, sshHost)]
-      .map((value) => value?.trim() ?? "")
-      .filter(Boolean)
-      .filter((value, index, values) => values.indexOf(value) === index);
+    const latestSessionId = preferredSessionId ? null : await findLatestSessionId(command, sshHost);
+    const sessionIds = sessionIdsToInspect(preferredSessionId, latestSessionId);
 
     for (const sessionId of sessionIds) {
-      if (attemptedSessionIds.has(sessionId)) {
-        continue;
-      }
-      attemptedSessionIds.add(sessionId);
-
       const messages = await exportSessionMessages(command, sshHost, sessionId);
-      const assistantMessage = latestTerminalAssistantMessage(messages) ?? latestAssistantMessage(messages);
+      const assistantMessage = preferredSessionId
+        ? latestTerminalAssistantMessage(messages)
+        : latestTerminalAssistantMessage(messages) ?? latestAssistantMessage(messages);
       if (assistantMessage) {
         if (assistantMessage.finishReason && assistantMessage.finishReason !== "stop") {
           continue;
@@ -672,15 +712,22 @@ async function resolveAssistantMessageFromSession(
  */
 async function findLatestSessionId(command: string, sshHost: string): Promise<string | null> {
   const result = await runHermesCli(command, ["sessions", "list"], sshHost);
-  console.log(`[hermes] sessions list ok=${result.ok} stdout=${result.stdout.length}chars stderr=${result.stderr.slice(0, 200)}`);
+  const lines = result.stdout.split("\n").filter((line) => line.trim());
+  logDebug("hermes", "Fetched Hermes sessions list", {
+    sshHost: sshHost || "local",
+    command,
+    ok: result.ok,
+    stdoutLength: result.stdout.length,
+    stderr: summarizeText(result.stderr),
+    rowCount: lines.length,
+  });
   if (!result.stdout) {
-    console.log("[hermes] sessions list returned no stdout");
+    logDebug("hermes", "Sessions list returned no stdout", {
+      sshHost: sshHost || "local",
+      command,
+    });
     return null;
   }
-
-  // Log first few lines to see the format
-  const lines = result.stdout.split("\n").filter((l) => l.trim());
-  console.log(`[hermes] sessions list output (${lines.length} lines):\n${lines.slice(0, 8).join("\n")}`);
 
   const json = tryParseJson(result.stdout);
   if (json) {
@@ -695,7 +742,10 @@ async function findLatestSessionId(command: string, sshHost: string): Promise<st
       const item = arr[i] as Record<string, unknown> | undefined;
       if (item) {
         const id = String(item.id ?? item.sessionId ?? item.session_id ?? item.key ?? "");
-        if (id) return id;
+        if (id) {
+          logDebug("hermes", "Selected latest session id from JSON payload", { sessionId: id });
+          return id;
+        }
       }
     }
   }
@@ -704,7 +754,10 @@ async function findLatestSessionId(command: string, sshHost: string): Promise<st
   // Extract all from raw output and take the first one (most recent, since list is sorted)
   const idMatch = result.stdout.match(/\b(\d{8}_\d{6}_[a-f0-9]+)\b/g);
   if (idMatch && idMatch.length > 0) {
-    console.log(`[hermes] found ${idMatch.length} session IDs, using first: ${idMatch[0]}`);
+    logDebug("hermes", "Selected latest session id from regex match", {
+      candidateCount: idMatch.length,
+      sessionId: idMatch[0],
+    });
     return idMatch[0]!;
   }
 
@@ -714,12 +767,16 @@ async function findLatestSessionId(command: string, sshHost: string): Promise<st
     const first = rows[0]!;
     const id = first.id || first.session || first.session_id || first.session_name || "";
     if (id) {
-      console.log(`[hermes] found session ID via table: ${id}`);
+      logDebug("hermes", "Selected latest session id from parsed table", {
+        sessionId: id,
+      });
       return id;
     }
   }
 
-  console.log("[hermes] could not extract session ID from output");
+  logDebug("hermes", "Could not extract a session id from sessions list output", {
+    stdoutPreview: summarizeText(result.stdout),
+  });
   return null;
 }
 
@@ -810,21 +867,38 @@ export const hermesAdapter: AdapterModule = {
     // Find the latest session
     const sessionId = await findLatestSessionId(command, sshHost);
     if (!sessionId) {
-      console.log("[hermes] no session found for fetchMessages");
+      logDebug("hermes", "No session found while fetching messages", {
+        sshHost: sshHost || "local",
+        command,
+      });
       return [];
     }
-    console.log(`[hermes] fetching messages for session: ${sessionId}`);
+    logDebug("hermes", "Fetching messages for latest session", {
+      sshHost: sshHost || "local",
+      command,
+      sessionId,
+    });
 
-    // Discover what `hermes sessions export` expects
+    // Probe the export command in debug-friendly form without dumping the raw help text.
     const exportHelp = await runHermesCli(command, ["sessions", "export", "--help"], sshHost, 5_000);
-    console.log(`[hermes] sessions export --help:\n${(exportHelp.stdout || exportHelp.stderr).slice(0, 500)}`);
+    logDebug("hermes", "Checked sessions export help", {
+      sshHost: sshHost || "local",
+      command,
+      ok: exportHelp.ok,
+      stdoutLength: exportHelp.stdout.length,
+      stderr: summarizeText(exportHelp.stderr),
+    });
 
     const messages = await exportSessionMessages(command, sshHost, sessionId);
     if (messages.length > 0) {
       return messages;
     }
 
-    console.log("[hermes] could not fetch message history from any export variant");
+    logDebug("hermes", "No messages fetched from session export", {
+      sshHost: sshHost || "local",
+      command,
+      sessionId,
+    });
     return [];
   },
 
@@ -843,17 +917,44 @@ export const hermesAdapter: AdapterModule = {
     // For now we create fresh sessions per message. To resume, we'd need
     // the session name/id from a previous send.
     const args = ["chat", "-q", message, "-Q", "--yolo", "--source", "office"];
-    console.log(`[hermes] sending: ${command} chat -q "${message.slice(0, 60)}${message.length > 60 ? "..." : ""}" -Q --yolo --source office`);
+    logDebug("hermes", "Sending message via Hermes CLI", {
+      sshHost: sshHost || "local",
+      command,
+      messagePreview: summarizeText(message),
+    });
 
     const result = await runHermesCli(command, args, sshHost, 120_000);
     const sessionId = extractSessionId(result.stdout) ?? extractSessionId(result.stderr);
+    logDebug("hermes", "Hermes CLI send completed", {
+      sshHost: sshHost || "local",
+      command,
+      ok: result.ok,
+      sessionId: sessionId ?? "",
+      stdoutLength: result.stdout.length,
+      stderr: summarizeText(result.stderr),
+    });
     const exportedAssistantMessage = await resolveAssistantMessageFromSession(command, sshHost, sessionId);
 
     if (exportedAssistantMessage) {
+      const httpError = extractHermesHttpError(exportedAssistantMessage.content);
+      if (httpError) {
+        throw new RequestBodyError(
+          `Hermes CLI request failed with HTTP ${httpError.statusCode}: ${httpError.detail}`,
+          httpError.statusCode,
+        );
+      }
       return exportedAssistantMessage;
     }
 
     const content = stripHermesChromeFromOutput(result.stdout);
+    const httpError = extractHermesHttpError(content) ?? extractHermesHttpError(result.stderr);
+
+    if (httpError) {
+      throw new RequestBodyError(
+        `Hermes CLI request failed with HTTP ${httpError.statusCode}: ${httpError.detail}`,
+        httpError.statusCode,
+      );
+    }
 
     if (content) {
       return {
@@ -883,10 +984,12 @@ export const hermesAdapter: AdapterModule = {
 };
 
 export const hermesAdapterTestExports = {
+  extractHermesHttpError,
   exportSessionMessages,
   extractSessionId,
   latestAssistantMessage,
   latestTerminalAssistantMessage,
   parseSessionExportOutput,
   resolveAssistantMessageFromSession,
+  sessionIdsToInspect,
 };
