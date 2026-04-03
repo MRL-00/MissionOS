@@ -214,10 +214,26 @@ export interface MissionTaskHandoff {
   respondedAt?: number | undefined;
 }
 
+export interface MissionTaskWorkflowArtifact {
+  id: string;
+  taskId: string;
+  runId?: string | undefined;
+  agentName: string;
+  step: string;
+  prompt: string;
+  schema?: string | undefined;
+  rawResponse?: string | undefined;
+  repairedResponse?: string | undefined;
+  normalizedResponse?: string | undefined;
+  validationErrors?: string[] | undefined;
+  createdAt: number;
+}
+
 export interface MissionTaskDetail {
   task: MissionTask;
   comments: MissionTaskComment[];
   handoffs: MissionTaskHandoff[];
+  artifacts?: MissionTaskWorkflowArtifact[] | undefined;
 }
 
 export interface MissionTaskSnapshot {

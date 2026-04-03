@@ -17,6 +17,7 @@ import type {
 import type {
   HermesDefaults,
   MissionTaskHandoff,
+  MissionTaskWorkflowArtifact,
   MissionProvider,
   ProviderConnector,
 } from "../src/mission/types";
@@ -99,6 +100,7 @@ export interface PersistedMissionControlFile {
   connectors: PersistedMissionConnector[];
   hermesDefaults?: PersistedHermesDefaults | undefined;
   handoffs: MissionTaskHandoff[];
+  artifacts?: MissionTaskWorkflowArtifact[] | undefined;
 }
 
 export type ActivityEntryKind = ActivityLogEntry["kind"];

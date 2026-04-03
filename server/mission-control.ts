@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import path from "node:path";
 import {
   HERMES_COMMAND,
@@ -32,6 +34,7 @@ import type {
   MissionTaskHandoff,
   MissionTaskHandoffCreateRequest,
   MissionTaskHandoffResponseRequest,
+  MissionTaskWorkflowArtifact,
   MissionTaskUpdateRequest,
   ProviderAgentRecord,
   ProviderConnector,
@@ -77,6 +80,8 @@ import {
 import { runMissionTaskWorkflow as executeMissionTaskWorkflow } from "./mission-task-workflow";
 import { syncProviderConnector } from "./provider-connectors";
 import { getAdapter, initializeAdapters } from "./adapters/registry";
+
+const execFileAsync = promisify(execFile);
 import type { AdapterMessage, AdapterType } from "./adapters/types";
 import { generateId } from "./utils";
 import { isProviderAgentActivelyExecuting } from "../src/mission/providerAgents";
@@ -124,6 +129,7 @@ let rosterImport: MissionRosterImportStatus = {
   updatedAt: Date.now(),
 };
 let taskHandoffs: MissionTaskHandoff[] = [];
+let taskArtifacts: MissionTaskWorkflowArtifact[] = [];
 const taskAutomationStates = new Map<string, MissionTaskAutomation>();
 const runningTaskAutomations = new Map<string, Promise<void>>();
 const optimisticTaskAgentChains = new Map<string, string[]>();
@@ -137,6 +143,12 @@ let hermesDefaults: HermesDefaultsState = {
 
 const MAX_AGENT_JSON_MESSAGE_ATTEMPTS = 3;
 const AGENT_JSON_MESSAGE_RETRY_DELAY_MS = 1_500;
+
+interface AgentJsonExchange<T> {
+  parsed: T;
+  rawContent: string;
+  repairedContent?: string | undefined;
+}
 
 function publicHermesDefaultsShape(): HermesDefaults {
   return {
@@ -444,9 +456,35 @@ function isMissionTaskHandoff(value: unknown): value is MissionTaskHandoff {
     && (value.respondedAt === undefined || typeof value.respondedAt === "number");
 }
 
+function isMissionTaskWorkflowArtifact(value: unknown): value is MissionTaskWorkflowArtifact {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.taskId === "string"
+    && typeof value.agentName === "string"
+    && typeof value.step === "string"
+    && typeof value.prompt === "string"
+    && typeof value.createdAt === "number"
+    && (value.runId === undefined || typeof value.runId === "string")
+    && (value.schema === undefined || typeof value.schema === "string")
+    && (value.rawResponse === undefined || typeof value.rawResponse === "string")
+    && (value.repairedResponse === undefined || typeof value.repairedResponse === "string")
+    && (value.normalizedResponse === undefined || typeof value.normalizedResponse === "string")
+    && (value.validationErrors === undefined || (Array.isArray(value.validationErrors) && value.validationErrors.every((entry) => typeof entry === "string")));
+}
+
 function syncTaskCounts(taskId: string): void {
   const nextCount = taskHandoffs.filter((handoff) => handoff.taskId === taskId).length;
   taskSnapshot = taskSnapshot.map((task) => (task.id === taskId ? { ...task, handoffCount: nextCount } : task));
+}
+
+function taskArtifactsForTask(taskId: string): MissionTaskWorkflowArtifact[] {
+  return taskArtifacts
+    .filter((artifact) => artifact.taskId === taskId)
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .map((artifact) => ({
+      ...artifact,
+      validationErrors: artifact.validationErrors ? [...artifact.validationErrors] : undefined,
+    }));
 }
 
 function linkedOfficeAgent(connectorId: string, externalId: string): string | undefined {
@@ -1175,11 +1213,14 @@ async function sendAgentMessageForJson(agentId: string, prompt: string, label: s
 
   throw lastError ?? new RequestBodyError(`${label} returned no content.`, 502);
 }
-async function sendAgentJsonMessage<T>(agentId: string, prompt: string, label: string, schema: string): Promise<T> {
+async function sendAgentJsonMessage<T>(agentId: string, prompt: string, label: string, schema: string): Promise<AgentJsonExchange<T>> {
   const content = await sendAgentMessageForJson(agentId, prompt, label);
 
   try {
-    return parseAgentJson<T>(content, label);
+    return {
+      parsed: parseAgentJson<T>(content, label),
+      rawContent: content,
+    };
   } catch (error) {
     const repairedContent = await sendAgentMessageForJson(
       agentId,
@@ -1193,7 +1234,63 @@ async function sendAgentJsonMessage<T>(agentId: string, prompt: string, label: s
       ].join("\n"),
       `${label} JSON repair`,
     );
-    return parseAgentJson<T>(repairedContent, label);
+    return {
+      parsed: parseAgentJson<T>(repairedContent, label),
+      rawContent: content,
+      repairedContent,
+    };
+  }
+}
+
+interface GithubPullRequestLookup {
+  url?: string | undefined;
+  headRefName?: string | undefined;
+  number?: number | undefined;
+  state?: string | undefined;
+}
+
+function normalizeCanonicalPullRequestUrl(value: unknown): string | undefined {
+  return typeof value === "string" && /github\.com\/.+\/pull\/\d+$/i.test(value.trim())
+    ? value.trim().replace(/\/+$/, "")
+    : undefined;
+}
+
+async function resolveCanonicalPullRequestUrl(branchName: string): Promise<string | undefined> {
+  const trimmedBranchName = branchName.trim();
+  if (!trimmedBranchName) {
+    return undefined;
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--head",
+        trimmedBranchName,
+        "--state",
+        "all",
+        "--json",
+        "url,headRefName,number,state",
+      ],
+      {
+        cwd: process.cwd(),
+        timeout: 15_000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    const parsed = JSON.parse(stdout) as GithubPullRequestLookup[];
+    const exactMatch = parsed.find((entry) => entry.headRefName?.trim() === trimmedBranchName);
+    const fallbackMatch = parsed[0];
+    return normalizeCanonicalPullRequestUrl(exactMatch?.url) ?? normalizeCanonicalPullRequestUrl(fallbackMatch?.url);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarn("mission-control", "Failed to resolve pull request URL by branch", {
+      branchName: trimmedBranchName,
+      error: message,
+    });
+    return undefined;
   }
 }
 
@@ -1253,11 +1350,12 @@ async function readPersistedMissionControl(): Promise<PersistedMissionControlFil
       connectors: Array.isArray(parsed.connectors) ? parsed.connectors.filter(isPersistedMissionConnector) : [],
       hermesDefaults: isPersistedHermesDefaults(parsed.hermesDefaults) ? parsed.hermesDefaults : undefined,
       handoffs: Array.isArray(parsed.handoffs) ? parsed.handoffs.filter(isMissionTaskHandoff) : [],
+      artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isMissionTaskWorkflowArtifact) : [],
     };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
-      return { connectors: [], handoffs: [] };
+      return { connectors: [], handoffs: [], artifacts: [] };
     }
     throw error;
   }
@@ -1268,6 +1366,7 @@ async function persistMissionControl(): Promise<void> {
     connectors: Array.from(connectorInstances.values()).map(persistedConnectorShape),
     hermesDefaults: persistedHermesDefaultsShape(),
     handoffs: [...taskHandoffs].sort((left, right) => right.createdAt - left.createdAt),
+    artifacts: [...taskArtifacts].sort((left, right) => right.createdAt - left.createdAt),
   };
   const serialized = `${JSON.stringify(payload, null, 2)}\n`;
   const tempPath = path.join(
@@ -1333,6 +1432,7 @@ export async function loadMissionControl(): Promise<void> {
   }
 
   taskHandoffs = [...persisted.handoffs].sort((left, right) => right.createdAt - left.createdAt);
+  taskArtifacts = [...(persisted.artifacts ?? [])].sort((left, right) => right.createdAt - left.createdAt);
   rosterImport = {
     imported: 0,
     linked: 0,
@@ -1526,6 +1626,7 @@ export async function getMissionTaskDetail(taskId: string): Promise<MissionTaskD
   return {
     ...detail,
     task: publicTaskShape(detail.task),
+    artifacts: taskArtifactsForTask(taskId),
   };
 }
 
@@ -1559,7 +1660,36 @@ export async function addMissionTaskComment(taskId: string, input: MissionTaskCo
     message: "Linear comment created.",
   };
   broadcastMissionSnapshot();
-  return detail;
+  return {
+    ...detail,
+    task: publicTaskShape(detail.task),
+    artifacts: taskArtifactsForTask(taskId),
+  };
+}
+
+async function recordMissionTaskWorkflowArtifact(
+  taskId: string,
+  input: Omit<MissionTaskWorkflowArtifact, "id" | "taskId" | "createdAt"> & { createdAt?: number | undefined },
+): Promise<MissionTaskWorkflowArtifact> {
+  const artifact: MissionTaskWorkflowArtifact = {
+    id: generateId(),
+    taskId,
+    runId: input.runId?.trim() || undefined,
+    agentName: input.agentName.trim(),
+    step: input.step.trim(),
+    prompt: input.prompt,
+    schema: input.schema?.trim() || undefined,
+    rawResponse: input.rawResponse,
+    repairedResponse: input.repairedResponse,
+    normalizedResponse: input.normalizedResponse,
+    validationErrors: input.validationErrors?.length ? [...input.validationErrors] : undefined,
+    createdAt: input.createdAt ?? Date.now(),
+  };
+
+  taskArtifacts = [artifact, ...taskArtifacts];
+  await queuePersistMissionControl();
+  broadcastMissionSnapshot();
+  return artifact;
 }
 
 export async function createMissionTaskHandoff(taskId: string, input: MissionTaskHandoffCreateRequest): Promise<MissionTaskHandoff> {
@@ -1714,6 +1844,8 @@ async function runMissionTaskWorkflow(taskId: string, runId: string): Promise<vo
     ensureAgentSuffix,
     getMissionTaskDetail,
     pushActivity,
+    recordMissionTaskWorkflowArtifact,
+    resolveCanonicalPullRequestUrl,
     sendAgentJsonMessage,
     sendAgentMessage,
     updateTaskAutomation,

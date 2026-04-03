@@ -7,12 +7,21 @@ import {
   HERMES_BLOCKER_SCHEMA,
   HERMES_INTAKE_SCHEMA,
   MAX_WORKER_EXECUTION_ATTEMPTS,
+  SCOUT_DELIVERY_SCHEMA,
   SCOUT_REVIEW_SCHEMA,
   SCOUT_ROUTING_SCHEMA,
   WORKER_EXECUTION_SCHEMA,
+  buildScoutDeliveryCorrectionPrompt,
+  buildScoutDeliveryPrompt,
   buildHermesBlockerPrompt,
   buildHermesIntakePrompt,
   buildScoutBlockerRecoveryPrompt,
+  buildArtifactBackedScoutDeliveryDecision,
+  buildArtifactBackedScoutReviewDecision,
+  buildFallbackScoutRoutingDecision,
+  buildScoutRoutingCorrectionPrompt,
+  buildScoutReviewCorrectionPrompt,
+  buildScoutReviewLinearComment,
   buildScoutReviewPrompt,
   buildScoutRoutingPrompt,
   buildTaskContext,
@@ -24,16 +33,23 @@ import {
   mergeWorkerExecutionContext,
   normalizeHermesBlockerDecision,
   normalizeHermesIntakeDecision,
+  normalizeScoutDeliveryDecision,
   normalizeScoutReviewDecision,
   normalizeScoutRoutingDecision,
   preferredThreadReplyCommentId,
   normalizeWorkerExecutionResult,
   uniqueStrings,
+  validateScoutDeliveryDecision,
+  validateScoutRoutingDecision,
+  validateScoutReviewDecision,
   workerAgentIdForRoute,
   workerExecutionContextFromTask,
   workerRouteLabel,
+  type ScoutDeliveryDecision,
+  type ScoutRoutingDecision,
   type WorkerExecutionResult,
   type WorkerExecutionContext,
+  type ScoutReviewDecision,
   type WorkerRoute,
 } from "./mission-workflow";
 import { RequestBodyError } from "./types";
@@ -50,15 +66,48 @@ interface UpdateTaskAutomationInput {
   message?: string | undefined;
 }
 
+interface AgentJsonExchange<T> {
+  parsed: T;
+  rawContent: string;
+  repairedContent?: string | undefined;
+}
+
 export interface MissionTaskWorkflowDeps {
   addMissionTaskComment(taskId: string, input: { body: string; parentCommentId?: string }): Promise<unknown>;
   createAcceptedHandoff(taskId: string, fromAgentName: string, toAgentName: string, note: string): Promise<void>;
   ensureAgentSuffix(body: string, suffix: string): string;
   getMissionTaskDetail(taskId: string): Promise<MissionTaskDetail>;
   pushActivity(type: string, message: string, agentId?: string): void;
-  sendAgentJsonMessage<T>(agentId: string, prompt: string, label: string, schema: string): Promise<T>;
+  recordMissionTaskWorkflowArtifact(
+    taskId: string,
+    input: {
+      runId?: string | undefined;
+      agentName: string;
+      step: string;
+      prompt: string;
+      schema?: string | undefined;
+      rawResponse?: string | undefined;
+      repairedResponse?: string | undefined;
+      normalizedResponse?: string | undefined;
+      validationErrors?: string[] | undefined;
+    },
+  ): Promise<unknown>;
+  resolveCanonicalPullRequestUrl(branchName: string): Promise<string | undefined>;
+  sendAgentJsonMessage<T>(agentId: string, prompt: string, label: string, schema: string): Promise<AgentJsonExchange<T>>;
   sendAgentMessage(agentId: string, message: string): Promise<unknown>;
   updateTaskAutomation(taskId: string, input: UpdateTaskAutomationInput): void;
+}
+
+function stringifyWorkflowArtifactPayload(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function delay(ms: number): Promise<void> {
@@ -83,13 +132,25 @@ export async function syncWorkerArtifactsForReview(
   options?: {
     maxAttempts?: number | undefined;
     delayMs?: number | undefined;
+    resolveCanonicalPullRequestUrl?: ((branchName: string) => Promise<string | undefined>) | undefined;
   },
 ): Promise<{ detail: MissionTaskDetail; executionContext: WorkerExecutionContext }> {
   const maxAttempts = options?.maxAttempts ?? REVIEW_ARTIFACT_SYNC_ATTEMPTS;
   const delayMs = options?.delayMs ?? REVIEW_ARTIFACT_SYNC_DELAY_MS;
+  const resolveCanonicalPullRequestUrl = options?.resolveCanonicalPullRequestUrl;
 
   let detail = await getMissionTaskDetail(taskId);
   let executionContext = mergeTaskDetailExecutionContext(current, detail);
+
+  if (executionContext.pullRequestUrls.length === 0 && executionContext.branch && resolveCanonicalPullRequestUrl) {
+    const resolvedPullRequestUrl = await resolveCanonicalPullRequestUrl(executionContext.branch);
+    if (resolvedPullRequestUrl) {
+      executionContext = mergeWorkerExecutionContext(executionContext, {
+        branch: executionContext.branch,
+        pullRequestUrl: resolvedPullRequestUrl,
+      });
+    }
+  }
 
   if (executionContext.pullRequestUrls.length > 0 || maxAttempts <= 0) {
     return { detail, executionContext };
@@ -99,12 +160,275 @@ export async function syncWorkerArtifactsForReview(
     await delay(delayMs);
     detail = await getMissionTaskDetail(taskId);
     executionContext = mergeTaskDetailExecutionContext(current, detail);
+    if (executionContext.pullRequestUrls.length === 0 && executionContext.branch && resolveCanonicalPullRequestUrl) {
+      const resolvedPullRequestUrl = await resolveCanonicalPullRequestUrl(executionContext.branch);
+      if (resolvedPullRequestUrl) {
+        executionContext = mergeWorkerExecutionContext(executionContext, {
+          branch: executionContext.branch,
+          pullRequestUrl: resolvedPullRequestUrl,
+        });
+      }
+    }
     if (executionContext.pullRequestUrls.length > 0) {
       break;
     }
   }
 
   return { detail, executionContext };
+}
+
+async function sendWorkflowJsonStep<TInput, TOutput>(
+  deps: MissionTaskWorkflowDeps,
+  taskId: string,
+  runId: string,
+  agentName: string,
+  prompt: string,
+  label: string,
+  schema: string,
+  normalize: (value: TInput) => TOutput,
+): Promise<TOutput> {
+  const exchange = await deps.sendAgentJsonMessage<TInput>(agentName, prompt, label, schema);
+  const normalized = normalize(exchange.parsed);
+
+  await deps.recordMissionTaskWorkflowArtifact(taskId, {
+    runId,
+    agentName,
+    step: label,
+    prompt,
+    schema,
+    rawResponse: exchange.rawContent,
+    repairedResponse: exchange.repairedContent,
+    normalizedResponse: stringifyWorkflowArtifactPayload(normalized),
+  });
+
+  return normalized;
+}
+
+async function recordScoutReviewValidationFailure(
+  deps: MissionTaskWorkflowDeps,
+  taskId: string,
+  runId: string,
+  prompt: string,
+  review: ScoutReviewDecision,
+  validationErrors: string[],
+): Promise<void> {
+  await deps.recordMissionTaskWorkflowArtifact(taskId, {
+    runId,
+    agentName: "Scout",
+    step: "Scout review validation",
+    prompt,
+    normalizedResponse: stringifyWorkflowArtifactPayload(review),
+    validationErrors,
+  });
+}
+
+async function recordWorkflowValidationFailure(
+  deps: MissionTaskWorkflowDeps,
+  taskId: string,
+  runId: string,
+  agentName: string,
+  step: string,
+  prompt: string,
+  payload: unknown,
+  validationErrors: string[],
+): Promise<void> {
+  await deps.recordMissionTaskWorkflowArtifact(taskId, {
+    runId,
+    agentName,
+    step,
+    prompt,
+    normalizedResponse: stringifyWorkflowArtifactPayload(payload),
+    validationErrors,
+  });
+}
+
+async function runValidatedScoutRoutingStep(
+  deps: MissionTaskWorkflowDeps,
+  taskId: string,
+  runId: string,
+  prompt: string,
+  label: string,
+  taskContext: string,
+): Promise<ScoutRoutingDecision> {
+  let decision = await sendWorkflowJsonStep(
+    deps,
+    taskId,
+    runId,
+    "Scout",
+    prompt,
+    label,
+    SCOUT_ROUTING_SCHEMA,
+    normalizeScoutRoutingDecision,
+  );
+  let validationErrors = validateScoutRoutingDecision(decision);
+
+  if (validationErrors.length === 0) {
+    return decision;
+  }
+
+  await recordWorkflowValidationFailure(
+    deps,
+    taskId,
+    runId,
+    "Scout",
+    `${label} validation`,
+    prompt,
+    decision,
+    validationErrors,
+  );
+
+  const correctionPrompt = buildScoutRoutingCorrectionPrompt(taskContext, decision, validationErrors, label);
+  decision = await sendWorkflowJsonStep(
+    deps,
+    taskId,
+    runId,
+    "Scout",
+    correctionPrompt,
+    `${label} correction`,
+    SCOUT_ROUTING_SCHEMA,
+    normalizeScoutRoutingDecision,
+  );
+  validationErrors = validateScoutRoutingDecision(decision);
+
+  if (validationErrors.length > 0) {
+    await recordWorkflowValidationFailure(
+      deps,
+      taskId,
+      runId,
+      "Scout",
+      `${label} validation`,
+      correctionPrompt,
+      decision,
+      validationErrors,
+    );
+    const fallbackDecision = buildFallbackScoutRoutingDecision(correctionPrompt, taskContext, decision);
+    await deps.recordMissionTaskWorkflowArtifact(taskId, {
+      runId,
+      agentName: "Scout",
+      step: `${label} fallback`,
+      prompt: correctionPrompt,
+      normalizedResponse: stringifyWorkflowArtifactPayload(fallbackDecision),
+      validationErrors: [
+        ...validationErrors,
+        "Used server fallback routing because Scout did not return the required routing fields.",
+      ],
+    });
+    return fallbackDecision;
+  }
+
+  return decision;
+}
+
+async function runValidatedScoutDeliveryStep(
+  deps: MissionTaskWorkflowDeps,
+  taskId: string,
+  runId: string,
+  prompt: string,
+  workerAgentId: "Atlas" | "Orbit",
+  routeLabel: string,
+  workerResult: WorkerExecutionResult,
+  taskContext: string,
+  taskIdentifier: string,
+  expectedBranch: string,
+  knownPullRequestUrls: string[],
+  reviewFeedback: string,
+): Promise<ScoutDeliveryDecision> {
+  const artifactBackedDecision = buildArtifactBackedScoutDeliveryDecision(
+    taskIdentifier,
+    expectedBranch,
+    workerResult,
+    knownPullRequestUrls,
+  );
+  if (artifactBackedDecision.status === "review_ready") {
+    await deps.recordMissionTaskWorkflowArtifact(taskId, {
+      runId,
+      agentName: "system",
+      step: "Scout review prep shortcut",
+      prompt,
+      normalizedResponse: stringifyWorkflowArtifactPayload(artifactBackedDecision),
+      validationErrors: [
+        "Skipped Scout delivery prep because the canonical PR was already present in worker/task artifacts.",
+      ],
+    });
+    return artifactBackedDecision;
+  }
+
+  let decision = await sendWorkflowJsonStep(
+    deps,
+    taskId,
+    runId,
+    "Scout",
+    prompt,
+    "Scout review prep",
+    SCOUT_DELIVERY_SCHEMA,
+    normalizeScoutDeliveryDecision,
+  );
+  let validationErrors = validateScoutDeliveryDecision(decision, taskIdentifier, expectedBranch);
+
+  if (validationErrors.length === 0) {
+    return decision;
+  }
+
+  await recordWorkflowValidationFailure(
+    deps,
+    taskId,
+    runId,
+    "Scout",
+    "Scout review prep validation",
+    prompt,
+    decision,
+    validationErrors,
+  );
+
+  const correctionPrompt = buildScoutDeliveryCorrectionPrompt(
+    taskContext,
+    workerAgentId,
+    routeLabel,
+    workerResult,
+    expectedBranch,
+    knownPullRequestUrls,
+    decision,
+    validationErrors,
+    reviewFeedback,
+  );
+  decision = await sendWorkflowJsonStep(
+    deps,
+    taskId,
+    runId,
+    "Scout",
+    correctionPrompt,
+    "Scout review prep correction",
+    SCOUT_DELIVERY_SCHEMA,
+    normalizeScoutDeliveryDecision,
+  );
+  validationErrors = validateScoutDeliveryDecision(decision, taskIdentifier, expectedBranch);
+
+  if (validationErrors.length > 0) {
+    await recordWorkflowValidationFailure(
+      deps,
+      taskId,
+      runId,
+      "Scout",
+      "Scout review prep validation",
+      correctionPrompt,
+      decision,
+      validationErrors,
+    );
+    await deps.recordMissionTaskWorkflowArtifact(taskId, {
+      runId,
+      agentName: "system",
+      step: "Scout review prep fallback",
+      prompt: correctionPrompt,
+      normalizedResponse: stringifyWorkflowArtifactPayload(artifactBackedDecision),
+      validationErrors: [
+        ...validationErrors,
+        "Used server fallback delivery decision because Scout did not return the required delivery fields.",
+      ],
+    });
+    return artifactBackedDecision;
+  }
+
+  return decision;
 }
 
 export async function runMissionTaskWorkflow(
@@ -126,12 +450,17 @@ export async function runMissionTaskWorkflow(
     message: "Checking whether the ticket has enough information.",
   });
 
-  const hermesDecision = normalizeHermesIntakeDecision(await deps.sendAgentJsonMessage(
+  const hermesIntakePrompt = buildHermesIntakePrompt(context);
+  const hermesDecision = await sendWorkflowJsonStep(
+    deps,
+    taskId,
+    runId,
     "Hermes",
-    buildHermesIntakePrompt(context),
+    hermesIntakePrompt,
     "Hermes intake",
     HERMES_INTAKE_SCHEMA,
-  ));
+    normalizeHermesIntakeDecision,
+  );
 
   if (hermesDecision.action === "needs_info") {
     const commentBody = deps.ensureAgentSuffix(
@@ -163,12 +492,15 @@ export async function runMissionTaskWorkflow(
     message: "Routing the task to the right implementation agent.",
   });
 
-  let scoutDecision = normalizeScoutRoutingDecision(await deps.sendAgentJsonMessage(
-    "Scout",
-    buildScoutRoutingPrompt(hermesSummary, context),
+  let scoutRoutingPrompt = buildScoutRoutingPrompt(hermesSummary, context);
+  let scoutDecision = await runValidatedScoutRoutingStep(
+    deps,
+    taskId,
+    runId,
+    scoutRoutingPrompt,
     "Scout routing",
-    SCOUT_ROUTING_SCHEMA,
-  ));
+    context,
+  );
 
   const branchSlug = detail.task.identifier.toLowerCase();
   let workerAgentId = workerAgentIdForRoute(scoutDecision.route);
@@ -197,23 +529,28 @@ export async function runMissionTaskWorkflow(
         message: reviewFeedback ? "Addressing Scout review feedback." : `Implementing as a ${routeLabel} task.`,
       });
 
-      let candidateResult = normalizeWorkerExecutionResult(await deps.sendAgentJsonMessage(
+      const workerExecutionPrompt = buildWorkerExecutionPrompt(
+        context,
+        routeLabel,
         workerAgentId,
-        buildWorkerExecutionPrompt(
-          context,
-          routeLabel,
-          workerAgentId,
-          branchSlug,
-          scoutDecision,
-          attempt,
-          recoveryContext,
-          reviewFeedback,
-          workerExecutionContext.branch,
-          workerExecutionContext.pullRequestUrls,
-        ),
+        branchSlug,
+        scoutDecision,
+        attempt,
+        recoveryContext,
+        reviewFeedback,
+        workerExecutionContext.branch,
+        workerExecutionContext.pullRequestUrls,
+      );
+      let candidateResult = await sendWorkflowJsonStep(
+        deps,
+        taskId,
+        runId,
+        workerAgentId,
+        workerExecutionPrompt,
         `${workerAgentId} execution`,
         WORKER_EXECUTION_SCHEMA,
-      ));
+        normalizeWorkerExecutionResult,
+      );
       workerExecutionContext = mergeWorkerExecutionContext(workerExecutionContext, candidateResult);
 
       if (looksLikeMetaWorkerResult(candidateResult)) {
@@ -224,18 +561,23 @@ export async function runMissionTaskWorkflow(
           summary: candidateResult.summary,
           blockingReason: candidateResult.blockingReason ?? "",
         });
-        candidateResult = normalizeWorkerExecutionResult(await deps.sendAgentJsonMessage(
+        const workerCorrectionPrompt = buildWorkerMalformedResultPrompt(
           workerAgentId,
-          buildWorkerMalformedResultPrompt(
-            workerAgentId,
-            candidateResult,
-            context,
-            workerExecutionContext.branch,
-            workerExecutionContext.pullRequestUrls,
-          ),
+          candidateResult,
+          context,
+          workerExecutionContext.branch,
+          workerExecutionContext.pullRequestUrls,
+        );
+        candidateResult = await sendWorkflowJsonStep(
+          deps,
+          taskId,
+          runId,
+          workerAgentId,
+          workerCorrectionPrompt,
           `${workerAgentId} execution correction`,
           WORKER_EXECUTION_SCHEMA,
-        ));
+          normalizeWorkerExecutionResult,
+        );
         workerExecutionContext = mergeWorkerExecutionContext(workerExecutionContext, candidateResult);
       }
 
@@ -256,24 +598,29 @@ export async function runMissionTaskWorkflow(
       });
       deps.pushActivity("workflow-item", `${issueKey}: ${workerAgentId} reported a blocker on attempt ${attempt}.`, workerAgentId);
 
-      const blockerDecision = normalizeHermesBlockerDecision(await deps.sendAgentJsonMessage(
+      const hermesBlockerPrompt = buildHermesBlockerPrompt(
+        context,
+        attempt,
+        workerAgentId,
+        routeLabel,
+        scoutDecision,
+        candidateResult.summary,
+        blockerSummary,
+        workerExecutionContext.branch,
+        workerExecutionContext.pullRequestUrls,
+        reviewFeedback,
+        recoveryContext,
+      );
+      const blockerDecision = await sendWorkflowJsonStep(
+        deps,
+        taskId,
+        runId,
         "Hermes",
-        buildHermesBlockerPrompt(
-          context,
-          attempt,
-          workerAgentId,
-          routeLabel,
-          scoutDecision,
-          candidateResult.summary,
-          blockerSummary,
-          workerExecutionContext.branch,
-          workerExecutionContext.pullRequestUrls,
-          reviewFeedback,
-          recoveryContext,
-        ),
+        hermesBlockerPrompt,
         "Hermes blocker triage",
         HERMES_BLOCKER_SCHEMA,
-      ));
+        normalizeHermesBlockerDecision,
+      );
 
       if (blockerDecision.action === "needs_info") {
         const commentBody = deps.ensureAgentSuffix(
@@ -332,20 +679,23 @@ export async function runMissionTaskWorkflow(
         message: blockerDecision.reason,
       });
 
-      scoutDecision = normalizeScoutRoutingDecision(await deps.sendAgentJsonMessage(
-        "Scout",
-        buildScoutBlockerRecoveryPrompt(
-          context,
-          blockerDecision,
-          workerAgentId,
-          routeLabel,
-          scoutDecision,
-          blockerSummary,
-          reviewFeedback,
-        ),
+      scoutRoutingPrompt = buildScoutBlockerRecoveryPrompt(
+        context,
+        blockerDecision,
+        workerAgentId,
+        routeLabel,
+        scoutDecision,
+        blockerSummary,
+        reviewFeedback,
+      );
+      scoutDecision = await runValidatedScoutRoutingStep(
+        deps,
+        taskId,
+        runId,
+        scoutRoutingPrompt,
         "Scout blocker recovery",
-        SCOUT_ROUTING_SCHEMA,
-      ));
+        context,
+      );
 
       workerAgentId = workerAgentIdForRoute(scoutDecision.route);
       routeLabel = workerRouteLabel(scoutDecision.route);
@@ -362,25 +712,63 @@ export async function runMissionTaskWorkflow(
     ].filter(Boolean).join("\n");
 
     await deps.createAcceptedHandoff(taskId, workerAgentId, "Scout", implementationSummary);
-
-    if (workerExecutionContext.pullRequestUrls.length === 0) {
-      deps.updateTaskAutomation(taskId, {
-        runId,
-        status: "running",
-        ownerAgentName: workerAgentId,
-        route: scoutDecision.route,
-        step: "Waiting for PR sync",
-        message: "Waiting for the new PR to appear before Scout reviews it.",
-      });
-      deps.pushActivity("workflow-item", `${issueKey}: waiting for PR metadata before Scout review.`, workerAgentId);
-    }
-
     ({ detail, executionContext: workerExecutionContext } = await syncWorkerArtifactsForReview(
       taskId,
       deps.getMissionTaskDetail,
       workerExecutionContext,
+      {
+        maxAttempts: 0,
+        resolveCanonicalPullRequestUrl: deps.resolveCanonicalPullRequestUrl,
+      },
     ));
     context = buildTaskContext(detail);
+
+    deps.updateTaskAutomation(taskId, {
+      runId,
+      status: "running",
+      ownerAgentName: "Scout",
+      route: scoutDecision.route,
+      step: "Scout review prep",
+      message: "Resolving the canonical PR before implementation review.",
+    });
+
+    const scoutDeliveryPrompt = buildScoutDeliveryPrompt(
+      context,
+      workerAgentId,
+      routeLabel,
+      workerResult,
+      workerExecutionContext.branch,
+      workerExecutionContext.pullRequestUrls,
+      reviewFeedback,
+    );
+    const scoutDelivery = await runValidatedScoutDeliveryStep(
+      deps,
+      taskId,
+      runId,
+      scoutDeliveryPrompt,
+      workerAgentId,
+      routeLabel,
+      workerResult,
+      context,
+      detail.task.identifier,
+      workerExecutionContext.branch,
+      workerExecutionContext.pullRequestUrls,
+      reviewFeedback,
+    );
+
+    if (scoutDelivery.status === "delivery_required") {
+      deps.pushActivity("workflow-item", `${issueKey}: Scout requested PR delivery follow-up from ${workerAgentId}.`, "Scout");
+      reviewFeedback = scoutDelivery.deliveryInstructions || scoutDelivery.summary;
+      recoveryContext = "";
+      await deps.createAcceptedHandoff(taskId, "Scout", workerAgentId, `Delivery required: ${reviewFeedback}`);
+      skipWorkerHandoff = true;
+      continue;
+    }
+
+    workerExecutionContext = mergeWorkerExecutionContext(workerExecutionContext, {
+      branch: scoutDelivery.reviewedBranch,
+      pullRequestUrl: scoutDelivery.reviewedPullRequestUrl,
+    });
 
     deps.updateTaskAutomation(taskId, {
       runId,
@@ -391,23 +779,117 @@ export async function runMissionTaskWorkflow(
       message: "Reviewing the implementation and PR.",
     });
 
-    const scoutReview = normalizeScoutReviewDecision(await deps.sendAgentJsonMessage(
+    let scoutReviewPrompt = buildScoutReviewPrompt(
+      context,
+      workerAgentId,
+      routeLabel,
+      workerResult,
+      workerExecutionContext.branch,
+      workerExecutionContext.pullRequestUrls,
+      reviewFeedback,
+    );
+    let scoutReview = await sendWorkflowJsonStep(
+      deps,
+      taskId,
+      runId,
       "Scout",
-      buildScoutReviewPrompt(
+      scoutReviewPrompt,
+      "Scout review",
+      SCOUT_REVIEW_SCHEMA,
+      normalizeScoutReviewDecision,
+    );
+    let scoutReviewValidationErrors = validateScoutReviewDecision(
+      scoutReview,
+      detail.task.identifier,
+      workerExecutionContext.branch,
+      workerExecutionContext.pullRequestUrls,
+    );
+
+    if (scoutReviewValidationErrors.length > 0) {
+      await recordScoutReviewValidationFailure(
+        deps,
+        taskId,
+        runId,
+        scoutReviewPrompt,
+        scoutReview,
+        scoutReviewValidationErrors,
+      );
+
+      scoutReviewPrompt = buildScoutReviewCorrectionPrompt(
         context,
         workerAgentId,
         routeLabel,
         workerResult,
         workerExecutionContext.branch,
         workerExecutionContext.pullRequestUrls,
+        scoutReview,
+        scoutReviewValidationErrors,
         reviewFeedback,
-      ),
-      "Scout review",
-      SCOUT_REVIEW_SCHEMA,
-    ));
+      );
+      scoutReview = await sendWorkflowJsonStep(
+        deps,
+        taskId,
+        runId,
+        "Scout",
+        scoutReviewPrompt,
+        "Scout review correction",
+        SCOUT_REVIEW_SCHEMA,
+        normalizeScoutReviewDecision,
+      );
+      scoutReviewValidationErrors = validateScoutReviewDecision(
+        scoutReview,
+        detail.task.identifier,
+        workerExecutionContext.branch,
+        workerExecutionContext.pullRequestUrls,
+      );
+
+      if (scoutReviewValidationErrors.length > 0) {
+        await recordScoutReviewValidationFailure(
+          deps,
+          taskId,
+          runId,
+          scoutReviewPrompt,
+          scoutReview,
+          scoutReviewValidationErrors,
+        );
+        const fallbackReview = buildArtifactBackedScoutReviewDecision(
+          detail.task.identifier,
+          workerExecutionContext.branch,
+          workerResult,
+          workerExecutionContext.pullRequestUrls,
+          context,
+          scoutReview,
+        );
+        const fallbackValidationErrors = validateScoutReviewDecision(
+          fallbackReview,
+          detail.task.identifier,
+          workerExecutionContext.branch,
+          workerExecutionContext.pullRequestUrls,
+        );
+
+        await deps.recordMissionTaskWorkflowArtifact(taskId, {
+          runId,
+          agentName: "system",
+          step: "Scout review fallback",
+          prompt: scoutReviewPrompt,
+          normalizedResponse: stringifyWorkflowArtifactPayload(fallbackReview),
+          validationErrors: [
+            ...scoutReviewValidationErrors,
+            "Used server fallback review because Scout did not return the required review fields.",
+            ...fallbackValidationErrors,
+          ],
+        });
+
+        if (fallbackValidationErrors.length > 0) {
+          throw new RequestBodyError(`Scout review validation failed. ${scoutReviewValidationErrors.join(" ")}`, 502);
+        }
+
+        scoutReview = fallbackReview;
+      }
+    }
 
     await deps.addMissionTaskComment(taskId, {
-      body: deps.ensureAgentSuffix(scoutReview.linearComment, "^Scout"),
+      body: buildScoutReviewLinearComment(scoutReview),
       ...(preferredReplyParentId ? { parentCommentId: preferredReplyParentId } : {}),
     });
 

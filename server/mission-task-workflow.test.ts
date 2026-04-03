@@ -80,3 +80,35 @@ test("syncWorkerArtifactsForReview preserves known PRs without waiting", async (
     "https://github.com/AJ-Hackett-Bungy/epiczone-web/pull/571",
   ]);
 });
+
+test("syncWorkerArtifactsForReview resolves a PR directly from the branch when task metadata is stale", async () => {
+  let detailCallCount = 0;
+  let resolveCallCount = 0;
+
+  const result = await syncWorkerArtifactsForReview(
+    "task-1",
+    async () => {
+      detailCallCount += 1;
+      return buildDetail();
+    },
+    {
+      branch: "atlas/epic-653",
+      pullRequestUrls: [],
+    },
+    {
+      maxAttempts: 0,
+      delayMs: 0,
+      resolveCanonicalPullRequestUrl: async (branchName) => {
+        resolveCallCount += 1;
+        assert.equal(branchName, "atlas/epic-653");
+        return "https://github.com/AJ-Hackett-Bungy/epiczone-web/pull/571";
+      },
+    },
+  );
+
+  assert.equal(detailCallCount, 1);
+  assert.equal(resolveCallCount, 1);
+  assert.deepEqual(result.executionContext.pullRequestUrls, [
+    "https://github.com/AJ-Hackett-Bungy/epiczone-web/pull/571",
+  ]);
+});

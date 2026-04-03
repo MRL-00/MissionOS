@@ -35,6 +35,8 @@ test("buildWorkerExecutionPrompt includes Scout follow-up context for revisions"
   assert.match(prompt, /Known PR URLs: https:\/\/github.com\/example\/repo\/pull\/123/);
   assert.match(prompt, /If develop exists, you MUST branch from develop/);
   assert.match(prompt, /PR MUST target develop, not main or master/);
+  assert.match(prompt, /Return status code_complete/);
+  assert.match(prompt, /Return status delivery_complete/);
 });
 
 test("canRetryScoutReview allows bounded follow-up revisions", () => {
@@ -209,7 +211,7 @@ test("workflow prompts use SOUL/profile context instead of redefining agent iden
     "Atlas",
     "full stack",
     {
-      status: "implemented",
+      status: "delivery_complete",
       summary: "Updated the login button to the green variant.",
       branch: "atlas/epic-646",
       pullRequestUrl: "https://github.com/example/repo/pull/123",
@@ -222,6 +224,7 @@ test("workflow prompts use SOUL/profile context instead of redefining agent iden
   assert.match(intakePrompt, /SOUL\.md role/);
   assert.match(routingPrompt, /SOUL\.md role/);
   assert.match(reviewPrompt, /SOUL\.md role/);
+  assert.match(reviewPrompt, /Return the exact ticket, branch, and PR URL that you reviewed/);
   assert.doesNotMatch(intakePrompt, /You are Hermes/);
   assert.doesNotMatch(routingPrompt, /You are Scout/);
   assert.doesNotMatch(reviewPrompt, /You are Scout/);
