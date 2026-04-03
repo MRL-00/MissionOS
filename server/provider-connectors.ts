@@ -75,7 +75,7 @@ async function syncHermes(connector: ProviderConnectorSyncConfig): Promise<Provi
   }
 
   const [agents, schedules] = await Promise.all([
-    adapter.syncAgents(config),
+    (adapter.syncOrg?.(config) ?? adapter.syncAgents(config)),
     adapter.syncSchedules?.(config) ?? [],
   ]);
 

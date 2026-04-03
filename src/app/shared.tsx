@@ -3,7 +3,6 @@ import { getMissionTaskBoardStage } from "../mission/taskBoard";
 import type {
   HermesDefaults,
   MissionTask,
-  MissionTaskHandoff,
   ProviderConnector,
 } from "../mission/types";
 import type { ActivityLogEntry } from "../types";
@@ -169,15 +168,16 @@ export function taskWorkflowTone(task: MissionTask): string {
 }
 
 export function taskAutomationTone(task: MissionTask): string {
-  const status = task.automation?.status ?? "idle";
+  const status = task.execution?.status ?? "idle";
   switch (status) {
+    case "queued":
     case "running":
       return "bg-sky-500/15 text-sky-200 border-sky-400/25";
-    case "in_review":
+    case "review_ready":
       return "bg-amber-500/15 text-amber-200 border-amber-400/25";
     case "completed":
       return "bg-emerald-500/15 text-emerald-200 border-emerald-400/25";
-    case "needs_info":
+    case "blocked":
     case "failed":
       return "bg-linear-red/15 text-linear-red border-linear-red/25";
     default:
@@ -225,11 +225,11 @@ export function SectionCard(props: {
   className?: string;
 }) {
   return (
-    <section className={cx("mission-panel mission-card flex flex-col gap-3 p-3.5", props.className)}>
-      <div className="flex items-start justify-between gap-3">
+    <section className={cx("mission-panel mission-card flex flex-col gap-4 p-5", props.className)}>
+      <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <h2 className="mission-wrap text-[14px] font-medium leading-5 text-white">{props.title}</h2>
-          {props.subtitle ? <p className="mission-muted mission-wrap mt-1">{props.subtitle}</p> : null}
+          <h2 className="mission-wrap text-[15px] font-semibold leading-5 text-white">{props.title}</h2>
+          {props.subtitle ? <p className="mission-muted mission-wrap mt-1.5">{props.subtitle}</p> : null}
         </div>
         {props.action ? <div className="shrink-0">{props.action}</div> : null}
       </div>
@@ -256,7 +256,7 @@ export function MetricCard(props: {
     <article className={cx("mission-summary-card", toneClass)}>
       <div className="min-w-0 flex-1">
         <p className="mission-summary-label">{props.label}</p>
-        {props.hint ? <p className="mission-summary-hint mission-clamp-1 mission-wrap">{props.hint}</p> : null}
+        {props.hint ? <p className="mission-summary-hint mission-wrap">{props.hint}</p> : null}
       </div>
       <div className="mission-summary-value shrink-0">{props.value}</div>
     </article>
@@ -290,7 +290,7 @@ export function ActivityFeed(props: { entries: ActivityLogEntry[]; limit?: numbe
     <div className={cx("min-w-0 space-y-2", props.className)}>
       {visible.length === 0 ? (
         <div className="rounded-xl border border-dashed border-linear-line px-4 py-6 text-center text-linear-muted">
-          No activity yet. Agent messages, status changes, and handoffs will appear here in real time.
+          No activity yet. Provider run updates, status changes, and runtime events will appear here in real time.
         </div>
       ) : (
         visible.map((entry) => (
@@ -429,39 +429,6 @@ function renderInline(text: string): ReactNode[] {
   }
 
   return parts;
-}
-
-export function HandoffCard(props: {
-  handoff: MissionTaskHandoff;
-  onRespond(status: "accepted" | "declined"): Promise<void>;
-}) {
-  return (
-    <article className="mission-list-item">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <strong className="mission-wrap text-sm text-white">{props.handoff.fromAgentName} → {props.handoff.toAgentName}</strong>
-          <p className="mission-muted mt-1">{formatDateTime(props.handoff.createdAt)}</p>
-        </div>
-        <span className={cx("mission-badge border", statusTone(props.handoff.status))}>{props.handoff.status}</span>
-      </div>
-      <div className="mission-wrap mt-3">
-        <MarkdownContent text={props.handoff.note} />
-      </div>
-      {props.handoff.status === "pending" ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button className="mission-button-muted" onClick={() => props.onRespond("accepted")}>
-            Accept
-          </button>
-          <button
-            className="rounded-xl border border-linear-red/25 bg-linear-red/10 px-3 py-2 text-sm font-semibold text-linear-red transition hover:bg-linear-red/15"
-            onClick={() => props.onRespond("declined")}
-          >
-            Decline
-          </button>
-        </div>
-      ) : null}
-    </article>
-  );
 }
 
 export type { HermesDefaults };

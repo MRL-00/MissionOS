@@ -35,6 +35,12 @@ interface RawAgentStateEntry {
   ticket?: unknown;
   stage?: unknown;
   since?: unknown;
+  role?: unknown;
+  title?: unknown;
+  teamId?: unknown;
+  teamName?: unknown;
+  managerExternalId?: unknown;
+  reportsToExternalId?: unknown;
 }
 
 export interface HermesAgentStateSnapshot {
@@ -161,6 +167,16 @@ function createAgentRecord(agentId: string, entry?: RawAgentStateEntry): Provide
     provider: "hermes",
     externalId: agentId,
     name: titleizeAgentId(agentId),
+    role: typeof entry?.role === "string" && entry.role.trim() ? entry.role.trim() : undefined,
+    title: typeof entry?.title === "string" && entry.title.trim() ? entry.title.trim() : undefined,
+    teamId: typeof entry?.teamId === "string" && entry.teamId.trim() ? entry.teamId.trim() : undefined,
+    teamName: typeof entry?.teamName === "string" && entry.teamName.trim() ? entry.teamName.trim() : undefined,
+    managerExternalId: typeof entry?.managerExternalId === "string" && entry.managerExternalId.trim()
+      ? entry.managerExternalId.trim()
+      : undefined,
+    reportsToExternalId: typeof entry?.reportsToExternalId === "string" && entry.reportsToExternalId.trim()
+      ? entry.reportsToExternalId.trim()
+      : undefined,
     status,
     ...(activityStatus !== null ? { activityStatus } : {}),
     currentTicket,

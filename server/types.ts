@@ -16,9 +16,11 @@ import type {
 } from "../src/types";
 import type {
   HermesDefaults,
-  MissionTaskHandoff,
-  MissionTaskWorkflowArtifact,
+  MissionTaskExecution,
+  MissionTaskRunArtifact,
+  MissionTaskRunEvent,
   MissionProvider,
+  MissionTeamSettings,
   ProviderConnector,
 } from "../src/mission/types";
 
@@ -99,8 +101,10 @@ export interface PersistedHermesDefaults extends Omit<HermesDefaults, "tokenConf
 export interface PersistedMissionControlFile {
   connectors: PersistedMissionConnector[];
   hermesDefaults?: PersistedHermesDefaults | undefined;
-  handoffs: MissionTaskHandoff[];
-  artifacts?: MissionTaskWorkflowArtifact[] | undefined;
+  teamSettings?: MissionTeamSettings | undefined;
+  taskExecutions?: Array<MissionTaskExecution & { taskId: string }> | undefined;
+  events?: MissionTaskRunEvent[] | undefined;
+  artifacts?: MissionTaskRunArtifact[] | undefined;
 }
 
 export type ActivityEntryKind = ActivityLogEntry["kind"];

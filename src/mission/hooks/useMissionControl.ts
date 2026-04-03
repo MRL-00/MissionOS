@@ -5,19 +5,17 @@ import type {
   AgentMessage,
   HermesDefaultsUpdateRequest,
   MissionControlSnapshot,
+  MissionTeamBootstrapRequest,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
-  MissionTaskHandoff,
-  MissionTaskHandoffCreateRequest,
-  MissionTaskHandoffResponseRequest,
   MissionTaskUpdateRequest,
   ProviderConnector,
   ProviderConnectorUpdateRequest,
 } from "../types";
 import {
+  bootstrapMissionTeam,
   createMissionConnector,
   createMissionTaskComment,
-  createMissionTaskHandoff,
   deleteAgent,
   deleteMissionConnector,
   fetchActivityLog,
@@ -26,18 +24,17 @@ import {
   fetchMissionSnapshot,
   fetchMissionTaskDetail,
   registerAgent,
-  respondMissionTaskHandoff,
   sendAgentMessage,
   syncMissionConnector,
   testMissionConnector,
-  startMissionTaskWorkflow,
+  startMissionTaskRun,
   updateHermesDefaults,
   updateAgent,
   updateMissionConnector,
   updateMissionTask,
 } from "../api";
 
-export type MissionView = "mission" | "tasks" | "schedules" | "settings" | "agents";
+export type MissionView = "setup" | "team" | "work" | "runs" | "settings";
 type ConnectionState = "connecting" | "connected" | "offline";
 
 const EMPTY_SNAPSHOT: MissionControlSnapshot = {
@@ -45,6 +42,7 @@ const EMPTY_SNAPSHOT: MissionControlSnapshot = {
   hermesDefaults: {
     tokenConfigured: false,
   },
+  teamSettings: {},
   providerAgents: [],
   schedules: [],
   tasks: [],
@@ -98,7 +96,7 @@ function applyAgentEvent(previous: AgentRuntimeState[], event: AgentEvent): Agen
 }
 
 export function useMissionControl() {
-  const [activeView, setActiveView] = useState<MissionView>("mission");
+  const [activeView, setActiveView] = useState<MissionView>("setup");
   const [agents, setAgents] = useState<AgentRuntimeState[]>([]);
   const [missionSnapshot, setMissionSnapshot] = useState<MissionControlSnapshot>(EMPTY_SNAPSHOT);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -264,34 +262,9 @@ export function useMissionControl() {
     }
   }
 
-  async function createHandoff(taskId: string, input: MissionTaskHandoffCreateRequest): Promise<MissionTaskHandoff | null> {
-    const handoff = await runBusyAction(`task:${taskId}:handoff`, () => createMissionTaskHandoff(taskId, input));
-    if (handoff) {
-      const [nextMission, detail] = await Promise.all([
-        fetchMissionSnapshot(),
-        fetchMissionTaskDetail(taskId),
-      ]);
-      setMissionSnapshot(nextMission);
-      setSelectedTaskDetail(detail);
-    }
-    return handoff;
-  }
-
-  async function runTaskWorkflow(taskId: string): Promise<void> {
-    const automation = await runBusyAction(`task:${taskId}:run`, () => startMissionTaskWorkflow(taskId));
-    if (automation) {
-      const [nextMission, detail] = await Promise.all([
-        fetchMissionSnapshot(),
-        fetchMissionTaskDetail(taskId),
-      ]);
-      setMissionSnapshot(nextMission);
-      setSelectedTaskDetail(detail);
-    }
-  }
-
-  async function respondToHandoff(handoffId: string, input: MissionTaskHandoffResponseRequest, taskId: string): Promise<void> {
-    const updated = await runBusyAction(`handoff:${handoffId}`, () => respondMissionTaskHandoff(handoffId, input));
-    if (updated) {
+  async function runTask(taskId: string): Promise<void> {
+    const execution = await runBusyAction(`task:${taskId}:run`, () => startMissionTaskRun(taskId));
+    if (execution) {
       const [nextMission, detail] = await Promise.all([
         fetchMissionSnapshot(),
         fetchMissionTaskDetail(taskId),
@@ -352,6 +325,17 @@ export function useMissionControl() {
       await deleteMissionConnector(connectorId);
       const nextMission = await fetchMissionSnapshot();
       setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function bootstrapTeam(input: MissionTeamBootstrapRequest): Promise<void> {
+    await runBusyAction("team:bootstrap", async () => {
+      const result = await bootstrapMissionTeam(input);
+      setAgents(sortAgents(result.agents));
+      setMissionSnapshot(result.snapshot);
+      if (result.snapshot.teamSettings.commandAgentId) {
+        setSelectedAgentId(result.snapshot.teamSettings.commandAgentId);
+      }
     });
   }
 
@@ -438,15 +422,14 @@ export function useMissionControl() {
     removeAgent,
     saveTaskUpdate,
     addComment,
-    createHandoff,
-    runTaskWorkflow,
-    respondToHandoff,
+    runTask,
     saveConnector,
     saveHermesSharedDefaults,
     syncConnector,
     testConnectorHealth,
     addConnector,
     removeConnector,
+    bootstrapTeam,
     sendMessageToAgent,
     refreshAgentMessages,
   };

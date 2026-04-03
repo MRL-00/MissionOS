@@ -74,7 +74,7 @@ export function OrgChart({
   const [viewport, setViewport] = useState<ViewportState>({ scale: 1, x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
 
-  const trees = useMemo(() => buildHierarchy(agents), [agents]);
+  const trees = useMemo(() => buildHierarchy(agents, providerAgents), [agents, providerAgents]);
   const providerAgentsByOfficeAgentId = useMemo(() => {
     const next = new Map<string, ProviderAgentRecord>();
     providerAgents.forEach((agent) => {

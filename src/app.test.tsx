@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { App } from "./app";
 import type { ProviderConnector } from "./mission/types";
 
-function createMissionControlState(activeView: "mission" | "tasks" | "schedules" | "settings" | "agents" = "mission") {
+function createMissionControlState(activeView: "setup" | "team" | "work" | "runs" | "settings" = "setup") {
   const connectors: ProviderConnector[] = [
     {
       id: "hermes",
@@ -66,6 +66,7 @@ function createMissionControlState(activeView: "mission" | "tasks" | "schedules"
         runtimeHost: "http://192.168.1.113",
         tokenConfigured: true,
       },
+      teamSettings: {},
       providerAgents: [],
       schedules: [
         {
@@ -125,7 +126,8 @@ function createMissionControlState(activeView: "mission" | "tasks" | "schedules"
         commentCount: 0,
       },
       comments: [],
-      handoffs: [],
+      events: [],
+      artifacts: [],
     },
     activityLog: [],
     agentMessages: [],
@@ -140,13 +142,14 @@ function createMissionControlState(activeView: "mission" | "tasks" | "schedules"
     removeAgent: vi.fn(),
     saveTaskUpdate: vi.fn(),
     addComment: vi.fn(),
-    createHandoff: vi.fn(),
-    respondToHandoff: vi.fn(),
+    runTask: vi.fn(),
     saveConnector: vi.fn(),
+    saveHermesSharedDefaults: vi.fn(),
     syncConnector: vi.fn(),
     testConnectorHealth: vi.fn(),
     addConnector: vi.fn(),
     removeConnector: vi.fn(),
+    bootstrapTeam: vi.fn(),
     sendMessageToAgent: vi.fn(),
     refreshAgentMessages: vi.fn(),
   };
@@ -167,14 +170,13 @@ describe("App", () => {
     mockMissionControlState = createMissionControlState();
   });
 
-  it("renders mission control shell", async () => {
+  it("renders the setup-first shell", async () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { level: 1, name: "Mission Control" })).toBeInTheDocument();
-    expect(await screen.findByTestId("org-chart")).toBeInTheDocument();
-    expect(screen.queryByText("Office roster")).not.toBeInTheDocument();
-    expect(screen.getByText("1 cycle tasks")).toBeInTheDocument();
-    expect(screen.getByText("1 office agents")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: /AgentTeams/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Bring your runtimes online" })).toBeInTheDocument();
+    expect(screen.getByText("Start with runtimes, not org charts")).toBeInTheDocument();
+    expect(screen.getByText("Connected runtimes")).toBeInTheDocument();
   });
 
   it("renders settings view with connector config", () => {
@@ -182,17 +184,17 @@ describe("App", () => {
 
     render(<App />);
 
+    expect(screen.getByText("Advanced settings")).toBeInTheDocument();
     expect(screen.getAllByText("Hermes").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders agents view with agent list and form", () => {
-    mockMissionControlState = createMissionControlState("agents");
+  it("renders team view", () => {
+    mockMissionControlState = createMissionControlState("team");
 
     render(<App />);
 
-    expect(screen.getByText("Office agents")).toBeInTheDocument();
+    expect(screen.getByText("Turn runtimes into a visible org")).toBeInTheDocument();
+    expect(screen.getByText("Current org")).toBeInTheDocument();
     expect(screen.getAllByText("Pickle").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("button", { name: "New agent" })).toBeInTheDocument();
-    expect(screen.getByText("Register a new office agent")).toBeInTheDocument();
   });
 });

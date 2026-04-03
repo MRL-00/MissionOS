@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { AgentChatPanel, TaskDetailPanel } from "./panels";
+import { AgentChatPanel, TaskDetailPanel, TeamBootstrapPanel } from "./panels";
 
 describe("TaskDetailPanel", () => {
   it("posts threaded replies with the selected parent comment id", async () => {
@@ -40,16 +40,14 @@ describe("TaskDetailPanel", () => {
               source: "linear",
             },
           ],
-          handoffs: [],
+          events: [],
+          artifacts: [],
         }}
-        agentNames={[]}
         activityLog={[]}
         busyKey={null}
         onUpdate={vi.fn().mockResolvedValue(undefined)}
         onComment={onComment}
-        onHandoff={vi.fn().mockResolvedValue(undefined)}
         onRun={vi.fn().mockResolvedValue(undefined)}
-        onRespond={vi.fn().mockResolvedValue(undefined)}
       />,
     );
 
@@ -120,5 +118,98 @@ describe("AgentChatPanel", () => {
     expect(screen.getByText("Pickle: Run the backlog sync now.")).toBeInTheDocument();
     expect(screen.queryByText("Pickle: I checked the queue.")).not.toBeInTheDocument();
     expect(screen.getByText("I checked the queue.")).toBeInTheDocument();
+  });
+});
+
+describe("TeamBootstrapPanel", () => {
+  it("submits discovered agents with the selected command lead and parent links", async () => {
+    const onApply = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <TeamBootstrapPanel
+        connectors={[
+          {
+            id: "hermes-core",
+            provider: "hermes",
+            label: "Hermes",
+            enabled: true,
+            baseUrl: "hermes",
+            authMode: "none",
+            tokenConfigured: false,
+            capabilities: {
+              agents: true,
+              schedules: true,
+              activeWork: true,
+              launch: true,
+              subscribe: true,
+            },
+            health: {
+              provider: "hermes",
+              status: "ok",
+              checkedAt: 1,
+              activeAgents: 2,
+              schedules: 0,
+            },
+          },
+        ]}
+        providerAgents={[
+          {
+            connectorId: "hermes-core",
+            provider: "hermes",
+            externalId: "hermes",
+            name: "Hermes",
+            role: "Orchestrator",
+            status: "idle",
+            imported: false,
+          },
+          {
+            connectorId: "hermes-core",
+            provider: "hermes",
+            externalId: "atlas",
+            name: "Atlas",
+            role: "Senior Engineer",
+            reportsToExternalId: "hermes",
+            status: "idle",
+            imported: false,
+          },
+        ]}
+        officeAgents={[]}
+        teamSettings={{}}
+        busyKey={null}
+        onApply={onApply}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Command lead"), { target: { value: "hermes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save team setup" }));
+
+    await waitFor(() => {
+      expect(onApply).toHaveBeenCalledWith({
+        commandAgentId: "hermes",
+        defaultRunConnectorId: "hermes-core",
+        agents: [
+          {
+            officeAgentId: "hermes",
+            connectorId: "hermes-core",
+            externalId: "hermes",
+            name: "Hermes",
+            role: "Orchestrator",
+            emoji: undefined,
+            type: "resident",
+            parentOfficeAgentId: null,
+          },
+          {
+            officeAgentId: "atlas",
+            connectorId: "hermes-core",
+            externalId: "atlas",
+            name: "Atlas",
+            role: "Senior Engineer",
+            emoji: undefined,
+            type: "resident",
+            parentOfficeAgentId: "hermes",
+          },
+        ],
+      });
+    });
   });
 });

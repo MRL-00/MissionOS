@@ -1,3 +1,5 @@
+import type { AgentRuntimeState } from "../types";
+
 export type MissionProvider = "hermes" | "claude-local" | "codex-local";
 export type ProviderAgentActivityStatus =
   | "idle"
@@ -20,7 +22,14 @@ export interface AdapterConfigField {
 export type MissionHealthStatus = "idle" | "syncing" | "ok" | "error" | "disabled";
 export type MissionScheduleStatus = "scheduled" | "running" | "paused" | "error" | "unknown";
 export type MissionSyncState = "idle" | "syncing" | "ok" | "error";
-export type MissionHandoffStatus = "pending" | "accepted" | "declined";
+export type MissionTaskExecutionStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "blocked"
+  | "review_ready"
+  | "completed"
+  | "failed";
 
 export interface MissionProviderCapabilities {
   agents: boolean;
@@ -81,12 +90,22 @@ export interface HermesDefaultsUpdateRequest {
   token?: string | undefined;
 }
 
+export interface MissionTeamSettings {
+  commandAgentId?: string | undefined;
+  defaultRunConnectorId?: string | undefined;
+}
+
 export interface ProviderAgentRecord {
   connectorId: string;
   provider: MissionProvider;
   externalId: string;
   name: string;
   role?: string | undefined;
+  title?: string | undefined;
+  teamId?: string | undefined;
+  teamName?: string | undefined;
+  managerExternalId?: string | undefined;
+  reportsToExternalId?: string | undefined;
   officeAgentId?: string | undefined;
   status: "online" | "offline" | "working" | "idle" | "unknown";
   activityStatus?: ProviderAgentActivityStatus | null;
@@ -145,22 +164,48 @@ export interface MissionTaskCycle {
   number?: number | undefined;
 }
 
-export type MissionTaskAutomationStatus =
-  | "idle"
-  | "running"
-  | "needs_info"
-  | "in_review"
+export interface MissionTaskExecution {
+  runId: string;
+  connectorId: string;
+  status: MissionTaskExecutionStatus;
+  activeOwnerId?: string | undefined;
+  activeOwnerLabel?: string | undefined;
+  stage?: string | undefined;
+  message?: string | undefined;
+  updatedAt: number;
+}
+
+export type MissionTaskRunEventKind =
+  | "submitted"
+  | "started"
+  | "agent_state"
+  | "note"
   | "completed"
   | "failed";
 
-export interface MissionTaskAutomation {
+export interface MissionTaskRunEvent {
+  id: string;
+  taskId: string;
   runId: string;
-  status: MissionTaskAutomationStatus;
-  ownerAgentName?: string | undefined;
-  route?: "ios" | "fullstack" | undefined;
-  step?: string | undefined;
-  message?: string | undefined;
-  updatedAt: number;
+  kind: MissionTaskRunEventKind;
+  summary: string;
+  status?: MissionTaskExecutionStatus | undefined;
+  actorId?: string | undefined;
+  actorLabel?: string | undefined;
+  createdAt: number;
+}
+
+export type MissionTaskRunArtifactKind = "response" | "link" | "log" | "note";
+
+export interface MissionTaskRunArtifact {
+  id: string;
+  taskId: string;
+  runId: string;
+  kind: MissionTaskRunArtifactKind;
+  label: string;
+  body?: string | undefined;
+  url?: string | undefined;
+  createdAt: number;
 }
 
 export interface MissionTask {
@@ -187,7 +232,7 @@ export interface MissionTask {
   updatedAt: number;
   handoffCount: number;
   commentCount: number;
-  automation?: MissionTaskAutomation | undefined;
+  execution?: MissionTaskExecution | undefined;
 }
 
 export interface MissionTaskComment {
@@ -201,39 +246,11 @@ export interface MissionTaskComment {
   source: "linear" | "office";
 }
 
-export interface MissionTaskHandoff {
-  id: string;
-  taskId: string;
-  fromAgentId?: string | undefined;
-  fromAgentName: string;
-  toAgentId?: string | undefined;
-  toAgentName: string;
-  note: string;
-  status: MissionHandoffStatus;
-  createdAt: number;
-  respondedAt?: number | undefined;
-}
-
-export interface MissionTaskWorkflowArtifact {
-  id: string;
-  taskId: string;
-  runId?: string | undefined;
-  agentName: string;
-  step: string;
-  prompt: string;
-  schema?: string | undefined;
-  rawResponse?: string | undefined;
-  repairedResponse?: string | undefined;
-  normalizedResponse?: string | undefined;
-  validationErrors?: string[] | undefined;
-  createdAt: number;
-}
-
 export interface MissionTaskDetail {
   task: MissionTask;
   comments: MissionTaskComment[];
-  handoffs: MissionTaskHandoff[];
-  artifacts?: MissionTaskWorkflowArtifact[] | undefined;
+  events: MissionTaskRunEvent[];
+  artifacts: MissionTaskRunArtifact[];
 }
 
 export interface MissionTaskSnapshot {
@@ -260,12 +277,35 @@ export interface MissionRosterImportStatus {
 export interface MissionControlSnapshot {
   connectors: ProviderConnector[];
   hermesDefaults: HermesDefaults;
+  teamSettings: MissionTeamSettings;
   providerAgents: ProviderAgentRecord[];
   schedules: ProviderScheduleEntry[];
   tasks: MissionTask[];
   rosterImport: MissionRosterImportStatus;
   taskSync: MissionSyncStatus;
   syncedAt: number;
+}
+
+export interface MissionTeamBootstrapAgentInput {
+  officeAgentId: string;
+  connectorId: string;
+  externalId: string;
+  name: string;
+  role: string;
+  emoji?: string | undefined;
+  type?: "resident" | "visitor" | undefined;
+  parentOfficeAgentId?: string | null | undefined;
+}
+
+export interface MissionTeamBootstrapRequest {
+  commandAgentId?: string | undefined;
+  defaultRunConnectorId?: string | undefined;
+  agents: MissionTeamBootstrapAgentInput[];
+}
+
+export interface MissionTeamBootstrapResult {
+  agents: AgentRuntimeState[];
+  snapshot: MissionControlSnapshot;
 }
 
 export interface MissionTaskUpdateRequest {
@@ -281,18 +321,6 @@ export interface MissionTaskUpdateRequest {
 export interface MissionTaskCommentCreateRequest {
   body: string;
   parentCommentId?: string | undefined;
-}
-
-export interface MissionTaskHandoffCreateRequest {
-  fromAgentId?: string | undefined;
-  fromAgentName?: string | undefined;
-  toAgentId?: string | undefined;
-  toAgentName?: string | undefined;
-  note: string;
-}
-
-export interface MissionTaskHandoffResponseRequest {
-  status: Extract<MissionHandoffStatus, "accepted" | "declined">;
 }
 
 export interface AgentMessage {

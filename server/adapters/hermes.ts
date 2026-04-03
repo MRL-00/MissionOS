@@ -1,7 +1,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ProviderAgentRecord, ProviderScheduleEntry } from "../../src/mission/types";
-import type { AdapterConfigField, AdapterMessage, AdapterModule, AdapterTestResult } from "./types";
+import type {
+  AdapterConfigField,
+  AdapterMessage,
+  AdapterModule,
+  AdapterTaskRunRequest,
+  AdapterTaskRunResult,
+  AdapterTestResult,
+} from "./types";
 import { logDebug, summarizeText } from "../logger";
 import { RequestBodyError } from "../types";
 import {
@@ -87,6 +94,120 @@ function configCommand(config: Record<string, unknown>): string {
 
 function configSshHost(config: Record<string, unknown>): string {
   return typeof config.websocketUrl === "string" ? config.websocketUrl.trim() : "";
+}
+
+function buildTaskRunPrompt(request: AdapterTaskRunRequest): string {
+  const { task } = request;
+  const taskLines = [
+    `Task: ${task.task.identifier} — ${task.task.title}`,
+    `Team: ${task.task.team.name}`,
+    task.task.project ? `Project: ${task.task.project.name}` : "",
+    task.task.cycle ? `Cycle: ${task.task.cycle.name}` : "",
+    task.task.assignee ? `Linear assignee: ${task.task.assignee.name}` : "",
+    `Priority: ${task.task.priority}`,
+    task.task.state?.name ? `Current state: ${task.task.state.name}` : "",
+    task.task.gitBranchName ? `Known branch: ${task.task.gitBranchName}` : "",
+    task.task.pullRequestUrls?.length ? `Known PR URLs: ${task.task.pullRequestUrls.join(", ")}` : "",
+  ].filter(Boolean);
+
+  const comments = task.comments
+    .slice(-8)
+    .map((comment) => `- ${comment.authorName}: ${comment.body.replace(/\s+/g, " ").trim()}`);
+
+  return [
+    "You are the provider orchestrator for Mission Control.",
+    "Own all routing, delegation, review, and sub-agent coordination behind the gateway boundary.",
+    "Do not ask Mission Control to decide which internal agent should work on this.",
+    "Work from the task context below and handle the implementation flow inside Hermes.",
+    "",
+    ...taskLines,
+    "",
+    "Description:",
+    task.task.description?.trim() || "No description provided.",
+    "",
+    comments.length > 0 ? "Recent Linear comments:" : "",
+    ...comments,
+  ].filter(Boolean).join("\n");
+}
+
+async function sendHermesQuery(
+  command: string,
+  sshHost: string,
+  message: string,
+): Promise<{ response: AdapterMessage | null; sessionId?: string | undefined }> {
+  const args = ["chat", "-q", message, "-Q", "--yolo", "--source", "office"];
+  logDebug("hermes", "Sending message via Hermes CLI", {
+    sshHost: sshHost || "local",
+    command,
+    messagePreview: summarizeText(message),
+  });
+
+  const result = await runHermesCli(command, args, sshHost, 120_000);
+  const sessionId = extractSessionId(result.stdout) ?? extractSessionId(result.stderr) ?? undefined;
+  logDebug("hermes", "Hermes CLI send completed", {
+    sshHost: sshHost || "local",
+    command,
+    ok: result.ok,
+    sessionId: sessionId ?? "",
+    stdoutLength: result.stdout.length,
+    stderr: summarizeText(result.stderr),
+  });
+  const exportedAssistantMessage = await resolveAssistantMessageFromSession(command, sshHost, sessionId);
+
+  if (exportedAssistantMessage) {
+    const httpError = extractHermesHttpError(exportedAssistantMessage.content);
+    if (httpError) {
+      throw new RequestBodyError(
+        `Hermes CLI request failed with HTTP ${httpError.statusCode}: ${httpError.detail}`,
+        httpError.statusCode,
+      );
+    }
+    return { response: exportedAssistantMessage, sessionId };
+  }
+
+  const content = stripHermesChromeFromOutput(result.stdout);
+  const httpError = extractHermesHttpError(content) ?? extractHermesHttpError(result.stderr);
+
+  if (httpError) {
+    throw new RequestBodyError(
+      `Hermes CLI request failed with HTTP ${httpError.statusCode}: ${httpError.detail}`,
+      httpError.statusCode,
+    );
+  }
+
+  if (content) {
+    return {
+      response: {
+        id: `sent-${Date.now()}`,
+        role: "assistant",
+        content,
+        timestamp: Date.now(),
+      },
+      sessionId,
+    };
+  }
+
+  if (result.stderr) {
+    return {
+      response: {
+        id: `error-${Date.now()}`,
+        role: "system",
+        content: `Hermes error: ${result.stderr.slice(0, 500)}`,
+        timestamp: Date.now(),
+      },
+      sessionId,
+    };
+  }
+
+  return {
+    response: {
+      id: `error-${Date.now()}`,
+      role: "system",
+      content: "Hermes returned no output.",
+      timestamp: Date.now(),
+    },
+    sessionId,
+  };
 }
 
 /**
@@ -850,6 +971,10 @@ export const hermesAdapter: AdapterModule = {
     return fileSnapshot.agents;
   },
 
+  async syncOrg(config): Promise<ProviderAgentRecord[]> {
+    return this.syncAgents(config);
+  },
+
   async syncSchedules(config): Promise<ProviderScheduleEntry[]> {
     const command = configCommand(config);
     const sshHost = configSshHost(config);
@@ -905,80 +1030,52 @@ export const hermesAdapter: AdapterModule = {
   async sendMessage(config, _externalAgentId, message): Promise<AdapterMessage | null> {
     const command = configCommand(config);
     const sshHost = configSshHost(config);
+    const result = await sendHermesQuery(command, sshHost, message);
+    return result.response;
+  },
 
-    // hermes chat -q "message" -Q --yolo --source office
-    //   -q QUERY     = single query, non-interactive
-    //   -Q           = quiet/programmatic output (no banner, spinner, tool previews)
-    //   --yolo       = bypass approval prompts
-    //   --source     = tag so it doesn't pollute user session lists
-    //
-    // NOTE: --continue is a TOP-LEVEL hermes flag, not a chat flag.
-    // To continue a session, use: hermes --continue <name> chat -q "msg"
-    // For now we create fresh sessions per message. To resume, we'd need
-    // the session name/id from a previous send.
-    const args = ["chat", "-q", message, "-Q", "--yolo", "--source", "office"];
-    logDebug("hermes", "Sending message via Hermes CLI", {
-      sshHost: sshHost || "local",
-      command,
-      messagePreview: summarizeText(message),
-    });
-
-    const result = await runHermesCli(command, args, sshHost, 120_000);
-    const sessionId = extractSessionId(result.stdout) ?? extractSessionId(result.stderr);
-    logDebug("hermes", "Hermes CLI send completed", {
-      sshHost: sshHost || "local",
-      command,
-      ok: result.ok,
-      sessionId: sessionId ?? "",
-      stdoutLength: result.stdout.length,
-      stderr: summarizeText(result.stderr),
-    });
-    const exportedAssistantMessage = await resolveAssistantMessageFromSession(command, sshHost, sessionId);
-
-    if (exportedAssistantMessage) {
-      const httpError = extractHermesHttpError(exportedAssistantMessage.content);
-      if (httpError) {
-        throw new RequestBodyError(
-          `Hermes CLI request failed with HTTP ${httpError.statusCode}: ${httpError.detail}`,
-          httpError.statusCode,
-        );
-      }
-      return exportedAssistantMessage;
-    }
-
-    const content = stripHermesChromeFromOutput(result.stdout);
-    const httpError = extractHermesHttpError(content) ?? extractHermesHttpError(result.stderr);
-
-    if (httpError) {
-      throw new RequestBodyError(
-        `Hermes CLI request failed with HTTP ${httpError.statusCode}: ${httpError.detail}`,
-        httpError.statusCode,
-      );
-    }
-
-    if (content) {
-      return {
-        id: `sent-${Date.now()}`,
-        role: "assistant",
-        content,
-        timestamp: Date.now(),
-      };
-    }
-
-    if (result.stderr) {
-      return {
-        id: `error-${Date.now()}`,
-        role: "system",
-        content: `Hermes error: ${result.stderr.slice(0, 500)}`,
-        timestamp: Date.now(),
-      };
-    }
+  async startTaskRun(config, request): Promise<AdapterTaskRunResult> {
+    const command = configCommand(config);
+    const sshHost = configSshHost(config);
+    const prompt = buildTaskRunPrompt(request);
+    const startedAt = Date.now();
+    const { response, sessionId } = await sendHermesQuery(command, sshHost, prompt);
+    const summary = response?.content?.trim() || "Hermes completed the task run.";
 
     return {
-      id: `error-${Date.now()}`,
-      role: "system",
-      content: "Hermes returned no output.",
-      timestamp: Date.now(),
+      runId: sessionId ?? `hermes-run-${startedAt}`,
+      status: response?.role === "system" ? "failed" : "completed",
+      activeOwnerId: "hermes",
+      activeOwnerLabel: "Hermes",
+      stage: response?.role === "system" ? "Failed" : "Completed",
+      message: summary,
+      ...(sessionId ? { sessionId } : {}),
+      events: [
+        {
+          kind: "submitted",
+          summary: `Submitted ${request.task.task.identifier} to Hermes orchestration.`,
+          status: "queued",
+          actorId: "hermes",
+          actorLabel: "Hermes",
+          createdAt: startedAt,
+        },
+        {
+          kind: response?.role === "system" ? "failed" : "completed",
+          summary,
+          status: response?.role === "system" ? "failed" : "completed",
+          actorId: "hermes",
+          actorLabel: "Hermes",
+          createdAt: Date.now(),
+        },
+      ],
+      artifacts: response?.content?.trim()
+        ? [{
+            kind: "response",
+            label: "Hermes response",
+            body: response.content.trim(),
+            createdAt: Date.now(),
+          }]
+        : [],
     };
   },
 };

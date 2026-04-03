@@ -1,3 +1,4 @@
+import path from "path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -10,6 +11,11 @@ function formatBuildDate(date: Date): string {
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   define: {
     __BUILD_DATE__: JSON.stringify(formatBuildDate(new Date())),
   },

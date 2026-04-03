@@ -2,7 +2,6 @@ import type {
   MissionTask,
   MissionTaskComment,
   MissionTaskDetail,
-  MissionTaskHandoff,
   MissionTaskSnapshot,
   MissionTaskUpdateRequest,
 } from "../src/mission/types";
@@ -112,8 +111,7 @@ function parseTimestamp(value: string | number | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
-function missionTaskFromIssue(issue: LinearIssueNode, handoffs: MissionTaskHandoff[]): MissionTask {
-  const taskHandoffs = handoffs.filter((handoff) => handoff.taskId === issue.id);
+function missionTaskFromIssue(issue: LinearIssueNode): MissionTask {
   const comments = issue.comments?.nodes ?? [];
   const pullRequestUrls = Array.from(new Set(
     (issue.attachments?.nodes ?? [])
@@ -171,7 +169,7 @@ function missionTaskFromIssue(issue: LinearIssueNode, handoffs: MissionTaskHando
     dueDate: issue.dueDate ?? undefined,
     createdAt: parseTimestamp(issue.createdAt),
     updatedAt: parseTimestamp(issue.updatedAt),
-    handoffCount: taskHandoffs.length,
+    handoffCount: 0,
     commentCount: comments.length,
   };
 }
@@ -339,7 +337,7 @@ async function fetchActiveLinearCycles(): Promise<LinearCycleNode[]> {
   return (data.cycles.nodes ?? []).filter((cycle): cycle is LinearCycleNode => Boolean(cycle?.id));
 }
 
-export async function syncLinearTasks(handoffs: MissionTaskHandoff[]): Promise<MissionTaskSnapshot> {
+export async function syncLinearTasks(): Promise<MissionTaskSnapshot> {
   if (!LINEAR_API_KEY) {
     return {
       tasks: [],
@@ -404,7 +402,7 @@ export async function syncLinearTasks(handoffs: MissionTaskHandoff[]): Promise<M
       name: issue.state?.name ?? "",
       type: issue.state?.type ?? undefined,
     }))
-    .map((issue) => missionTaskFromIssue(issue, handoffs))
+    .map((issue) => missionTaskFromIssue(issue))
     .sort((left, right) => right.updatedAt - left.updatedAt);
 
   return {
@@ -415,7 +413,7 @@ export async function syncLinearTasks(handoffs: MissionTaskHandoff[]): Promise<M
   };
 }
 
-export async function fetchLinearTaskDetail(taskId: string, handoffs: MissionTaskHandoff[]): Promise<MissionTaskDetail> {
+export async function fetchLinearTaskDetail(taskId: string): Promise<MissionTaskDetail> {
   const variables = { id: taskId };
   let data: { issue: LinearIssueNode | null };
 
@@ -474,11 +472,10 @@ export async function fetchLinearTaskDetail(taskId: string, handoffs: MissionTas
   }
 
   return {
-    task: missionTaskFromIssue(data.issue, handoffs),
+    task: missionTaskFromIssue(data.issue),
     comments: missionCommentsFromIssue(data.issue),
-    handoffs: handoffs
-      .filter((handoff) => handoff.taskId === taskId)
-      .sort((left, right) => right.createdAt - left.createdAt),
+    events: [],
+    artifacts: [],
   };
 }
 
@@ -520,7 +517,6 @@ async function resolveStateId(taskId: string, input: MissionTaskUpdateRequest): 
 export async function updateLinearTask(
   taskId: string,
   input: MissionTaskUpdateRequest,
-  handoffs: MissionTaskHandoff[],
 ): Promise<MissionTask> {
   const stateId = await resolveStateId(taskId, input);
   await linearGraphQl<{ issueUpdate: { success: boolean } }>(
@@ -542,7 +538,7 @@ export async function updateLinearTask(
     },
   );
 
-  const detail = await fetchLinearTaskDetail(taskId, handoffs);
+  const detail = await fetchLinearTaskDetail(taskId);
   return detail.task;
 }
 

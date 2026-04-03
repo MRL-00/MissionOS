@@ -58,9 +58,9 @@ import {
 } from "./workflow";
 import {
   addMissionTaskComment,
+  bootstrapMissionTeam,
   configureMissionControlRuntime,
   createMissionConnector,
-  createMissionTaskHandoff,
   deleteMissionConnector,
   fetchAgentMessages,
   getMissionControlSnapshot,
@@ -68,17 +68,15 @@ import {
   isHermesDefaultsUpdateRequest,
   isConnectorCreateRequest,
   isMissionTaskCommentCreateRequest,
-  isMissionTaskHandoffCreateRequest,
-  isMissionTaskHandoffResponseRequest,
+  isMissionTeamBootstrapRequest,
   isMissionTaskUpdateRequest,
   isProviderConnectorUpdateRequest,
   listMissionConnectors,
   listMissionSchedules,
   listMissionTasks,
   listProviderAgents,
-  respondMissionTaskHandoff,
   sendAgentMessage,
-  startMissionTaskWorkflow,
+  startMissionTaskRun,
   startMissionControl,
   syncMissionConnector,
   testMissionConnector,
@@ -266,6 +264,16 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
+    if (method === "POST" && url.pathname === "/api/mission/team/bootstrap") {
+      const body = await readJson<unknown>(request);
+      if (!isMissionTeamBootstrapRequest(body)) {
+        throw new RequestBodyError("Invalid mission team bootstrap payload");
+      }
+      const result = await bootstrapMissionTeam(body);
+      sendJson(response, 200, result);
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/api/mission/tasks") {
       sendJson(response, 200, { tasks: listMissionTasks() });
       return;
@@ -349,37 +357,11 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
-    const missionTaskHandoffMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/tasks\/([^/]+)\/handoffs$/) : null;
-    if (missionTaskHandoffMatch) {
-      const taskId = decodeURIComponent(missionTaskHandoffMatch[1] ?? "");
-      const body = await readJson<unknown>(request);
-      if (!isMissionTaskHandoffCreateRequest(body)) {
-        throw new RequestBodyError("Invalid mission handoff payload");
-      }
-      const handoff = await createMissionTaskHandoff(taskId, body);
-      sendJson(response, 201, { handoff });
-      return;
-    }
-
     const missionTaskRunMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/tasks\/([^/]+)\/run$/) : null;
     if (missionTaskRunMatch) {
       const taskId = decodeURIComponent(missionTaskRunMatch[1] ?? "");
-      const automation = startMissionTaskWorkflow(taskId);
-      sendJson(response, 202, { ok: true, automation });
-      return;
-    }
-
-    const missionHandoffResponseMatch = (method === "PATCH" || method === "POST")
-      ? url.pathname.match(/^\/api\/mission\/handoffs\/([^/]+)$/)
-      : null;
-    if (missionHandoffResponseMatch && (method === "PATCH" || method === "POST")) {
-      const handoffId = decodeURIComponent(missionHandoffResponseMatch[1] ?? "");
-      const body = await readJson<unknown>(request);
-      if (!isMissionTaskHandoffResponseRequest(body)) {
-        throw new RequestBodyError("Invalid mission handoff response payload");
-      }
-      const handoff = await respondMissionTaskHandoff(handoffId, body);
-      sendJson(response, 200, { handoff });
+      const execution = startMissionTaskRun(taskId);
+      sendJson(response, 202, { ok: true, execution });
       return;
     }
 

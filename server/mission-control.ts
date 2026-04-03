@@ -1,6 +1,4 @@
-import { execFile } from "node:child_process";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { promisify } from "node:util";
 import path from "node:path";
 import {
   HERMES_COMMAND,
@@ -18,7 +16,7 @@ import {
   type PersistedMissionConnector,
   type PersistedMissionControlFile,
 } from "./types";
-import type { ServerMessage } from "../src/types";
+import type { AgentBackendProvider, AgentRegistration, AgentRuntimeState, ServerMessage } from "../src/types";
 import type {
   HermesDefaults,
   HermesDefaultsUpdateRequest,
@@ -27,14 +25,15 @@ import type {
   MissionRosterImportStatus,
   MissionSyncStatus,
   MissionTask,
-  MissionTaskAutomation,
-  MissionTaskAutomationStatus,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
-  MissionTaskHandoff,
-  MissionTaskHandoffCreateRequest,
-  MissionTaskHandoffResponseRequest,
-  MissionTaskWorkflowArtifact,
+  MissionTaskExecution,
+  MissionTaskRunArtifact,
+  MissionTaskRunEvent,
+  MissionTeamBootstrapAgentInput,
+  MissionTeamBootstrapRequest,
+  MissionTeamBootstrapResult,
+  MissionTeamSettings,
   MissionTaskUpdateRequest,
   ProviderAgentRecord,
   ProviderConnector,
@@ -44,7 +43,7 @@ import type {
 } from "../src/mission/types";
 import { ensureDataDir } from "./auth/storage";
 import { pushActivity } from "./activity";
-import { agentStates, applyEvent } from "./agents";
+import { agentStates, applyEvent, getOrderedStates, upsertRegistration } from "./agents";
 import {
   createAgentStateWatcher,
   DEFAULT_HERMES_AGENT_STATE_FILE,
@@ -63,26 +62,10 @@ import {
   syncLinearTasks,
   updateLinearTask,
 } from "./linear-service";
-import { logDebug, logWarn } from "./logger";
-import {
-  buildWorkerExecutionPrompt,
-  buildWorkerMalformedResultPrompt,
-  canRetryScoutReview,
-  detectAgentTransportIssue,
-  developBranchPolicyInstructions,
-  isRetryableAgentTransportError,
-  looksLikeMetaWorkerResult,
-  mergeWorkerExecutionContext,
-  parseAgentJson,
-  workerExecutionContextFromTask,
-  type WorkerRoute,
-} from "./mission-workflow";
-import { runMissionTaskWorkflow as executeMissionTaskWorkflow } from "./mission-task-workflow";
+import { logDebug } from "./logger";
 import { syncProviderConnector } from "./provider-connectors";
 import { getAdapter, initializeAdapters } from "./adapters/registry";
-
-const execFileAsync = promisify(execFile);
-import type { AdapterMessage, AdapterType } from "./adapters/types";
+import type { AdapterMessage, AdapterTaskRunArtifact, AdapterTaskRunEvent, AdapterType } from "./adapters/types";
 import { generateId } from "./utils";
 import { isProviderAgentActivelyExecuting } from "../src/mission/providerAgents";
 
@@ -104,6 +87,12 @@ interface HermesConnectorRuntime {
   watcher: AgentStateWatcherHandle | null;
   workingStartTimes: Map<string, number>;
 }
+
+const CONNECTOR_PROVIDER_TO_BACKEND_PROVIDER: Record<MissionProvider, AgentBackendProvider> = {
+  hermes: "hermes",
+  "claude-local": "claude",
+  "codex-local": "codex",
+};
 
 const connectorInstances = new Map<string, ProviderConnectorState>();
 const connectorSyncs = new Map<string, Promise<ProviderConnector>>();
@@ -128,27 +117,19 @@ let rosterImport: MissionRosterImportStatus = {
   staged: 0,
   updatedAt: Date.now(),
 };
-let taskHandoffs: MissionTaskHandoff[] = [];
-let taskArtifacts: MissionTaskWorkflowArtifact[] = [];
-const taskAutomationStates = new Map<string, MissionTaskAutomation>();
-const runningTaskAutomations = new Map<string, Promise<void>>();
-const optimisticTaskAgentChains = new Map<string, string[]>();
-const optimisticAgentTaskLabels = new Map<string, Map<string, string>>();
+let taskRunEvents: MissionTaskRunEvent[] = [];
+let taskRunArtifacts: MissionTaskRunArtifact[] = [];
+const taskExecutions = new Map<string, MissionTaskExecution>();
+const runningTaskExecutions = new Map<string, Promise<void>>();
+const taskRunSessions = new Map<string, { taskId: string; runId: string; connectorId: string }>();
+const taskRunIdsToSessions = new Map<string, Set<string>>();
 let hermesDefaults: HermesDefaultsState = {
   sshHost: HERMES_WS_URL || undefined,
   runtimeHost: HERMES_RUNTIME_URL || HERMES_URL || undefined,
   token: HERMES_TOKEN.trim() || undefined,
   tokenConfigured: HERMES_TOKEN_CONFIGURED,
 };
-
-const MAX_AGENT_JSON_MESSAGE_ATTEMPTS = 3;
-const AGENT_JSON_MESSAGE_RETRY_DELAY_MS = 1_500;
-
-interface AgentJsonExchange<T> {
-  parsed: T;
-  rawContent: string;
-  repairedContent?: string | undefined;
-}
+let teamSettings: MissionTeamSettings = {};
 
 function publicHermesDefaultsShape(): HermesDefaults {
   return {
@@ -442,49 +423,77 @@ function isPersistedMissionConnector(value: unknown): value is PersistedMissionC
     && (value.lastSyncAt === undefined || typeof value.lastSyncAt === "number");
 }
 
-function isMissionTaskHandoff(value: unknown): value is MissionTaskHandoff {
+function isMissionTaskExecution(value: unknown): value is MissionTaskExecution {
+  return isRecord(value)
+    && typeof value.runId === "string"
+    && typeof value.connectorId === "string"
+    && typeof value.updatedAt === "number"
+    && (value.status === "idle"
+      || value.status === "queued"
+      || value.status === "running"
+      || value.status === "blocked"
+      || value.status === "review_ready"
+      || value.status === "completed"
+      || value.status === "failed")
+    && (value.activeOwnerId === undefined || typeof value.activeOwnerId === "string")
+    && (value.activeOwnerLabel === undefined || typeof value.activeOwnerLabel === "string")
+    && (value.stage === undefined || typeof value.stage === "string")
+    && (value.message === undefined || typeof value.message === "string");
+}
+
+function isPersistedTaskExecution(value: unknown): value is MissionTaskExecution & { taskId: string } {
+  return isMissionTaskExecution(value) && isRecord(value) && typeof value.taskId === "string";
+}
+
+function isMissionTaskRunEvent(value: unknown): value is MissionTaskRunEvent {
   return isRecord(value)
     && typeof value.id === "string"
     && typeof value.taskId === "string"
-    && typeof value.fromAgentName === "string"
-    && typeof value.toAgentName === "string"
-    && typeof value.note === "string"
-    && (value.status === "pending" || value.status === "accepted" || value.status === "declined")
+    && typeof value.runId === "string"
+    && typeof value.summary === "string"
     && typeof value.createdAt === "number"
-    && (value.fromAgentId === undefined || typeof value.fromAgentId === "string")
-    && (value.toAgentId === undefined || typeof value.toAgentId === "string")
-    && (value.respondedAt === undefined || typeof value.respondedAt === "number");
+    && (value.kind === "submitted"
+      || value.kind === "started"
+      || value.kind === "agent_state"
+      || value.kind === "note"
+      || value.kind === "completed"
+      || value.kind === "failed")
+    && (value.status === undefined
+      || value.status === "idle"
+      || value.status === "queued"
+      || value.status === "running"
+      || value.status === "blocked"
+      || value.status === "review_ready"
+      || value.status === "completed"
+      || value.status === "failed")
+    && (value.actorId === undefined || typeof value.actorId === "string")
+    && (value.actorLabel === undefined || typeof value.actorLabel === "string");
 }
 
-function isMissionTaskWorkflowArtifact(value: unknown): value is MissionTaskWorkflowArtifact {
+function isMissionTaskRunArtifact(value: unknown): value is MissionTaskRunArtifact {
   return isRecord(value)
     && typeof value.id === "string"
     && typeof value.taskId === "string"
-    && typeof value.agentName === "string"
-    && typeof value.step === "string"
-    && typeof value.prompt === "string"
+    && typeof value.runId === "string"
+    && typeof value.label === "string"
     && typeof value.createdAt === "number"
-    && (value.runId === undefined || typeof value.runId === "string")
-    && (value.schema === undefined || typeof value.schema === "string")
-    && (value.rawResponse === undefined || typeof value.rawResponse === "string")
-    && (value.repairedResponse === undefined || typeof value.repairedResponse === "string")
-    && (value.normalizedResponse === undefined || typeof value.normalizedResponse === "string")
-    && (value.validationErrors === undefined || (Array.isArray(value.validationErrors) && value.validationErrors.every((entry) => typeof entry === "string")));
+    && (value.kind === "response" || value.kind === "link" || value.kind === "log" || value.kind === "note")
+    && (value.body === undefined || typeof value.body === "string")
+    && (value.url === undefined || typeof value.url === "string");
 }
 
-function syncTaskCounts(taskId: string): void {
-  const nextCount = taskHandoffs.filter((handoff) => handoff.taskId === taskId).length;
-  taskSnapshot = taskSnapshot.map((task) => (task.id === taskId ? { ...task, handoffCount: nextCount } : task));
+function taskEventsForTask(taskId: string): MissionTaskRunEvent[] {
+  return taskRunEvents
+    .filter((event) => event.taskId === taskId)
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .map((event) => ({ ...event }));
 }
 
-function taskArtifactsForTask(taskId: string): MissionTaskWorkflowArtifact[] {
-  return taskArtifacts
+function taskArtifactsForTask(taskId: string): MissionTaskRunArtifact[] {
+  return taskRunArtifacts
     .filter((artifact) => artifact.taskId === taskId)
     .sort((left, right) => right.createdAt - left.createdAt)
-    .map((artifact) => ({
-      ...artifact,
-      validationErrors: artifact.validationErrors ? [...artifact.validationErrors] : undefined,
-    }));
+    .map((artifact) => ({ ...artifact }));
 }
 
 function linkedOfficeAgent(connectorId: string, externalId: string): string | undefined {
@@ -812,7 +821,7 @@ function applyHermesRuntimeEvent(connectorId: string, event: HermesRuntimeAgentS
   }
 
   const eventAgentId = normalizeHermesRuntimeAgentId(event.agentId);
-  if (!eventAgentId || connectorRuntimeAgentId(connector) !== eventAgentId) {
+  if (!eventAgentId) {
     return;
   }
 
@@ -850,28 +859,65 @@ function applyHermesRuntimeEvent(connectorId: string, event: HermesRuntimeAgentS
   if (event.status === "working") {
     runtime.workingStartTimes.set(eventAgentId, Date.now());
     commitHermesRuntimeAgent(connectorId, connector, runtime, nextAgent);
-    return;
-  }
-
-  // For idle events, ensure the "working" state was visible for a minimum
-  // duration so the user can actually see the blue glow before it disappears.
-  const workingStartedAt = runtime.workingStartTimes.get(eventAgentId);
-  runtime.workingStartTimes.delete(eventAgentId);
-  const elapsed = workingStartedAt != null ? Date.now() - workingStartedAt : HERMES_MIN_WORKING_VISIBLE_MS;
-
-  if (elapsed >= HERMES_MIN_WORKING_VISIBLE_MS) {
-    commitHermesRuntimeAgent(connectorId, connector, runtime, nextAgent);
-    return;
-  }
-
-  const delay = HERMES_MIN_WORKING_VISIBLE_MS - elapsed;
-  const timer = setTimeout(() => {
-    runtime.deferredIdleTimers.delete(eventAgentId);
+  } else {
+    const workingStartedAt = runtime.workingStartTimes.get(eventAgentId);
     runtime.workingStartTimes.delete(eventAgentId);
-    commitHermesRuntimeAgent(connectorId, connector, runtime, nextAgent);
-  }, delay);
-  timer.unref?.();
-  runtime.deferredIdleTimers.set(eventAgentId, timer);
+    const elapsed = workingStartedAt != null ? Date.now() - workingStartedAt : HERMES_MIN_WORKING_VISIBLE_MS;
+
+    if (elapsed >= HERMES_MIN_WORKING_VISIBLE_MS) {
+      commitHermesRuntimeAgent(connectorId, connector, runtime, nextAgent);
+    } else {
+      const delay = HERMES_MIN_WORKING_VISIBLE_MS - elapsed;
+      const timer = setTimeout(() => {
+        runtime.deferredIdleTimers.delete(eventAgentId);
+        runtime.workingStartTimes.delete(eventAgentId);
+        commitHermesRuntimeAgent(connectorId, connector, runtime, nextAgent);
+      }, delay);
+      timer.unref?.();
+      runtime.deferredIdleTimers.set(eventAgentId, timer);
+    }
+  }
+
+  const sessionKey = event.sessionId?.trim() || event.sessionKey?.trim() || "";
+  if (!sessionKey) {
+    return;
+  }
+
+  const trackedRun = taskRunSessions.get(sessionKey);
+  if (!trackedRun) {
+    return;
+  }
+
+  const actorId = nextAgent.officeAgentId ?? eventAgentId;
+  const actorLabel = nextAgent.name;
+  const eventStatus = event.status === "working" ? "running" : "running";
+  const summary = event.status === "working"
+    ? `${actorLabel} started work in Hermes.`
+    : `${actorLabel} returned to idle in Hermes.`;
+  taskRunEvents = [
+    {
+      id: generateId(),
+      taskId: trackedRun.taskId,
+      runId: trackedRun.runId,
+      kind: "agent_state",
+      summary,
+      status: eventStatus,
+      actorId,
+      actorLabel,
+      createdAt: Date.now(),
+    },
+    ...taskRunEvents,
+  ];
+  upsertTaskExecution(trackedRun.taskId, {
+    runId: trackedRun.runId,
+    connectorId,
+    status: "running",
+    activeOwnerId: actorId,
+    activeOwnerLabel: actorLabel,
+    stage: event.status === "working" ? "Running" : "Waiting",
+    message: preview ?? undefined,
+  });
+  void queuePersistMissionControl();
 }
 
 function markHermesRuntimeConnected(connectorId: string): void {
@@ -1012,42 +1058,18 @@ function markConnectorRuntimeError(connectorId: string, message: string): void {
 }
 
 function publicTaskShape(task: MissionTask): MissionTask {
-  const automation = taskAutomationStates.get(task.id);
-  if (!automation) {
+  const execution = taskExecutions.get(task.id);
+  if (!execution) {
     return task;
   }
   return {
     ...task,
-    automation: { ...automation },
+    execution: { ...execution },
   };
 }
 
 function taskById(taskId: string): MissionTask | undefined {
   return taskSnapshot.find((task) => task.id === taskId);
-}
-
-function taskAutomationLabel(taskId: string, step?: string): string {
-  const task = taskById(taskId);
-  const prefix = task?.identifier ?? taskId;
-  return step?.trim() ? `${prefix} · ${step.trim()}` : prefix;
-}
-
-function agentParentChain(agentId: string): string[] {
-  const chain: string[] = [];
-  const seen = new Set<string>();
-  let currentId: string | undefined = agentId;
-
-  while (currentId && !seen.has(currentId)) {
-    seen.add(currentId);
-    const state = agentStates.get(currentId);
-    if (!state) {
-      break;
-    }
-    chain.unshift(state.id);
-    currentId = state.parentAgentId ?? undefined;
-  }
-
-  return chain;
 }
 
 function providerStateForOfficeAgent(agentId: string): ProviderAgentRecord | null {
@@ -1067,30 +1089,17 @@ function providerStateForOfficeAgent(agentId: string): ProviderAgentRecord | nul
   }) ?? null;
 }
 
-function optimisticTaskLabelForAgent(agentId: string): string | null {
-  const entries = optimisticAgentTaskLabels.get(agentId);
-  if (!entries || entries.size === 0) {
-    return null;
-  }
-  const values = Array.from(entries.values());
-  return values[values.length - 1] ?? null;
-}
-
 function syncOfficeAgentRuntimeState(agentId: string, providerState?: ProviderAgentRecord | null): void {
   const state = agentStates.get(agentId);
   if (!state) {
     return;
   }
 
-  const optimisticLabel = optimisticTaskLabelForAgent(agentId);
   const linkedProviderState = providerState ?? providerStateForOfficeAgent(agentId);
-  const nextStatus = optimisticLabel
+  const nextStatus = linkedProviderState && isProviderAgentActivelyExecuting(linkedProviderState)
     ? "working"
-    : linkedProviderState && isProviderAgentActivelyExecuting(linkedProviderState)
-      ? "working"
-      : "idle";
-  const nextTask = optimisticLabel
-    ?? linkedProviderState?.taskStage
+    : "idle";
+  const nextTask = linkedProviderState?.taskStage
     ?? linkedProviderState?.task
     ?? linkedProviderState?.currentTicket
     ?? "";
@@ -1108,220 +1117,39 @@ function syncOfficeAgentRuntimeState(agentId: string, providerState?: ProviderAg
   });
 }
 
-function reconcileTaskAgentChain(taskId: string, nextChain: string[], label: string): void {
-  const previousChain = optimisticTaskAgentChains.get(taskId) ?? [];
-  const touched = new Set<string>([...previousChain, ...nextChain]);
-
-  previousChain.forEach((agentId) => {
-    const labels = optimisticAgentTaskLabels.get(agentId);
-    if (!labels) {
-      return;
-    }
-    labels.delete(taskId);
-    if (labels.size === 0) {
-      optimisticAgentTaskLabels.delete(agentId);
-    }
-  });
-
-  if (nextChain.length > 0) {
-    optimisticTaskAgentChains.set(taskId, nextChain);
-    nextChain.forEach((agentId) => {
-      const labels = optimisticAgentTaskLabels.get(agentId) ?? new Map<string, string>();
-      labels.set(taskId, label);
-      optimisticAgentTaskLabels.set(agentId, labels);
-    });
-  } else {
-    optimisticTaskAgentChains.delete(taskId);
-  }
-
-  touched.forEach((agentId) => syncOfficeAgentRuntimeState(agentId));
-}
-
-function updateTaskAutomation(
+function upsertTaskExecution(
   taskId: string,
   input: {
-    runId?: string | undefined;
-    status: MissionTaskAutomationStatus;
-    ownerAgentName?: string | undefined;
-    route?: WorkerRoute | undefined;
-    step?: string | undefined;
+    runId: string;
+    connectorId: string;
+    status: MissionTaskExecution["status"];
+    activeOwnerId?: string | undefined;
+    activeOwnerLabel?: string | undefined;
+    stage?: string | undefined;
     message?: string | undefined;
   },
-): MissionTaskAutomation {
-  const current = taskAutomationStates.get(taskId);
-  const next: MissionTaskAutomation = {
-    runId: input.runId ?? current?.runId ?? generateId(),
+): MissionTaskExecution {
+  const current = taskExecutions.get(taskId);
+  const next: MissionTaskExecution = {
+    runId: input.runId,
+    connectorId: input.connectorId,
     status: input.status,
-    ownerAgentName: input.ownerAgentName ?? current?.ownerAgentName,
-    route: input.route ?? current?.route,
-    step: input.step ?? current?.step,
+    activeOwnerId: input.activeOwnerId ?? current?.activeOwnerId,
+    activeOwnerLabel: input.activeOwnerLabel ?? current?.activeOwnerLabel,
+    stage: input.stage ?? current?.stage,
     message: input.message ?? current?.message,
     updatedAt: Date.now(),
   };
-  taskAutomationStates.set(taskId, next);
-  const shouldShowActiveChain = next.status === "running" || next.status === "in_review";
-  const chain = shouldShowActiveChain && next.ownerAgentName
-    ? agentParentChain(next.ownerAgentName)
-    : [];
-  reconcileTaskAgentChain(taskId, chain, taskAutomationLabel(taskId, next.step ?? next.message));
+  taskExecutions.set(taskId, next);
   broadcastMissionSnapshot();
   return next;
-}
-
-async function delayAgentJsonRetry(attempt: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, AGENT_JSON_MESSAGE_RETRY_DELAY_MS * attempt));
-}
-
-async function sendAgentMessageForJson(agentId: string, prompt: string, label: string): Promise<string> {
-  let lastError: Error | null = null;
-
-  for (let attempt = 1; attempt <= MAX_AGENT_JSON_MESSAGE_ATTEMPTS; attempt += 1) {
-    try {
-      const response = await sendAgentMessage(agentId, prompt);
-      const content = response?.content?.trim() ?? "";
-      if (!content) {
-        lastError = new RequestBodyError(`${label} returned no content.`, 502);
-      } else {
-        const transportIssue = detectAgentTransportIssue(content);
-        if (!transportIssue) {
-          return content;
-        }
-
-        lastError = new RequestBodyError(`${label} failed: ${transportIssue.message}`, transportIssue.statusCode);
-        if (!transportIssue.retryable) {
-          throw lastError;
-        }
-      }
-    } catch (error) {
-      if (!isRetryableAgentTransportError(error) || attempt === MAX_AGENT_JSON_MESSAGE_ATTEMPTS) {
-        throw error;
-      }
-      lastError = error instanceof Error ? error : new RequestBodyError(`${label} failed.`, 502);
-    }
-
-    if (attempt < MAX_AGENT_JSON_MESSAGE_ATTEMPTS) {
-      logWarn("mission-control", "Retrying transient agent JSON request", {
-        agentId,
-        label,
-        attempt,
-        maxAttempts: MAX_AGENT_JSON_MESSAGE_ATTEMPTS,
-        error: lastError?.message ?? "",
-      });
-      await delayAgentJsonRetry(attempt);
-    }
-  }
-
-  throw lastError ?? new RequestBodyError(`${label} returned no content.`, 502);
-}
-async function sendAgentJsonMessage<T>(agentId: string, prompt: string, label: string, schema: string): Promise<AgentJsonExchange<T>> {
-  const content = await sendAgentMessageForJson(agentId, prompt, label);
-
-  try {
-    return {
-      parsed: parseAgentJson<T>(content, label),
-      rawContent: content,
-    };
-  } catch (error) {
-    const repairedContent = await sendAgentMessageForJson(
-      agentId,
-      [
-        "Reformat the following content as valid JSON only.",
-        "Do not include markdown fences, commentary, plans, or tool output.",
-        `Use exactly this schema: ${schema}`,
-        "",
-        "Content to reformat:",
-        content,
-      ].join("\n"),
-      `${label} JSON repair`,
-    );
-    return {
-      parsed: parseAgentJson<T>(repairedContent, label),
-      rawContent: content,
-      repairedContent,
-    };
-  }
-}
-
-interface GithubPullRequestLookup {
-  url?: string | undefined;
-  headRefName?: string | undefined;
-  number?: number | undefined;
-  state?: string | undefined;
-}
-
-function normalizeCanonicalPullRequestUrl(value: unknown): string | undefined {
-  return typeof value === "string" && /github\.com\/.+\/pull\/\d+$/i.test(value.trim())
-    ? value.trim().replace(/\/+$/, "")
-    : undefined;
-}
-
-async function resolveCanonicalPullRequestUrl(branchName: string): Promise<string | undefined> {
-  const trimmedBranchName = branchName.trim();
-  if (!trimmedBranchName) {
-    return undefined;
-  }
-
-  try {
-    const { stdout } = await execFileAsync(
-      "gh",
-      [
-        "pr",
-        "list",
-        "--head",
-        trimmedBranchName,
-        "--state",
-        "all",
-        "--json",
-        "url,headRefName,number,state",
-      ],
-      {
-        cwd: process.cwd(),
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-      },
-    );
-    const parsed = JSON.parse(stdout) as GithubPullRequestLookup[];
-    const exactMatch = parsed.find((entry) => entry.headRefName?.trim() === trimmedBranchName);
-    const fallbackMatch = parsed[0];
-    return normalizeCanonicalPullRequestUrl(exactMatch?.url) ?? normalizeCanonicalPullRequestUrl(fallbackMatch?.url);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logWarn("mission-control", "Failed to resolve pull request URL by branch", {
-      branchName: trimmedBranchName,
-      error: message,
-    });
-    return undefined;
-  }
-}
-
-async function createAcceptedHandoff(
-  taskId: string,
-  fromAgentName: string,
-  toAgentName: string,
-  note: string,
-): Promise<void> {
-  const handoff = await createMissionTaskHandoff(taskId, {
-    fromAgentId: fromAgentName,
-    fromAgentName,
-    toAgentId: toAgentName,
-    toAgentName,
-    note,
-  });
-  await respondMissionTaskHandoff(handoff.id, { status: "accepted" });
-}
-
-function ensureAgentSuffix(body: string, suffix: string): string {
-  const trimmed = body.trim();
-  if (!trimmed) {
-    return suffix;
-  }
-  return trimmed.endsWith(suffix) ? trimmed : `${trimmed} ${suffix}`;
 }
 
 function buildMissionSnapshot(): MissionControlSnapshot {
   return {
     connectors: Array.from(connectorInstances.values()).map(publicConnectorShape),
     hermesDefaults: publicHermesDefaultsShape(),
+    teamSettings: { ...teamSettings },
     providerAgents: [...providerAgents],
     schedules: [...schedules],
     tasks: taskSnapshot.map(publicTaskShape),
@@ -1349,13 +1177,15 @@ async function readPersistedMissionControl(): Promise<PersistedMissionControlFil
     return {
       connectors: Array.isArray(parsed.connectors) ? parsed.connectors.filter(isPersistedMissionConnector) : [],
       hermesDefaults: isPersistedHermesDefaults(parsed.hermesDefaults) ? parsed.hermesDefaults : undefined,
-      handoffs: Array.isArray(parsed.handoffs) ? parsed.handoffs.filter(isMissionTaskHandoff) : [],
-      artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isMissionTaskWorkflowArtifact) : [],
+      teamSettings: isMissionTeamSettings(parsed.teamSettings) ? parsed.teamSettings : undefined,
+      taskExecutions: Array.isArray(parsed.taskExecutions) ? parsed.taskExecutions.filter(isPersistedTaskExecution) : [],
+      events: Array.isArray(parsed.events) ? parsed.events.filter(isMissionTaskRunEvent) : [],
+      artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isMissionTaskRunArtifact) : [],
     };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
-      return { connectors: [], handoffs: [], artifacts: [] };
+      return { connectors: [], teamSettings: {}, taskExecutions: [], events: [], artifacts: [] };
     }
     throw error;
   }
@@ -1365,8 +1195,12 @@ async function persistMissionControl(): Promise<void> {
   const payload: PersistedMissionControlFile = {
     connectors: Array.from(connectorInstances.values()).map(persistedConnectorShape),
     hermesDefaults: persistedHermesDefaultsShape(),
-    handoffs: [...taskHandoffs].sort((left, right) => right.createdAt - left.createdAt),
-    artifacts: [...taskArtifacts].sort((left, right) => right.createdAt - left.createdAt),
+    teamSettings: { ...teamSettings },
+    taskExecutions: Array.from(taskExecutions.entries())
+      .map(([taskId, execution]) => ({ taskId, ...execution }))
+      .sort((left, right) => right.updatedAt - left.updatedAt),
+    events: [...taskRunEvents].sort((left, right) => right.createdAt - left.createdAt),
+    artifacts: [...taskRunArtifacts].sort((left, right) => right.createdAt - left.createdAt),
   };
   const serialized = `${JSON.stringify(payload, null, 2)}\n`;
   const tempPath = path.join(
@@ -1416,6 +1250,7 @@ export async function loadMissionControl(): Promise<void> {
   clearTimers();
   const persisted = await readPersistedMissionControl();
   hermesDefaults = hydrateHermesDefaults(persisted.hermesDefaults ?? inferHermesDefaultsFromConnectors(persisted.connectors));
+  teamSettings = isMissionTeamSettings(persisted.teamSettings) ? { ...persisted.teamSettings } : {};
 
   for (const saved of persisted.connectors) {
     const id = saved.id ?? saved.provider; // backward compat
@@ -1431,8 +1266,21 @@ export async function loadMissionControl(): Promise<void> {
     }
   }
 
-  taskHandoffs = [...persisted.handoffs].sort((left, right) => right.createdAt - left.createdAt);
-  taskArtifacts = [...(persisted.artifacts ?? [])].sort((left, right) => right.createdAt - left.createdAt);
+  taskExecutions.clear();
+  for (const execution of persisted.taskExecutions ?? []) {
+    taskExecutions.set(execution.taskId, {
+      runId: execution.runId,
+      connectorId: execution.connectorId,
+      status: execution.status,
+      activeOwnerId: execution.activeOwnerId,
+      activeOwnerLabel: execution.activeOwnerLabel,
+      stage: execution.stage,
+      message: execution.message,
+      updatedAt: execution.updatedAt,
+    });
+  }
+  taskRunEvents = [...(persisted.events ?? [])].sort((left, right) => right.createdAt - left.createdAt);
+  taskRunArtifacts = [...(persisted.artifacts ?? [])].sort((left, right) => right.createdAt - left.createdAt);
   rosterImport = {
     imported: 0,
     linked: 0,
@@ -1505,6 +1353,142 @@ export async function updateHermesDefaults(updates: HermesDefaultsUpdateRequest)
   );
   broadcastMissionSnapshot();
   return publicHermesDefaultsShape();
+}
+
+function officeAgentIdForLink(connectorId: string, externalId: string): string | undefined {
+  return linkedOfficeAgent(connectorId, externalId);
+}
+
+function resolveBootstrapParentId(
+  requestedParentId: string | null | undefined,
+  idRemap: Map<string, string>,
+): string | null | undefined {
+  if (requestedParentId === undefined) {
+    return undefined;
+  }
+  if (requestedParentId === null) {
+    return null;
+  }
+  const normalized = requestedParentId.trim();
+  if (!normalized) {
+    return null;
+  }
+  return idRemap.get(normalized) ?? normalized;
+}
+
+function existingAgentForBootstrap(input: MissionTeamBootstrapAgentInput): AgentRuntimeState | undefined {
+  const explicit = agentStates.get(input.officeAgentId.trim());
+  if (explicit) {
+    return explicit;
+  }
+
+  const linkedId = officeAgentIdForLink(input.connectorId, input.externalId);
+  return linkedId ? agentStates.get(linkedId) : undefined;
+}
+
+async function upsertBootstrapAgent(
+  input: MissionTeamBootstrapAgentInput,
+  idRemap: Map<string, string>,
+): Promise<AgentRuntimeState> {
+  const connector = connectorInstances.get(input.connectorId);
+  if (!connector) {
+    throw new RequestBodyError(`Unknown connector ${input.connectorId}.`, 404);
+  }
+
+  const existing = existingAgentForBootstrap(input);
+  const resolvedId = existing?.id ?? input.officeAgentId.trim();
+  const registration: AgentRegistration = {
+    id: resolvedId,
+    name: input.name.trim(),
+    role: input.role.trim(),
+    emoji: input.emoji?.trim() || undefined,
+    type: input.type ?? existing?.type ?? "resident",
+    backendLink: {
+      provider: CONNECTOR_PROVIDER_TO_BACKEND_PROVIDER[connector.provider],
+      connectorId: connector.id,
+      agentId: input.externalId.trim(),
+      connected: true,
+      connectedAt: Date.now(),
+    },
+    parentAgentId: resolveBootstrapParentId(input.parentOfficeAgentId, idRemap),
+  };
+
+  const nextState = await upsertRegistration(registration, existing ? "update" : "create");
+  idRemap.set(input.officeAgentId.trim(), nextState.id);
+  return nextState;
+}
+
+export async function bootstrapMissionTeam(input: MissionTeamBootstrapRequest): Promise<MissionTeamBootstrapResult> {
+  const trimmedAgents = input.agents
+    .map((entry) => ({
+      ...entry,
+      officeAgentId: entry.officeAgentId.trim(),
+      connectorId: entry.connectorId.trim(),
+      externalId: entry.externalId.trim(),
+      name: entry.name.trim(),
+      role: entry.role.trim(),
+      emoji: entry.emoji?.trim() || undefined,
+    }))
+    .filter((entry) => entry.officeAgentId && entry.connectorId && entry.externalId && entry.name && entry.role);
+
+  if (trimmedAgents.length === 0) {
+    throw new RequestBodyError("Add at least one agent to bootstrap the team.");
+  }
+
+  const duplicateIds = new Set<string>();
+  const seenIds = new Set<string>();
+  trimmedAgents.forEach((entry) => {
+    if (seenIds.has(entry.officeAgentId)) {
+      duplicateIds.add(entry.officeAgentId);
+    }
+    seenIds.add(entry.officeAgentId);
+  });
+  if (duplicateIds.size > 0) {
+    throw new RequestBodyError(`Duplicate office agent ids: ${Array.from(duplicateIds).join(", ")}`);
+  }
+
+  const idRemap = new Map<string, string>();
+  trimmedAgents.forEach((entry) => {
+    const existing = existingAgentForBootstrap(entry);
+    idRemap.set(entry.officeAgentId, existing?.id ?? entry.officeAgentId);
+  });
+  const touchedConnectors = new Set<string>();
+  for (const entry of trimmedAgents) {
+    const nextState = await upsertBootstrapAgent(entry, idRemap);
+    touchedConnectors.add(entry.connectorId);
+    idRemap.set(entry.officeAgentId, nextState.id);
+  }
+
+  const requestedCommandAgentId = input.commandAgentId?.trim() || "";
+  const resolvedCommandAgentId = requestedCommandAgentId
+    ? (idRemap.get(requestedCommandAgentId) ?? requestedCommandAgentId)
+    : undefined;
+  const commandAgent = resolvedCommandAgentId ? agentStates.get(resolvedCommandAgentId) : undefined;
+  const requestedDefaultConnectorId = input.defaultRunConnectorId?.trim() || "";
+
+  teamSettings = {
+    commandAgentId: commandAgent?.id,
+    defaultRunConnectorId: requestedDefaultConnectorId
+      || commandAgent?.backendLink?.connectorId
+      || teamSettings.defaultRunConnectorId,
+  };
+
+  touchedConnectors.forEach((connectorId) => {
+    const currentProviderAgents = providerAgents.filter((entry) => entry.connectorId === connectorId);
+    const connector = connectorInstances.get(connectorId);
+    if (connector) {
+      mergeProviderAgents(connectorId, connector.provider, currentProviderAgents);
+    }
+    syncConnectorOfficeAgents(connectorId, currentProviderAgents);
+  });
+
+  await queuePersistMissionControl();
+  broadcastMissionSnapshot();
+
+  return {
+    agents: getOrderedStates(),
+    snapshot: buildMissionSnapshot(),
+  };
 }
 
 export async function testMissionConnector(connectorId: string): Promise<ProviderConnector> {
@@ -1589,15 +1573,16 @@ export async function syncMissionTasks(): Promise<MissionTask[]> {
   broadcastMissionSnapshot();
 
   try {
-    const snapshot = await syncLinearTasks(taskHandoffs);
+    const snapshot = await syncLinearTasks();
     taskSnapshot = snapshot.tasks;
     const liveTaskIds = new Set(snapshot.tasks.map((task) => task.id));
-    Array.from(taskAutomationStates.keys()).forEach((taskId) => {
+    Array.from(taskExecutions.keys()).forEach((taskId) => {
       if (!liveTaskIds.has(taskId)) {
-        taskAutomationStates.delete(taskId);
-        reconcileTaskAgentChain(taskId, [], taskId);
+        taskExecutions.delete(taskId);
       }
     });
+    taskRunEvents = taskRunEvents.filter((event) => liveTaskIds.has(event.taskId));
+    taskRunArtifacts = taskRunArtifacts.filter((artifact) => liveTaskIds.has(artifact.taskId));
     taskSync = {
       state: snapshot.syncState,
       updatedAt: snapshot.syncedAt,
@@ -1622,18 +1607,19 @@ export function listMissionTasks(): MissionTask[] {
 }
 
 export async function getMissionTaskDetail(taskId: string): Promise<MissionTaskDetail> {
-  const detail = await fetchLinearTaskDetail(taskId, taskHandoffs);
+  const detail = await fetchLinearTaskDetail(taskId);
   return {
     ...detail,
     task: publicTaskShape(detail.task),
+    events: taskEventsForTask(taskId),
     artifacts: taskArtifactsForTask(taskId),
   };
 }
 
 export async function updateMissionTask(taskId: string, input: MissionTaskUpdateRequest): Promise<MissionTask> {
-  const task = await updateLinearTask(taskId, input, taskHandoffs);
+  const task = await updateLinearTask(taskId, input);
   taskSnapshot = taskSnapshot
-    .map((entry) => (entry.id === task.id ? task : entry))
+    .map((entry) => (entry.id === task.id ? publicTaskShape(task) : entry))
     .sort((left, right) => right.updatedAt - left.updatedAt);
   taskSync = {
     state: "ok",
@@ -1652,8 +1638,8 @@ export async function addMissionTaskComment(taskId: string, input: MissionTaskCo
 
   const parentCommentId = input.parentCommentId?.trim() || undefined;
   await createLinearTaskComment(taskId, body, parentCommentId);
-  const detail = await fetchLinearTaskDetail(taskId, taskHandoffs);
-  taskSnapshot = taskSnapshot.map((entry) => (entry.id === detail.task.id ? detail.task : entry));
+  const detail = await fetchLinearTaskDetail(taskId);
+  taskSnapshot = taskSnapshot.map((entry) => (entry.id === detail.task.id ? publicTaskShape(detail.task) : entry));
   taskSync = {
     state: "ok",
     updatedAt: Date.now(),
@@ -1663,94 +1649,9 @@ export async function addMissionTaskComment(taskId: string, input: MissionTaskCo
   return {
     ...detail,
     task: publicTaskShape(detail.task),
+    events: taskEventsForTask(taskId),
     artifacts: taskArtifactsForTask(taskId),
   };
-}
-
-async function recordMissionTaskWorkflowArtifact(
-  taskId: string,
-  input: Omit<MissionTaskWorkflowArtifact, "id" | "taskId" | "createdAt"> & { createdAt?: number | undefined },
-): Promise<MissionTaskWorkflowArtifact> {
-  const artifact: MissionTaskWorkflowArtifact = {
-    id: generateId(),
-    taskId,
-    runId: input.runId?.trim() || undefined,
-    agentName: input.agentName.trim(),
-    step: input.step.trim(),
-    prompt: input.prompt,
-    schema: input.schema?.trim() || undefined,
-    rawResponse: input.rawResponse,
-    repairedResponse: input.repairedResponse,
-    normalizedResponse: input.normalizedResponse,
-    validationErrors: input.validationErrors?.length ? [...input.validationErrors] : undefined,
-    createdAt: input.createdAt ?? Date.now(),
-  };
-
-  taskArtifacts = [artifact, ...taskArtifacts];
-  await queuePersistMissionControl();
-  broadcastMissionSnapshot();
-  return artifact;
-}
-
-export async function createMissionTaskHandoff(taskId: string, input: MissionTaskHandoffCreateRequest): Promise<MissionTaskHandoff> {
-  const task = taskSnapshot.find((entry) => entry.id === taskId);
-  if (!task) {
-    throw new RequestBodyError("Mission task not found.", 404);
-  }
-
-  const note = input.note.trim();
-  if (!note) {
-    throw new RequestBodyError("Handoff note is required.");
-  }
-
-  const handoff: MissionTaskHandoff = {
-    id: generateId(),
-    taskId,
-    fromAgentId: input.fromAgentId?.trim() || undefined,
-    fromAgentName: input.fromAgentName?.trim() || "Mission Control",
-    toAgentId: input.toAgentId?.trim() || undefined,
-    toAgentName: input.toAgentName?.trim() || "Unassigned",
-    note,
-    status: "pending",
-    createdAt: Date.now(),
-  };
-
-  taskHandoffs = [handoff, ...taskHandoffs];
-  syncTaskCounts(taskId);
-  pushActivity(
-    "workflow-handoff",
-    `Handoff created: ${handoff.fromAgentName} \u2192 ${handoff.toAgentName} on ${task.identifier} \u2014 ${note}`,
-    handoff.toAgentId,
-  );
-  await queuePersistMissionControl();
-  broadcastMissionSnapshot();
-  return handoff;
-}
-
-export async function respondMissionTaskHandoff(
-  handoffId: string,
-  input: MissionTaskHandoffResponseRequest,
-): Promise<MissionTaskHandoff> {
-  const existing = taskHandoffs.find((handoff) => handoff.id === handoffId);
-  if (!existing) {
-    throw new RequestBodyError("Handoff not found.", 404);
-  }
-
-  const next: MissionTaskHandoff = {
-    ...existing,
-    status: input.status,
-    respondedAt: Date.now(),
-  };
-
-  taskHandoffs = taskHandoffs.map((handoff) => (handoff.id === handoffId ? next : handoff));
-  pushActivity(
-    "workflow-handoff",
-    `Handoff ${input.status}: ${next.toAgentName} ${input.status} handoff from ${next.fromAgentName}`,
-    next.toAgentId,
-  );
-  await queuePersistMissionControl();
-  broadcastMissionSnapshot();
-  return next;
 }
 
 function adapterConfigForConnector(connectorId: string): Record<string, unknown> | null {
@@ -1837,61 +1738,215 @@ export async function sendAgentMessage(agentId: string, message: string): Promis
   return result;
 }
 
-async function runMissionTaskWorkflow(taskId: string, runId: string): Promise<void> {
-  return executeMissionTaskWorkflow(taskId, runId, {
-    addMissionTaskComment,
-    createAcceptedHandoff,
-    ensureAgentSuffix,
-    getMissionTaskDetail,
-    pushActivity,
-    recordMissionTaskWorkflowArtifact,
-    resolveCanonicalPullRequestUrl,
-    sendAgentJsonMessage,
-    sendAgentMessage,
-    updateTaskAutomation,
-  });
+function appendTaskRunEvents(taskId: string, runId: string, events: AdapterTaskRunEvent[] | MissionTaskRunEvent[]): void {
+  const normalized = events.map((event) => ({
+    id: "id" in event ? event.id : generateId(),
+    taskId,
+    runId,
+    kind: event.kind,
+    summary: event.summary,
+    status: event.status,
+    actorId: event.actorId,
+    actorLabel: event.actorLabel,
+    createdAt: event.createdAt ?? Date.now(),
+  }));
+  taskRunEvents = [...normalized, ...taskRunEvents].sort((left, right) => right.createdAt - left.createdAt);
 }
 
-export function startMissionTaskWorkflow(taskId: string): MissionTaskAutomation {
+function appendTaskRunArtifacts(taskId: string, runId: string, artifacts: AdapterTaskRunArtifact[] | MissionTaskRunArtifact[]): void {
+  const normalized = artifacts.map((artifact) => ({
+    id: "id" in artifact ? artifact.id : generateId(),
+    taskId,
+    runId,
+    kind: artifact.kind,
+    label: artifact.label,
+    body: artifact.body,
+    url: artifact.url,
+    createdAt: artifact.createdAt ?? Date.now(),
+  }));
+  taskRunArtifacts = [...normalized, ...taskRunArtifacts].sort((left, right) => right.createdAt - left.createdAt);
+}
+
+function registerTaskRunSession(taskId: string, runId: string, connectorId: string, sessionId: string | undefined): void {
+  const normalized = sessionId?.trim() ?? "";
+  if (!normalized) {
+    return;
+  }
+  taskRunSessions.set(normalized, { taskId, runId, connectorId });
+  const sessions = taskRunIdsToSessions.get(runId) ?? new Set<string>();
+  sessions.add(normalized);
+  taskRunIdsToSessions.set(runId, sessions);
+}
+
+function clearTaskRunSessions(runId: string): void {
+  const sessions = taskRunIdsToSessions.get(runId);
+  if (!sessions) {
+    return;
+  }
+  sessions.forEach((sessionId) => taskRunSessions.delete(sessionId));
+  taskRunIdsToSessions.delete(runId);
+}
+
+function preferredRunConnector(): { connector: ProviderConnectorState; config: Record<string, unknown>; } {
+  const preferredConnectorId = teamSettings.defaultRunConnectorId?.trim();
+  if (preferredConnectorId) {
+    const preferredConnector = connectorInstances.get(preferredConnectorId);
+    const preferredAdapter = preferredConnector ? getAdapter(preferredConnector.provider as AdapterType) : null;
+    const preferredConfig = preferredConnector ? adapterConfigForConnector(preferredConnector.id) : null;
+    if (preferredConnector?.enabled && preferredAdapter?.startTaskRun && preferredConfig) {
+      return { connector: preferredConnector, config: preferredConfig };
+    }
+  }
+
+  const commandAgentId = teamSettings.commandAgentId?.trim();
+  if (commandAgentId) {
+    const commandAgent = agentStates.get(commandAgentId);
+    const connectorId = commandAgent?.backendLink?.connectorId;
+    if (connectorId) {
+      const commandConnector = connectorInstances.get(connectorId);
+      const commandAdapter = commandConnector ? getAdapter(commandConnector.provider as AdapterType) : null;
+      const commandConfig = commandConnector ? adapterConfigForConnector(commandConnector.id) : null;
+      if (commandConnector?.enabled && commandAdapter?.startTaskRun && commandConfig) {
+        return { connector: commandConnector, config: commandConfig };
+      }
+    }
+  }
+
+  const candidates = Array.from(connectorInstances.values())
+    .filter((connector) => connector.enabled)
+    .map((connector) => ({
+      connector,
+      adapter: getAdapter(connector.provider as AdapterType),
+    }))
+    .filter((entry) => Boolean(entry.adapter?.startTaskRun))
+    .sort((left, right) => {
+      if (left.connector.provider === right.connector.provider) {
+        return left.connector.label.localeCompare(right.connector.label);
+      }
+      if (left.connector.provider === "hermes") {
+        return -1;
+      }
+      if (right.connector.provider === "hermes") {
+        return 1;
+      }
+      return left.connector.label.localeCompare(right.connector.label);
+    });
+
+  for (const entry of candidates) {
+    const config = adapterConfigForConnector(entry.connector.id);
+    if (config) {
+      return { connector: entry.connector, config };
+    }
+  }
+
+  throw new RequestBodyError("No enabled provider connector can start task runs.", 409);
+}
+
+function resolveExecutionOwner(connectorId: string, actorId: string | undefined, actorLabel: string | undefined): {
+  activeOwnerId?: string;
+  activeOwnerLabel?: string;
+} {
+  const normalizedActorId = actorId?.trim() ?? "";
+  const providerAgent = normalizedActorId
+    ? providerAgents.find((entry) => entry.connectorId === connectorId && providerExternalIdAliases(entry.externalId).has(normalizedActorId))
+    : undefined;
+  const officeAgentId = providerAgent?.officeAgentId ?? (normalizedActorId ? linkedOfficeAgent(connectorId, normalizedActorId) : undefined);
+
+  const resolvedOwnerId = officeAgentId ?? (normalizedActorId || undefined);
+  const resolvedOwnerLabel = providerAgent?.name ?? (actorLabel?.trim() || undefined);
+  return {
+    ...(resolvedOwnerId ? { activeOwnerId: resolvedOwnerId } : {}),
+    ...(resolvedOwnerLabel ? { activeOwnerLabel: resolvedOwnerLabel } : {}),
+  };
+}
+
+export function startMissionTaskRun(taskId: string): MissionTaskExecution {
   const task = taskSnapshot.find((entry) => entry.id === taskId);
   if (!task) {
     throw new RequestBodyError("Mission task not found.", 404);
   }
 
-  if (runningTaskAutomations.has(taskId)) {
-    throw new RequestBodyError("Task workflow is already running.", 409);
+  if (runningTaskExecutions.has(taskId)) {
+    throw new RequestBodyError("Task run is already in progress.", 409);
   }
 
+  const { connector } = preferredRunConnector();
   const runId = generateId();
-  const automation = updateTaskAutomation(taskId, {
+  const queuedExecution = upsertTaskExecution(taskId, {
     runId,
-    status: "running",
-    ownerAgentName: "Hermes",
-    step: "Queued",
-    message: "Queued for the Hermes workflow runner.",
+    connectorId: connector.id,
+    status: "queued",
+    stage: "Queued",
+    message: `Submitted to ${connector.label}.`,
   });
+  appendTaskRunEvents(taskId, runId, [{
+    kind: "submitted",
+    summary: `Submitted to ${connector.label}.`,
+    status: "queued",
+  }]);
+  void queuePersistMissionControl();
+  pushActivity("workflow-item", `${task.identifier}: submitted to ${connector.label}.`, connectorRuntimeAgentId(connector));
 
   const run = (async () => {
     try {
-      await runMissionTaskWorkflow(taskId, runId);
+      const detail = await getMissionTaskDetail(taskId);
+      const { connector: selectedConnector, config } = preferredRunConnector();
+      const adapter = getAdapter(selectedConnector.provider as AdapterType);
+      if (!adapter?.startTaskRun) {
+        throw new RequestBodyError(`${selectedConnector.label} cannot start task runs.`, 409);
+      }
+
+      const result = await adapter.startTaskRun(config, {
+        connectorId: selectedConnector.id,
+        task: detail,
+      });
+
+      const finalRunId = result.runId?.trim() || runId;
+      registerTaskRunSession(taskId, finalRunId, selectedConnector.id, result.sessionId);
+      const owner = resolveExecutionOwner(selectedConnector.id, result.activeOwnerId, result.activeOwnerLabel);
+      const execution = upsertTaskExecution(taskId, {
+        runId: finalRunId,
+        connectorId: selectedConnector.id,
+        status: result.status,
+        activeOwnerId: owner.activeOwnerId,
+        activeOwnerLabel: owner.activeOwnerLabel,
+        stage: result.stage,
+        message: result.message,
+      });
+      appendTaskRunEvents(taskId, finalRunId, result.events ?? []);
+      appendTaskRunArtifacts(taskId, finalRunId, result.artifacts ?? []);
+      clearTaskRunSessions(finalRunId);
+      void queuePersistMissionControl();
+      const outcome = execution.status === "failed" ? "failed" : "completed";
+      pushActivity(
+        "workflow-item",
+        `${task.identifier}: ${selectedConnector.label} ${outcome}${execution.message ? ` · ${execution.message}` : ""}`,
+        owner.activeOwnerId ?? connectorRuntimeAgentId(selectedConnector),
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown workflow failure.";
-      updateTaskAutomation(taskId, {
+      const message = error instanceof Error ? error.message : "Unknown provider execution failure.";
+      upsertTaskExecution(taskId, {
         runId,
+        connectorId: connector.id,
         status: "failed",
-        step: "Failed",
+        stage: "Failed",
         message,
       });
-      const issueKey = taskSnapshot.find((entry) => entry.id === taskId)?.identifier ?? taskId;
-      pushActivity("workflow-item", `${issueKey}: automated workflow failed. ${message}`, "Hermes");
-      console.error(`[mission-control] automated task workflow failed for ${taskId}:`, error);
+      appendTaskRunEvents(taskId, runId, [{
+        kind: "failed",
+        summary: message,
+        status: "failed",
+      }]);
+      void queuePersistMissionControl();
+      pushActivity("workflow-item", `${task.identifier}: provider run failed. ${message}`, connectorRuntimeAgentId(connector));
+      console.error(`[mission-control] provider task run failed for ${taskId}:`, error);
     } finally {
-      runningTaskAutomations.delete(taskId);
+      runningTaskExecutions.delete(taskId);
     }
   })();
 
-  runningTaskAutomations.set(taskId, run);
-  return automation;
+  runningTaskExecutions.set(taskId, run);
+  return queuedExecution;
 }
 
 export async function startMissionControl(): Promise<void> {
@@ -1920,26 +1975,33 @@ export async function createMissionConnector(provider: MissionProvider, label?: 
   return publicConnectorShape(connector);
 }
 
-export const missionControlTestExports = {
-  developBranchPolicyInstructions,
-  buildWorkerExecutionPrompt,
-  buildWorkerMalformedResultPrompt,
-  canRetryScoutReview,
-  detectAgentTransportIssue,
-  isRetryableAgentTransportError,
-  looksLikeMetaWorkerResult,
-  mergeWorkerExecutionContext,
-  workerExecutionContextFromTask,
-};
-
 export async function deleteMissionConnector(connectorId: string): Promise<void> {
   if (!connectorInstances.has(connectorId)) {
     throw new RequestBodyError(`Connector ${connectorId} not found.`, 404);
   }
   stopHermesConnectorRuntime(connectorId);
   connectorInstances.delete(connectorId);
+  if (teamSettings.defaultRunConnectorId === connectorId) {
+    teamSettings = {
+      ...teamSettings,
+      defaultRunConnectorId: undefined,
+    };
+  }
+  const commandAgent = teamSettings.commandAgentId ? agentStates.get(teamSettings.commandAgentId) : undefined;
+  if (commandAgent?.backendLink?.connectorId === connectorId) {
+    teamSettings = {
+      ...teamSettings,
+      commandAgentId: undefined,
+    };
+  }
   providerAgents = providerAgents.filter((a) => a.connectorId !== connectorId);
   schedules = schedules.filter((s) => s.connectorId !== connectorId);
+  Array.from(taskExecutions.entries()).forEach(([taskId, execution]) => {
+    if (execution.connectorId === connectorId) {
+      taskExecutions.delete(taskId);
+      clearTaskRunSessions(execution.runId);
+    }
+  });
   await queuePersistMissionControl();
   broadcastMissionSnapshot();
 }
@@ -2014,6 +2076,32 @@ export function isProviderConnectorUpdateRequest(value: unknown): value is Provi
     && (value.adapterConfig === undefined || isRecord(value.adapterConfig));
 }
 
+function isMissionTeamSettings(value: unknown): value is MissionTeamSettings {
+  return isRecord(value)
+    && (value.commandAgentId === undefined || typeof value.commandAgentId === "string")
+    && (value.defaultRunConnectorId === undefined || typeof value.defaultRunConnectorId === "string");
+}
+
+function isMissionTeamBootstrapAgentInput(value: unknown): value is MissionTeamBootstrapAgentInput {
+  return isRecord(value)
+    && typeof value.officeAgentId === "string"
+    && typeof value.connectorId === "string"
+    && typeof value.externalId === "string"
+    && typeof value.name === "string"
+    && typeof value.role === "string"
+    && (value.emoji === undefined || typeof value.emoji === "string")
+    && (value.type === undefined || value.type === "resident" || value.type === "visitor")
+    && (value.parentOfficeAgentId === undefined || value.parentOfficeAgentId === null || typeof value.parentOfficeAgentId === "string");
+}
+
+export function isMissionTeamBootstrapRequest(value: unknown): value is MissionTeamBootstrapRequest {
+  return isRecord(value)
+    && Array.isArray(value.agents)
+    && value.agents.every((entry) => isMissionTeamBootstrapAgentInput(entry))
+    && (value.commandAgentId === undefined || typeof value.commandAgentId === "string")
+    && (value.defaultRunConnectorId === undefined || typeof value.defaultRunConnectorId === "string");
+}
+
 export function isHermesDefaultsUpdateRequest(value: unknown): value is HermesDefaultsUpdateRequest {
   return isRecord(value)
     && (value.sshHost === undefined || typeof value.sshHost === "string")
@@ -2036,17 +2124,4 @@ export function isMissionTaskCommentCreateRequest(value: unknown): value is Miss
   return isRecord(value)
     && typeof value.body === "string"
     && (value.parentCommentId === undefined || typeof value.parentCommentId === "string");
-}
-
-export function isMissionTaskHandoffCreateRequest(value: unknown): value is MissionTaskHandoffCreateRequest {
-  return isRecord(value)
-    && typeof value.note === "string"
-    && (value.fromAgentId === undefined || typeof value.fromAgentId === "string")
-    && (value.fromAgentName === undefined || typeof value.fromAgentName === "string")
-    && (value.toAgentId === undefined || typeof value.toAgentId === "string")
-    && (value.toAgentName === undefined || typeof value.toAgentName === "string");
-}
-
-export function isMissionTaskHandoffResponseRequest(value: unknown): value is MissionTaskHandoffResponseRequest {
-  return isRecord(value) && (value.status === "accepted" || value.status === "declined");
 }

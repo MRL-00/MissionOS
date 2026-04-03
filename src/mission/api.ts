@@ -5,12 +5,11 @@ import type {
   HermesDefaults,
   HermesDefaultsUpdateRequest,
   MissionControlSnapshot,
-  MissionTaskAutomation,
+  MissionTeamBootstrapRequest,
+  MissionTeamBootstrapResult,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
-  MissionTaskHandoff,
-  MissionTaskHandoffCreateRequest,
-  MissionTaskHandoffResponseRequest,
+  MissionTaskExecution,
   MissionTaskUpdateRequest,
   ProviderConnector,
   ProviderConnectorUpdateRequest,
@@ -72,27 +71,11 @@ export async function createMissionTaskComment(taskId: string, input: MissionTas
   });
 }
 
-export async function createMissionTaskHandoff(taskId: string, input: MissionTaskHandoffCreateRequest): Promise<MissionTaskHandoff> {
-  const payload = await requestJson<{ handoff: MissionTaskHandoff }>(`/api/mission/tasks/${encodeURIComponent(taskId)}/handoffs`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  return payload.handoff;
-}
-
-export async function startMissionTaskWorkflow(taskId: string): Promise<MissionTaskAutomation> {
-  const payload = await requestJson<{ ok: boolean; automation: MissionTaskAutomation }>(`/api/mission/tasks/${encodeURIComponent(taskId)}/run`, {
+export async function startMissionTaskRun(taskId: string): Promise<MissionTaskExecution> {
+  const payload = await requestJson<{ ok: boolean; execution: MissionTaskExecution }>(`/api/mission/tasks/${encodeURIComponent(taskId)}/run`, {
     method: "POST",
   });
-  return payload.automation;
-}
-
-export async function respondMissionTaskHandoff(handoffId: string, input: MissionTaskHandoffResponseRequest): Promise<MissionTaskHandoff> {
-  const payload = await requestJson<{ handoff: MissionTaskHandoff }>(`/api/mission/handoffs/${encodeURIComponent(handoffId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
-  return payload.handoff;
+  return payload.execution;
 }
 
 export async function updateMissionConnector(connectorId: string, input: ProviderConnectorUpdateRequest): Promise<ProviderConnector> {
@@ -136,6 +119,13 @@ export async function createMissionConnector(provider: string, label?: string): 
 export async function deleteMissionConnector(connectorId: string): Promise<void> {
   await requestJson<{ ok: boolean }>(`/api/mission/connectors/${encodeURIComponent(connectorId)}`, {
     method: "DELETE",
+  });
+}
+
+export async function bootstrapMissionTeam(input: MissionTeamBootstrapRequest): Promise<MissionTeamBootstrapResult> {
+  return requestJson<MissionTeamBootstrapResult>("/api/mission/team/bootstrap", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 

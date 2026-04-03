@@ -1,4 +1,5 @@
 import type { AgentRuntimeState } from "../../types";
+import type { ProviderAgentRecord } from "../types";
 import type { OrgTreeNode } from "./types";
 
 /**
@@ -12,20 +13,33 @@ import type { OrgTreeNode } from "./types";
  *
  * Returns one OrgTreeNode per root, sorted alphabetically.
  */
-export function buildHierarchy(agents: AgentRuntimeState[]): OrgTreeNode[] {
+export function buildHierarchy(agents: AgentRuntimeState[], providerAgents: ProviderAgentRecord[] = []): OrgTreeNode[] {
   if (agents.length === 0) {
     return [];
   }
 
   const agentMap = new Map<string, AgentRuntimeState>();
   agents.forEach((agent) => agentMap.set(agent.id, agent));
+  const providerByOfficeAgentId = new Map<string, ProviderAgentRecord>();
+  const providerByExternalId = new Map<string, ProviderAgentRecord>();
+  providerAgents.forEach((agent) => {
+    if (agent.officeAgentId && !providerByOfficeAgentId.has(agent.officeAgentId)) {
+      providerByOfficeAgentId.set(agent.officeAgentId, agent);
+    }
+    if (!providerByExternalId.has(agent.externalId)) {
+      providerByExternalId.set(agent.externalId, agent);
+    }
+  });
 
   // Group children by parent id
   const childrenOf = new Map<string, AgentRuntimeState[]>();
   const roots: AgentRuntimeState[] = [];
 
   agents.forEach((agent) => {
-    const parentId = agent.parentAgentId;
+    const providerAgent = providerByOfficeAgentId.get(agent.id);
+    const providerParentExternalId = providerAgent?.reportsToExternalId ?? providerAgent?.managerExternalId;
+    const providerParent = providerParentExternalId ? providerByExternalId.get(providerParentExternalId) : undefined;
+    const parentId = providerParent?.officeAgentId ?? agent.parentAgentId;
     if (!parentId || !agentMap.has(parentId)) {
       roots.push(agent);
     } else {
