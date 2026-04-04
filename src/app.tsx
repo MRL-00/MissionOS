@@ -1,59 +1,100 @@
 import { startTransition } from "react";
-import { DEPLOY_BADGE_LABEL } from "./config/buildInfo";
+import {
+  ActivityIcon,
+  BriefcaseBusinessIcon,
+  CableIcon,
+  ChevronRightIcon,
+  RefreshCcwIcon,
+  SearchIcon,
+  Settings2Icon,
+  Users2Icon,
+} from "lucide-react";
 import { useMissionControl, type MissionView } from "./mission/hooks/useMissionControl";
-import { RunsView, SettingsView, SetupView, TeamView, WorkView } from "./app/views";
-import { connectionTone, cx, formatRelativeUpdate } from "./app/shared";
+import { OrgView, RunsView, SettingsView, SetupView, WorkView } from "./app/views";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { formatRelativeUpdate } from "./app/shared";
 
-const NAV_ITEMS: Array<{ id: MissionView; label: string; hint: string }> = [
-  { id: "setup", label: "Setup", hint: "Connect runtimes" },
-  { id: "team", label: "Team", hint: "Build the org" },
-  { id: "work", label: "Work", hint: "Run tasks" },
-  { id: "runs", label: "Runs", hint: "See activity" },
-  { id: "settings", label: "Settings", hint: "Advanced" },
+const NAV_ITEMS: Array<{ id: MissionView; label: string; hint: string; icon: typeof CableIcon }> = [
+  { id: "setup", label: "Setup", hint: "Connect runtimes", icon: CableIcon },
+  { id: "org", label: "Org", hint: "Map reporting lines", icon: Users2Icon },
+  { id: "work", label: "Work", hint: "Run Linear tasks", icon: BriefcaseBusinessIcon },
+  { id: "runs", label: "Runs", hint: "Watch execution", icon: ActivityIcon },
+  { id: "settings", label: "Settings", hint: "Advanced controls", icon: Settings2Icon },
 ];
 
-const VIEW_META: Record<MissionView, { title: string; subtitle: string }> = {
+const NAV_GROUPS: Array<{ label: string; items: MissionView[] }> = [
+  { label: "Onboarding", items: ["setup", "org"] },
+  { label: "Delivery", items: ["work", "runs"] },
+  { label: "System", items: ["settings"] },
+];
+
+const VIEW_META: Record<MissionView, { title: string; subtitle: string; section: string }> = {
   setup: {
-    title: "Bring your runtimes online",
-    subtitle: "Connect Hermes, Claude, or Codex first. Then turn them into a visible team.",
+    title: "Connect the office",
+    subtitle: "Start by getting Hermes or another runtime online, then open Org to save who reports to who.",
+    section: "Onboarding",
   },
-  team: {
-    title: "Design the team",
-    subtitle: "Map your runtimes to real roles, reporting lines, and the default execution path.",
+  org: {
+    title: "Build the org",
+    subtitle: "Choose who appears in the org and how everyone connects to who.",
+    section: "Onboarding",
   },
   work: {
-    title: "Assign and run work",
-    subtitle: "Review synced Linear tasks, pick what matters, and submit runs to the team.",
+    title: "Run the first task",
+    subtitle: "Pick a synced Linear task, review the brief, and submit it to the org.",
+    section: "Delivery",
   },
   runs: {
-    title: "Watch the team work",
-    subtitle: "See live runs, recent execution history, wakeups, and mirrored provider activity.",
+    title: "Watch runs and heartbeats",
+    subtitle: "See what is running, what recently finished, and what is scheduled to wake up next.",
+    section: "Delivery",
   },
   settings: {
     title: "Advanced settings",
-    subtitle: "Shared defaults, runtime wakeups, and the lower-level controls most people should rarely touch.",
+    subtitle: "Keep low-level controls here so non-technical users do not need to live in this screen.",
+    section: "Operations",
   },
 };
 
-function onboardingProgress(activeView: MissionView): string {
+function onboardingLabel(activeView: MissionView): string {
   switch (activeView) {
     case "setup":
-      return "Step 1 of 4";
-    case "team":
-      return "Step 2 of 4";
+      return "Step 1";
+    case "org":
+      return "Step 2";
     case "work":
-      return "Step 3 of 4";
+      return "Step 3";
     case "runs":
+      return "Step 4";
     case "settings":
-      return "Operate";
     default:
-      return "";
+      return "Advanced";
   }
+}
+
+function connectionClass(state: "connecting" | "connected" | "offline"): string {
+  if (state === "connected") {
+    return "border-emerald-500/30 bg-emerald-500/15 text-emerald-200";
+  }
+  if (state === "connecting") {
+    return "border-amber-500/30 bg-amber-500/15 text-amber-200";
+  }
+  return "border-rose-500/30 bg-rose-500/15 text-rose-200";
 }
 
 export function App() {
   const mission = useMissionControl();
-  const current = VIEW_META[mission.activeView];
+  const meta = VIEW_META[mission.activeView];
 
   async function handleAddIntegration(provider: string): Promise<void> {
     const defaultLabel = provider === "hermes"
@@ -67,112 +108,136 @@ export function App() {
   }
 
   return (
-    <div className="mission-shell">
-      <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)]">
-        <aside className="border-b border-linear-line bg-[#08090d]/98 lg:min-h-screen lg:border-b-0 lg:border-r">
-          <div className="flex h-full flex-col px-4 py-5">
-            <div className="space-y-4">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#8d93a1]">The Office</p>
-                <h1 className="mt-2 text-[32px] font-semibold leading-[0.95] tracking-[-0.045em] text-white">
-                  Agent
-                  <br />
-                  Teams
-                </h1>
-              </div>
-
-              <div className="space-y-2 rounded-[22px] border border-[#171a21] bg-[#0d0f14] p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className={cx("mission-badge border", connectionTone(mission.connectionState))}>
-                    {mission.connectionState}
-                  </span>
-                  <span className="mission-badge">Build {DEPLOY_BADGE_LABEL}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="app-stat">
-                    <span className="app-stat-label">Connectors</span>
-                    <strong className="app-stat-value">{mission.missionSnapshot.connectors.length}</strong>
-                  </div>
-                  <div className="app-stat">
-                    <span className="app-stat-label">Team</span>
-                    <strong className="app-stat-value">{mission.agents.length}</strong>
-                  </div>
-                  <div className="app-stat">
-                    <span className="app-stat-label">Tasks</span>
-                    <strong className="app-stat-value">{mission.missionSnapshot.tasks.length}</strong>
-                  </div>
-                  <div className="app-stat">
-                    <span className="app-stat-label">Schedules</span>
-                    <strong className="app-stat-value">{mission.missionSnapshot.schedules.length}</strong>
-                  </div>
+    <div className="dark theme min-h-screen bg-[#050608] text-foreground">
+      <TooltipProvider delay={100}>
+        <div className="flex min-h-screen bg-[#050608]">
+          <aside className="hidden w-[264px] shrink-0 border-r border-white/6 bg-[#07080c] px-4 py-4 md:flex md:flex-col">
+            <div className="rounded-2xl border border-white/8 bg-[#0d0f15] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h1 className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-white">Mission OS</h1>
                 </div>
               </div>
             </div>
 
-            <nav className="mt-8 space-y-1.5">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  className={cx("app-nav-link", mission.activeView === item.id && "app-nav-link--active")}
-                  onClick={() => {
-                    startTransition(() => {
-                      mission.setActiveView(item.id);
-                    });
-                  }}
-                >
-                  <span className="app-nav-label">{item.label}</span>
-                  <span className="app-nav-hint">{item.hint}</span>
-                </button>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <div className="rounded-2xl border border-white/8 bg-[#0d0f15] p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Runtimes</div>
+                <div className="mt-2 text-2xl font-semibold text-white">{mission.missionSnapshot.providerAgents.length}</div>
+              </div>
+              <div className="rounded-2xl border border-white/8 bg-[#0d0f15] p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Tasks</div>
+                <div className="mt-2 text-2xl font-semibold text-white">{mission.missionSnapshot.tasks.length}</div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex-1 space-y-6 overflow-y-auto pr-1">
+              {NAV_GROUPS.map((group) => (
+                <div key={group.label}>
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
+                    {group.label}
+                  </div>
+                  <div className="space-y-1.5">
+                    {group.items.map((id) => {
+                      const item = NAV_ITEMS.find((entry) => entry.id === id);
+                      if (!item) return null;
+                      const Icon = item.icon;
+                      const isActive = mission.activeView === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          className={cn(
+                            "flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left transition",
+                            isActive
+                              ? "bg-white text-black shadow-[0_10px_30px_rgba(255,255,255,0.08)]"
+                              : "text-white/72 hover:bg-white/5 hover:text-white",
+                          )}
+                          onClick={() => {
+                            startTransition(() => {
+                              mission.setActiveView(item.id);
+                            });
+                          }}
+                        >
+                          <Icon className={cn("mt-0.5 size-4 shrink-0", isActive ? "text-black" : "text-white/45")} />
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium">{item.label}</div>
+                            <div className={cn("mt-0.5 text-xs", isActive ? "text-black/65" : "text-white/40")}>
+                              {item.hint}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               ))}
-            </nav>
+            </div>
+          </aside>
 
-            <div className="mt-auto rounded-[22px] border border-[#171a21] bg-[#0d0f14] p-4">
-              <div className="app-kicker">Status</div>
-              <p className="mt-2 text-sm leading-6 text-[#d8dce5]">
-                {mission.missionSnapshot.taskSync.message || formatRelativeUpdate(mission.missionSnapshot.taskSync.updatedAt)}
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <span className="mission-badge">Task sync {mission.missionSnapshot.taskSync.state}</span>
-                <span className="mission-badge">{onboardingProgress(mission.activeView)}</span>
+          <main className="min-w-0 flex-1">
+            <div className="sticky top-0 z-10 border-b border-white/6 bg-[rgba(5,6,8,0.9)] backdrop-blur-xl">
+              <div className="px-6 py-5 lg:px-8">
+                <div className="flex items-start justify-between gap-6">
+                  <div className="min-w-0">
+                    <Breadcrumb>
+                      <BreadcrumbList>
+                        <BreadcrumbItem>
+                          <span className="text-white/35">{meta.section}</span>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator>
+                          <ChevronRightIcon className="size-3.5 text-white/35" />
+                        </BreadcrumbSeparator>
+                        <BreadcrumbItem>
+                          <BreadcrumbPage>{meta.title}</BreadcrumbPage>
+                        </BreadcrumbItem>
+                      </BreadcrumbList>
+                    </Breadcrumb>
+                    <h2 className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">{meta.title}</h2>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">{meta.subtitle}</p>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge className="border-white/10 bg-white/5 text-white/65">{onboardingLabel(mission.activeView)}</Badge>
+                    <Badge className={cn("font-medium", connectionClass(mission.connectionState))}>
+                      {mission.connectionState}
+                    </Badge>
+                    <Badge className="border-white/10 bg-white/5 text-white/65">{mission.missionSnapshot.taskSync.state}</Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-white/10 bg-white/[0.03] text-white hover:bg-white/10 hover:text-white"
+                      onClick={() => void mission.refreshMission()}
+                    >
+                      <RefreshCcwIcon className="size-4" />
+                      Refresh
+                    </Button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </aside>
 
-        <main className="flex min-h-screen flex-col bg-transparent">
-          <header className="sticky top-0 z-10 border-b border-linear-line bg-[rgba(6,7,10,0.82)] px-4 py-4 backdrop-blur xl:px-8">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <div className="app-kicker">{onboardingProgress(mission.activeView)}</div>
-                <h2 className="mt-2 text-[32px] font-semibold tracking-[-0.045em] text-white">{current.title}</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-[#9ea4b2]">{current.subtitle}</p>
-              </div>
+            <div className="px-6 py-6 lg:px-8">
+              {mission.error && mission.connectionState !== "connecting" ? (
+                <div className="mb-5 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                  {mission.error}
+                </div>
+              ) : null}
 
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="mission-badge">{mission.missionSnapshot.taskSync.state}</span>
-                <span className="mission-badge">{mission.missionSnapshot.providerAgents.length} detected runtimes</span>
-                <button className="mission-button-muted" onClick={() => void mission.refreshMission()}>
-                  Refresh snapshot
-                </button>
-              </div>
+              {mission.activeView === "setup" ? (
+                <SetupView
+                  mission={mission}
+                  onAddIntegration={handleAddIntegration}
+                  onOpenOrg={() => mission.setActiveView("org")}
+                />
+              ) : null}
+              {mission.activeView === "org" ? <OrgView mission={mission} /> : null}
+              {mission.activeView === "work" ? <WorkView mission={mission} /> : null}
+              {mission.activeView === "runs" ? <RunsView mission={mission} /> : null}
+              {mission.activeView === "settings" ? <SettingsView mission={mission} /> : null}
             </div>
-          </header>
-
-          <div className="flex-1 px-4 py-5 xl:px-8 xl:py-6">
-            {mission.error && mission.connectionState !== "connecting" ? (
-              <div className="mb-4 rounded-[18px] border border-[#5b1f25] bg-[#1a0d11] px-4 py-3 text-sm font-medium text-[#ff9aa6]">
-                {mission.error}
-              </div>
-            ) : null}
-
-            {mission.activeView === "setup" ? <SetupView mission={mission} onAddIntegration={handleAddIntegration} /> : null}
-            {mission.activeView === "team" ? <TeamView mission={mission} /> : null}
-            {mission.activeView === "work" ? <WorkView mission={mission} /> : null}
-            {mission.activeView === "runs" ? <RunsView mission={mission} /> : null}
-            {mission.activeView === "settings" ? <SettingsView mission={mission} /> : null}
-          </div>
-        </main>
-      </div>
+          </main>
+        </div>
+      </TooltipProvider>
     </div>
   );
 }

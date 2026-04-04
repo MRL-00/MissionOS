@@ -43,7 +43,7 @@ import type {
 } from "../src/mission/types";
 import { ensureDataDir } from "./auth/storage";
 import { pushActivity } from "./activity";
-import { agentStates, applyEvent, getOrderedStates, upsertRegistration } from "./agents";
+import { agentAppearances, agentStates, applyEvent, getOrderedStates, residentDeskAssignments, upsertRegistration } from "./agents";
 import {
   createAgentStateWatcher,
   DEFAULT_HERMES_AGENT_STATE_FILE,
@@ -68,6 +68,7 @@ import { getAdapter, initializeAdapters } from "./adapters/registry";
 import type { AdapterMessage, AdapterTaskRunArtifact, AdapterTaskRunEvent, AdapterType } from "./adapters/types";
 import { generateId } from "./utils";
 import { isProviderAgentActivelyExecuting } from "../src/mission/providerAgents";
+import { queuePersistAgents } from "./persistence";
 
 interface ProviderConnectorState extends ProviderConnector {
   token?: string | undefined;
@@ -148,6 +149,18 @@ function joinRuntimeHostAndPort(runtimeHost: string, runtimePort: number): strin
   return `${normalizeHermesRuntimeHost(runtimeHost)}:${runtimePort}`;
 }
 
+function hasExplicitUrlPort(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  try {
+    return Boolean(new URL(trimmed).port);
+  } catch {
+    return /:\d+(?:\/|$)/.test(trimmed);
+  }
+}
+
 function parseRuntimePortFromUrl(runtimeBaseUrl: string | undefined, runtimeHost: string | undefined): number | undefined {
   const runtimeUrl = runtimeBaseUrl?.trim() ?? "";
   const sharedHost = runtimeHost?.trim().replace(/\/+$/, "") ?? "";
@@ -195,7 +208,10 @@ function resolvedHermesRuntimeBaseUrl(connector: ProviderConnectorState): string
   if (runtimeHost && runtimePort) {
     return joinRuntimeHostAndPort(runtimeHost, runtimePort);
   }
-  return runtimeHost;
+  if (runtimeHost && hasExplicitUrlPort(runtimeHost)) {
+    return normalizeHermesRuntimeHost(runtimeHost);
+  }
+  return "";
 }
 
 function connectorAccessToken(connector: ProviderConnectorState): string {
@@ -203,6 +219,16 @@ function connectorAccessToken(connector: ProviderConnectorState): string {
     return connector.token?.trim() ?? "";
   }
   return connector.token?.trim() || (connectorUsesHermesDefaults(connector) ? defaultHermesToken() : "");
+}
+
+function connectorHasRunnableConfig(connector: ProviderConnectorState): boolean {
+  if (!connector.enabled) {
+    return false;
+  }
+  if (connector.provider === "hermes") {
+    return Boolean(connector.baseUrl?.trim());
+  }
+  return true;
 }
 
 function providerCapabilities(provider: MissionProvider): ProviderConnector["capabilities"] {
@@ -276,14 +302,15 @@ function defaultConnector(provider: MissionProvider, id: string, label?: string)
     enabled: false,
     authMode: "none" as const,
     tokenConfigured: false,
+    adapterConfig: adapter?.defaultConfig(),
     capabilities: providerCapabilities(provider),
     health: {
       provider,
-      status: "disabled" as const,
+      status: "idle" as const,
       checkedAt: Date.now(),
       activeAgents: 0,
       schedules: 0,
-      message: `Configure ${adapter?.label ?? provider} in Settings.`,
+      message: `Configure ${adapter?.label ?? provider} and test the CLI.`,
     },
     lastSyncAt: undefined,
   };
@@ -679,6 +706,44 @@ function buildWatcherHealth(
   return buildHermesStateHealth(connector, snapshot.agents, source);
 }
 
+function isHermesRuntimeEventsMissing(error: unknown): boolean {
+  return error instanceof Error
+    && /Hermes runtime events request failed \(404\b/i.test(error.message);
+}
+
+function markConnectorRuntimeNotice(connectorId: string, message: string): void {
+  const connector = connectorInstances.get(connectorId);
+  if (!connector) {
+    return;
+  }
+
+  connectorInstances.set(connectorId, {
+    ...connector,
+    health: {
+      ...connector.health,
+      status: connector.health.status === "disabled" ? "disabled" : "ok",
+      checkedAt: Date.now(),
+      message,
+    },
+  });
+  broadcastMissionSnapshot();
+}
+
+function startHermesRemoteStatePolling(connectorId: string, sshHost: string): void {
+  const connector = connectorInstances.get(connectorId);
+  const runtime = hermesConnectorRuntimes.get(connectorId);
+  if (!connector || connector.provider !== "hermes" || !connector.enabled || !runtime || !sshHost || runtime.remoteStateTimer) {
+    return;
+  }
+
+  console.log(`[mission-control] Hermes remote state polling enabled for ${connectorId} via ${sshHost}.`);
+  runtime.remoteStateTimer = setInterval(() => {
+    void refreshRemoteHermesState(connectorId);
+  }, HERMES_REMOTE_STATE_POLL_MS);
+  runtime.remoteStateTimer.unref?.();
+  void refreshRemoteHermesState(connectorId);
+}
+
 function applyProviderSyncResult(
   connectorId: string,
   health: ProviderHealth,
@@ -1005,6 +1070,29 @@ function startHermesRuntimeSubscription(connectorId: string): void {
     if (runtime.eventStream === handle) {
       runtime.eventStream = null;
     }
+    const currentConnector = connectorInstances.get(connectorId);
+    const currentSshHost = currentConnector ? resolvedHermesSshHost(currentConnector) : "";
+    const endpoint = `${runtimeBaseUrl.replace(/\/+$/, "")}/events`;
+
+    if (isHermesRuntimeEventsMissing(error)) {
+      if (currentSshHost) {
+        console.warn(`[mission-control] Hermes runtime events are unavailable for ${connectorId} at ${endpoint}; falling back to SSH state polling via ${currentSshHost}.`);
+        markConnectorRuntimeNotice(
+          connectorId,
+          `Live runtime events are unavailable at ${endpoint} (404). Falling back to SSH state polling via ${currentSshHost}.`,
+        );
+        startHermesRemoteStatePolling(connectorId, currentSshHost);
+        return;
+      }
+
+      console.warn(`[mission-control] Hermes runtime events are unavailable for ${connectorId} at ${endpoint}.`);
+      markConnectorRuntimeNotice(
+        connectorId,
+        `Live runtime events are unavailable at ${endpoint} (404). Hermes can still run tasks, but that runtime URL does not expose the event stream.`,
+      );
+      return;
+    }
+
     console.error(`[mission-control] Hermes runtime event stream failed for ${connectorId}:`, error);
     markConnectorRuntimeError(
       connectorId,
@@ -1325,6 +1413,15 @@ export async function updateMissionConnector(connectorId: string, updates: Provi
     useHermesDefaults: updates.useHermesDefaults ?? current.useHermesDefaults,
   };
 
+  if (current.enabled !== next.enabled) {
+    next.health = {
+      ...next.health,
+      checkedAt: Date.now(),
+      status: next.enabled ? "idle" : "disabled",
+      message: next.enabled ? `Connector enabled. Test ${next.label} to confirm it is reachable.` : "Connector disabled.",
+    };
+  }
+
   connectorInstances.set(connectorId, next);
   if (!next.enabled) {
     mergeProviderAgents(connectorId, next.provider, []);
@@ -1386,6 +1483,65 @@ function existingAgentForBootstrap(input: MissionTeamBootstrapAgentInput): Agent
   return linkedId ? agentStates.get(linkedId) : undefined;
 }
 
+function bootstrapScopeConnectorIds(entries: MissionTeamBootstrapAgentInput[]): Set<string> {
+  const connectorIds = new Set<string>();
+  entries.forEach((entry) => {
+    const connectorId = entry.connectorId.trim();
+    if (connectorId) {
+      connectorIds.add(connectorId);
+    }
+  });
+
+  if (connectorIds.size > 0) {
+    return connectorIds;
+  }
+
+  agentStates.forEach((state) => {
+    const connectorId = state.backendLink?.connectorId?.trim();
+    if (connectorId) {
+      connectorIds.add(connectorId);
+    }
+  });
+
+  return connectorIds;
+}
+
+function removeBootstrappedAgents(scopeConnectorIds: Set<string>, retainedAgentIds: Set<string>): void {
+  if (scopeConnectorIds.size === 0) {
+    return;
+  }
+
+  const removedAgentIds: string[] = [];
+  agentStates.forEach((state, agentId) => {
+    const connectorId = state.backendLink?.connectorId?.trim();
+    if (!connectorId || !scopeConnectorIds.has(connectorId) || retainedAgentIds.has(agentId)) {
+      return;
+    }
+
+    agentStates.delete(agentId);
+    residentDeskAssignments.delete(agentId);
+    agentAppearances.delete(agentId);
+    removedAgentIds.push(agentId);
+  });
+
+  if (removedAgentIds.length === 0) {
+    return;
+  }
+
+  agentStates.forEach((state, agentId) => {
+    if (state.parentAgentId && removedAgentIds.includes(state.parentAgentId)) {
+      agentStates.set(agentId, {
+        ...state,
+        parentAgentId: undefined,
+      });
+    }
+  });
+
+  removedAgentIds.forEach((agentId) => {
+    broadcast?.({ type: "agent-removed", agentId });
+  });
+}
+
 async function upsertBootstrapAgent(
   input: MissionTeamBootstrapAgentInput,
   idRemap: Map<string, string>,
@@ -1431,10 +1587,6 @@ export async function bootstrapMissionTeam(input: MissionTeamBootstrapRequest): 
     }))
     .filter((entry) => entry.officeAgentId && entry.connectorId && entry.externalId && entry.name && entry.role);
 
-  if (trimmedAgents.length === 0) {
-    throw new RequestBodyError("Add at least one agent to bootstrap the team.");
-  }
-
   const duplicateIds = new Set<string>();
   const seenIds = new Set<string>();
   trimmedAgents.forEach((entry) => {
@@ -1447,6 +1599,7 @@ export async function bootstrapMissionTeam(input: MissionTeamBootstrapRequest): 
     throw new RequestBodyError(`Duplicate office agent ids: ${Array.from(duplicateIds).join(", ")}`);
   }
 
+  const scopeConnectorIds = bootstrapScopeConnectorIds(trimmedAgents);
   const idRemap = new Map<string, string>();
   trimmedAgents.forEach((entry) => {
     const existing = existingAgentForBootstrap(entry);
@@ -1458,6 +1611,10 @@ export async function bootstrapMissionTeam(input: MissionTeamBootstrapRequest): 
     touchedConnectors.add(entry.connectorId);
     idRemap.set(entry.officeAgentId, nextState.id);
   }
+  removeBootstrappedAgents(scopeConnectorIds, new Set(idRemap.values()));
+  if (scopeConnectorIds.size > 0) {
+    await queuePersistAgents();
+  }
 
   const requestedCommandAgentId = input.commandAgentId?.trim() || "";
   const resolvedCommandAgentId = requestedCommandAgentId
@@ -1468,12 +1625,15 @@ export async function bootstrapMissionTeam(input: MissionTeamBootstrapRequest): 
 
   teamSettings = {
     commandAgentId: commandAgent?.id,
-    defaultRunConnectorId: requestedDefaultConnectorId
+    defaultRunConnectorId: trimmedAgents.length > 0
+      ? (requestedDefaultConnectorId
       || commandAgent?.backendLink?.connectorId
-      || teamSettings.defaultRunConnectorId,
+      || undefined)
+      : undefined,
   };
 
-  touchedConnectors.forEach((connectorId) => {
+  const connectorsToRefresh = new Set<string>([...scopeConnectorIds, ...touchedConnectors]);
+  connectorsToRefresh.forEach((connectorId) => {
     const currentProviderAgents = providerAgents.filter((entry) => entry.connectorId === connectorId);
     const connector = connectorInstances.get(connectorId);
     if (connector) {
@@ -1523,9 +1683,9 @@ async function runConnectorSync(connectorId: string, announceSync: boolean): Pro
         ...connector,
         health: {
           ...connector.health,
-          status: connector.enabled && connector.baseUrl ? "syncing" : "disabled",
+          status: connectorHasRunnableConfig(connector) ? "syncing" : "disabled",
           checkedAt: Date.now(),
-          message: connector.enabled && connector.baseUrl ? `Syncing ${connector.label}...` : "Connector disabled.",
+          message: connectorHasRunnableConfig(connector) ? `Syncing ${connector.label}...` : "Connector disabled.",
         },
       }
     : connector;
@@ -1656,7 +1816,7 @@ export async function addMissionTaskComment(taskId: string, input: MissionTaskCo
 
 function adapterConfigForConnector(connectorId: string): Record<string, unknown> | null {
   const connector = connectorInstances.get(connectorId);
-  if (!connector?.enabled || !connector.baseUrl) return null;
+  if (!connector || !connectorHasRunnableConfig(connector)) return null;
   return {
     ...connector.adapterConfig,
     baseUrl: connector.baseUrl,
@@ -1968,6 +2128,12 @@ export async function createMissionConnector(provider: MissionProvider, label?: 
 
   const connector = defaultConnector(provider, id, label);
   connector.enabled = true;
+  connector.health = {
+    ...connector.health,
+    checkedAt: Date.now(),
+    status: "idle",
+    message: `Connector added. Configure ${connector.label} and run Test.`,
+  };
   connectorInstances.set(id, connector);
   await queuePersistMissionControl();
   await reconcileConnectorRuntime(id);
@@ -2039,12 +2205,7 @@ async function reconcileConnectorRuntime(connectorId: string): Promise<void> {
   }
 
   if (sshHost) {
-    console.log(`[mission-control] Hermes remote state polling enabled for ${connectorId} via ${sshHost}.`);
-    runtime.remoteStateTimer = setInterval(() => {
-      void refreshRemoteHermesState(connectorId);
-    }, HERMES_REMOTE_STATE_POLL_MS);
-    runtime.remoteStateTimer.unref?.();
-    await refreshRemoteHermesState(connectorId);
+    startHermesRemoteStatePolling(connectorId, sshHost);
     return;
   }
 

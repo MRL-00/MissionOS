@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import type { ProviderConnector } from "../src/mission/types";
-import { syncProviderConnector } from "./provider-connectors";
+import { syncProviderConnector, syncProviderConnectorWithLookup } from "./provider-connectors";
 
 const originalFetch = globalThis.fetch;
 
@@ -55,6 +55,23 @@ test("syncProviderConnector returns disabled health when connector is disabled",
   const result = await syncProviderConnector(connector);
 
   assert.equal(result.health.status, "disabled");
+  assert.equal(result.agents.length, 0);
+  assert.equal(result.schedules.length, 0);
+});
+
+test("syncProviderConnector supports enabled local CLI connectors without a baseUrl", async () => {
+  const connector = baseConnector("claude-local", "");
+  const result = await syncProviderConnectorWithLookup(connector, () => ({
+    type: "claude-local",
+    label: "Claude Code",
+    configFields: () => [],
+    defaultConfig: () => ({ cliPath: "claude" }),
+    testConnection: async () => ({ ok: true, message: "Claude CLI 1.2.3", latencyMs: 12 }),
+    syncAgents: async () => [],
+  }));
+
+  assert.equal(result.health.status, "ok");
+  assert.equal(result.health.message, "Claude CLI 1.2.3");
   assert.equal(result.agents.length, 0);
   assert.equal(result.schedules.length, 0);
 });

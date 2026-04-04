@@ -1,8 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { App } from "./app";
 import type { ProviderConnector } from "./mission/types";
 
-function createMissionControlState(activeView: "setup" | "team" | "work" | "runs" | "settings" = "setup") {
+function createMissionControlState(activeView: "setup" | "org" | "work" | "runs" | "settings" = "setup") {
   const connectors: ProviderConnector[] = [
     {
       id: "hermes",
@@ -173,10 +173,10 @@ describe("App", () => {
   it("renders the setup-first shell", async () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { level: 1, name: /AgentTeams/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Bring your runtimes online" })).toBeInTheDocument();
-    expect(screen.getByText("Start with runtimes, not org charts")).toBeInTheDocument();
-    expect(screen.getByText("Connected runtimes")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: /Mission OS/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Connect the office" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Org" })).toBeInTheDocument();
+    expect(screen.queryByText("Pickle")).not.toBeInTheDocument();
   });
 
   it("renders settings view with connector config", () => {
@@ -184,17 +184,76 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(screen.getByText("Advanced settings")).toBeInTheDocument();
-    expect(screen.getAllByText("Hermes").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("heading", { level: 2, name: "Advanced settings" })).toBeInTheDocument();
+    expect(screen.getByText("Workspace overview")).toBeInTheDocument();
+    expect(screen.getByText("Runtime overview")).toBeInTheDocument();
+    expect(screen.queryByText("Hermes shared connection details")).not.toBeInTheDocument();
   });
 
-  it("renders team view", () => {
-    mockMissionControlState = createMissionControlState("team");
+  it("opens the org page from setup", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Org" }));
+
+    expect(mockMissionControlState.setActiveView).toHaveBeenCalledWith("org");
+  });
+
+  it("only shows Hermes shared details when Hermes is selected", () => {
+    mockMissionControlState = createMissionControlState();
+    mockMissionControlState.missionSnapshot.connectors = [
+      ...mockMissionControlState.missionSnapshot.connectors,
+      {
+        id: "claude-local",
+        provider: "claude-local",
+        label: "Claude Code",
+        enabled: true,
+        baseUrl: "claude",
+        authMode: "none",
+        tokenConfigured: false,
+        capabilities: {
+          agents: true,
+          schedules: false,
+          activeWork: true,
+          launch: true,
+          subscribe: false,
+        },
+        health: {
+          provider: "claude-local",
+          status: "ok",
+          checkedAt: Date.now(),
+          activeAgents: 1,
+          schedules: 0,
+          message: "Healthy",
+        },
+      },
+    ];
 
     render(<App />);
 
-    expect(screen.getByText("Turn runtimes into a visible org")).toBeInTheDocument();
-    expect(screen.getByText("Current org")).toBeInTheDocument();
-    expect(screen.getAllByText("Pickle").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Hermes shared connection details")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Claude Code"));
+
+    expect(screen.queryByText("Hermes shared connection details")).not.toBeInTheDocument();
+  });
+
+  it("renders the org page", () => {
+    mockMissionControlState = createMissionControlState("org");
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "Build the org" })).toBeInTheDocument();
+    expect(screen.getByText("Org chart")).toBeInTheDocument();
+    expect(screen.getByText("Edit org members")).toBeInTheDocument();
+    expect(screen.getByText("Save the org")).toBeInTheDocument();
+    expect(screen.getByTestId("org-chart")).toBeInTheDocument();
+  });
+
+  it("opens the org page from the left nav org action", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Org Map reporting lines" }));
+
+    expect(mockMissionControlState.setActiveView).toHaveBeenCalledWith("org");
   });
 });

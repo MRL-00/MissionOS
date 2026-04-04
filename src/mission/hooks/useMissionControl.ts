@@ -34,8 +34,21 @@ import {
   updateMissionTask,
 } from "../api";
 
-export type MissionView = "setup" | "team" | "work" | "runs" | "settings";
+export type MissionView = "setup" | "org" | "work" | "runs" | "settings";
 type ConnectionState = "connecting" | "connected" | "offline";
+
+const MISSION_VIEWS: MissionView[] = ["setup", "org", "work", "runs", "settings"];
+
+function isMissionView(value: string): value is MissionView {
+  return MISSION_VIEWS.includes(value as MissionView);
+}
+
+function initialMissionView(): MissionView {
+  if (typeof window === "undefined") return "setup";
+  const value = window.location.hash.replace(/^#/, "").trim().toLowerCase();
+  if (value === "team") return "org";
+  return isMissionView(value) ? value : "setup";
+}
 
 const EMPTY_SNAPSHOT: MissionControlSnapshot = {
   connectors: [],
@@ -96,7 +109,7 @@ function applyAgentEvent(previous: AgentRuntimeState[], event: AgentEvent): Agen
 }
 
 export function useMissionControl() {
-  const [activeView, setActiveView] = useState<MissionView>("setup");
+  const [activeView, setActiveView] = useState<MissionView>(initialMissionView);
   const [agents, setAgents] = useState<AgentRuntimeState[]>([]);
   const [missionSnapshot, setMissionSnapshot] = useState<MissionControlSnapshot>(EMPTY_SNAPSHOT);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -193,6 +206,30 @@ export function useMissionControl() {
     return () => {
       client.disconnect();
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nextHash = `#${activeView}`;
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, "", nextHash);
+    }
+  }, [activeView]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onHashChange = () => {
+      const value = window.location.hash.replace(/^#/, "").trim().toLowerCase();
+      if (value === "team") {
+        setActiveView("org");
+        return;
+      }
+      if (isMissionView(value)) {
+        setActiveView(value);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
   useEffect(() => {
@@ -305,10 +342,8 @@ export function useMissionControl() {
   async function testConnectorHealth(connectorId: string): Promise<void> {
     const connector = await runBusyAction(`connector:${connectorId}:test`, () => testMissionConnector(connectorId));
     if (connector) {
-      setMissionSnapshot((current) => ({
-        ...current,
-        connectors: current.connectors.map((entry) => (entry.id === connectorId ? connector : entry)),
-      }));
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
     }
   }
 

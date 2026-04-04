@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { AgentRuntimeState } from "../../types";
 import type { ProviderAgentRecord } from "../types";
 import { AgentNode } from "./AgentNode";
@@ -120,12 +120,28 @@ export function OrgChart({
     setViewport((current) => projectViewport(current, originX, originY, nextScale));
   }, []);
 
-  const handleWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     event.preventDefault();
 
     const scaleDelta = Math.exp(-event.deltaY * 0.0015);
     zoomFromClientPoint(event.clientX, event.clientY, viewport.scale * scaleDelta);
   }, [viewport.scale, zoomFromClientPoint]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return undefined;
+    }
+
+    const listener = (event: WheelEvent) => {
+      handleWheel(event);
+    };
+
+    container.addEventListener("wheel", listener, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", listener);
+    };
+  }, [handleWheel]);
 
   const zoomAroundCenter = useCallback((factor: number) => {
     const container = containerRef.current;
@@ -192,7 +208,6 @@ export function OrgChart({
       onPointerMove={handlePointerMove}
       onPointerUp={stopPanning}
       onPointerCancel={stopPanning}
-      onWheel={handleWheel}
     >
       <div className="org-chart__toolbar">
         <span className="org-chart__hint">Drag to pan · Scroll to zoom</span>
