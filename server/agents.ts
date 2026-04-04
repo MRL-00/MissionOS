@@ -133,7 +133,8 @@ export function isRegistration(value: unknown): value is AgentRegistration {
     (registration.emoji === undefined || typeof registration.emoji === "string") &&
     (registration.type === undefined || VALID_AGENT_TYPES.has(registration.type)) &&
     (registration.appearance === undefined || isAgentAppearance(registration.appearance)) &&
-    (registration.backendLink === undefined || isBackendLink(registration.backendLink))
+    (registration.backendLink === undefined || isBackendLink(registration.backendLink)) &&
+    (registration.parentAgentId === undefined || registration.parentAgentId === null || typeof registration.parentAgentId === "string")
   );
 }
 
@@ -287,6 +288,7 @@ export function normalizeBackendLink(
 
   return {
     provider: base.provider,
+    connectorId: base.connectorId,
     connected: base.connected,
     agentId: base.agentId,
     tokenId: base.tokenId,
@@ -525,6 +527,10 @@ export async function upsertRegistration(body: AgentRegistration, mode: "create"
   const nextStatus: RealtimeAgentStatus = mode === "create" ? "entering" : (existing?.status ?? "idle");
   const nextLocation: AgentEventLocation = mode === "create" ? "door" : (existing?.location ?? "desk");
 
+  const parentAgentId = body.parentAgentId !== undefined
+    ? (body.parentAgentId || undefined)
+    : existing?.parentAgentId;
+
   const nextState: AgentRuntimeState = {
     id: body.id,
     name: body.name,
@@ -532,6 +538,7 @@ export async function upsertRegistration(body: AgentRegistration, mode: "create"
     emoji,
     type,
     backendLink,
+    parentAgentId,
     connected: true,
     status: nextStatus,
     location: nextLocation,

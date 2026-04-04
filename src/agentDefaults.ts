@@ -2,20 +2,14 @@ import type { AgentAppearance, AgentConfig } from "./types";
 import defaultAppearancesJson from "./config/default-appearances.json";
 
 const DEFAULT_APPEARANCES = defaultAppearancesJson as AgentConfig[];
-const DESKLESS_AGENT_IDS = new Set(["charlie"]);
+const DESKLESS_AGENT_IDS = new Set<string>();
 
 const KNOWN_DESK_INDICES = {
-  pickle: 0,
-  zoe: 1,
-  ink: 2,
-  harry: 3,
-  kevin: 4,
-  danny: 5,
-  johnny: 6,
-  tommy: 7,
-  randall: 8,
-  cio: 9,
-  jared: 10,
+  "lead-engineer": 0,
+  "ios-dev": 1,
+  "fullstack-dev": 2,
+  qa: 3,
+  support: 4,
 } as const satisfies Record<string, number>;
 
 const HEAD_SHAPES = ["round", "oval", "square"] as const;

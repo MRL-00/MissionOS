@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-c", "export PATH=$HOME/.nvm/versions/node/v22.19.0/bin:/opt/homebrew/bin:$PATH && pnpm dev:client"],
+      "port": 5173
+    }
+  ]
+}

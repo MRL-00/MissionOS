@@ -45,6 +45,7 @@ export function toPersistedRecord(state: AgentRuntimeState): PersistedAgentRecor
     type: state.type ?? "visitor",
     appearance,
     backendLink: normalizeBackendLink(state.backendLink),
+    parentAgentId: state.parentAgentId,
     deskIndex: state.deskIndex,
   };
 }
@@ -92,6 +93,7 @@ export function applyPersistedAgent(record: PersistedAgentRecord): void {
     emoji: record.emoji,
     type,
     backendLink: normalizeBackendLink(record.backendLink),
+    parentAgentId: record.parentAgentId ?? undefined,
     connected: true,
     status: "idle",
     location: "desk",

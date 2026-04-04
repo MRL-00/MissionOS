@@ -27,12 +27,10 @@ import {
   upsertRegistration,
 } from "./agents";
 import { MeetingEngine } from "./meeting";
-import { normalizeToolSessions, openClawStates, applyOpenClawSessions, startOpenClawSync } from "./openclaw-sync";
 import { loadPersistedAgents, queuePersistAgents } from "./persistence";
 import { configureRemoteOfficeMirror, startRemoteOfficeMirror } from "./remote-mirror";
 import { launchAgentOnRuntimeTarget } from "./runtime-launcher";
 import { DEFAULT_HEADERS, PORT, RequestBodyError } from "./types";
-import type { MissionProvider } from "../src/mission/types";
 import { readJson, sendJson } from "./utils";
 import {
   buildWorkflowSnapshot,
@@ -60,23 +58,29 @@ import {
 } from "./workflow";
 import {
   addMissionTaskComment,
+  bootstrapMissionTeam,
   configureMissionControlRuntime,
-  createMissionTaskHandoff,
+  createMissionConnector,
+  deleteMissionConnector,
+  fetchAgentMessages,
   getMissionControlSnapshot,
   getMissionTaskDetail,
+  isHermesDefaultsUpdateRequest,
+  isConnectorCreateRequest,
   isMissionTaskCommentCreateRequest,
-  isMissionTaskHandoffCreateRequest,
-  isMissionTaskHandoffResponseRequest,
+  isMissionTeamBootstrapRequest,
   isMissionTaskUpdateRequest,
   isProviderConnectorUpdateRequest,
   listMissionConnectors,
   listMissionSchedules,
   listMissionTasks,
   listProviderAgents,
-  respondMissionTaskHandoff,
+  sendAgentMessage,
+  startMissionTaskRun,
   startMissionControl,
   syncMissionConnector,
   testMissionConnector,
+  updateHermesDefaults,
   updateMissionConnector,
   updateMissionTask,
 } from "./mission-control";
@@ -235,6 +239,16 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
+    if ((method === "PATCH" || method === "PUT") && url.pathname === "/api/mission/hermes-defaults") {
+      const body = await readJson<unknown>(request);
+      if (!isHermesDefaultsUpdateRequest(body)) {
+        throw new RequestBodyError("Invalid Hermes defaults payload");
+      }
+      const defaults = await updateHermesDefaults(body);
+      sendJson(response, 200, { defaults });
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/api/mission/connectors") {
       sendJson(response, 200, { connectors: listMissionConnectors() });
       return;
@@ -250,38 +264,64 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
+    if (method === "POST" && url.pathname === "/api/mission/team/bootstrap") {
+      const body = await readJson<unknown>(request);
+      if (!isMissionTeamBootstrapRequest(body)) {
+        throw new RequestBodyError("Invalid mission team bootstrap payload");
+      }
+      const result = await bootstrapMissionTeam(body);
+      sendJson(response, 200, result);
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/api/mission/tasks") {
       sendJson(response, 200, { tasks: listMissionTasks() });
       return;
     }
 
-    const connectorMatch = (method === "PATCH" || method === "PUT" || method === "POST")
+    if (method === "POST" && url.pathname === "/api/mission/connectors") {
+      const body = await readJson<unknown>(request);
+      if (!isConnectorCreateRequest(body)) {
+        throw new RequestBodyError("Invalid connector create payload");
+      }
+      const connector = await createMissionConnector(body.provider, body.label);
+      sendJson(response, 201, { connector });
+      return;
+    }
+
+    const connectorMatch = (method === "PATCH" || method === "PUT" || method === "POST" || method === "DELETE")
       ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)$/)
       : null;
     if (connectorMatch && (method === "PATCH" || method === "PUT")) {
-      const provider = decodeURIComponent(connectorMatch[1] ?? "") as MissionProvider;
+      const connectorId = decodeURIComponent(connectorMatch[1] ?? "");
       const body = await readJson<unknown>(request);
       if (!isProviderConnectorUpdateRequest(body)) {
         throw new RequestBodyError("Invalid connector update payload");
       }
 
-      const connector = await updateMissionConnector(provider, body);
+      const connector = await updateMissionConnector(connectorId, body);
       sendJson(response, 200, { connector });
+      return;
+    }
+    if (connectorMatch && method === "DELETE") {
+      const connectorId = decodeURIComponent(connectorMatch[1] ?? "");
+      await deleteMissionConnector(connectorId);
+      sendJson(response, 200, { ok: true });
       return;
     }
 
     const connectorTestMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)\/test$/) : null;
     if (connectorTestMatch) {
-      const provider = decodeURIComponent(connectorTestMatch[1] ?? "") as MissionProvider;
-      const connector = await testMissionConnector(provider);
+      const connectorId = decodeURIComponent(connectorTestMatch[1] ?? "");
+      const connector = await testMissionConnector(connectorId);
       sendJson(response, 200, { connector });
       return;
     }
 
     const connectorSyncMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/connectors\/([^/]+)\/sync$/) : null;
     if (connectorSyncMatch) {
-      const provider = decodeURIComponent(connectorSyncMatch[1] ?? "") as MissionProvider;
-      const connector = await syncMissionConnector(provider);
+      const connectorId = decodeURIComponent(connectorSyncMatch[1] ?? "");
+      const connector = await syncMissionConnector(connectorId);
       sendJson(response, 200, { connector });
       return;
     }
@@ -317,29 +357,11 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
-    const missionTaskHandoffMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/tasks\/([^/]+)\/handoffs$/) : null;
-    if (missionTaskHandoffMatch) {
-      const taskId = decodeURIComponent(missionTaskHandoffMatch[1] ?? "");
-      const body = await readJson<unknown>(request);
-      if (!isMissionTaskHandoffCreateRequest(body)) {
-        throw new RequestBodyError("Invalid mission handoff payload");
-      }
-      const handoff = await createMissionTaskHandoff(taskId, body);
-      sendJson(response, 201, { handoff });
-      return;
-    }
-
-    const missionHandoffResponseMatch = (method === "PATCH" || method === "POST")
-      ? url.pathname.match(/^\/api\/mission\/handoffs\/([^/]+)$/)
-      : null;
-    if (missionHandoffResponseMatch && (method === "PATCH" || method === "POST")) {
-      const handoffId = decodeURIComponent(missionHandoffResponseMatch[1] ?? "");
-      const body = await readJson<unknown>(request);
-      if (!isMissionTaskHandoffResponseRequest(body)) {
-        throw new RequestBodyError("Invalid mission handoff response payload");
-      }
-      const handoff = await respondMissionTaskHandoff(handoffId, body);
-      sendJson(response, 200, { handoff });
+    const missionTaskRunMatch = method === "POST" ? url.pathname.match(/^\/api\/mission\/tasks\/([^/]+)\/run$/) : null;
+    if (missionTaskRunMatch) {
+      const taskId = decodeURIComponent(missionTaskRunMatch[1] ?? "");
+      const execution = startMissionTaskRun(taskId);
+      sendJson(response, 202, { ok: true, execution });
       return;
     }
 
@@ -556,14 +578,6 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
-    if (method === "POST" && url.pathname === "/api/openclaw/sessions") {
-      const body = await readJson<{ sessions?: unknown[] }>(request);
-      const sessions = normalizeToolSessions(body);
-      await applyOpenClawSessions(sessions);
-      sendJson(response, 200, { ok: true, processed: sessions.length });
-      return;
-    }
-
     if (method === "POST" && url.pathname === "/api/agent/spawn") {
       const body = await readJson<unknown>(request);
       if (!isAgentSpawnRequest(body)) {
@@ -661,7 +675,6 @@ const httpServer = createServer(async (request, response) => {
           agentStates.delete(deleteAgentId);
           residentDeskAssignments.delete(deleteAgentId);
           agentAppearances.delete(deleteAgentId);
-          openClawStates.delete(deleteAgentId);
           await queuePersistAgents();
           broadcast({ type: "agent-removed", agentId: deleteAgentId });
           pushActivity("agent-status", `Removed agent ${existing.name}.`, deleteAgentId);
@@ -670,6 +683,24 @@ const httpServer = createServer(async (request, response) => {
           console.error(`Failed to remove agent ${deleteAgentId}`, error);
         });
       }, 350);
+      return;
+    }
+
+    const agentMessagesMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/messages$/);
+    if (agentMessagesMatch && method === "GET") {
+      const agentId = decodeURIComponent(agentMessagesMatch[1] ?? "");
+      const messages = await fetchAgentMessages(agentId);
+      sendJson(response, 200, { messages });
+      return;
+    }
+    if (agentMessagesMatch && method === "POST") {
+      const agentId = decodeURIComponent(agentMessagesMatch[1] ?? "");
+      const body = await readJson<unknown>(request);
+      if (typeof body !== "object" || body === null || typeof (body as Record<string, unknown>).message !== "string") {
+        throw new RequestBodyError("Expected { message: string }");
+      }
+      const result = await sendAgentMessage(agentId, (body as { message: string }).message);
+      sendJson(response, 200, { message: result });
       return;
     }
 
@@ -741,36 +772,11 @@ const httpServer = createServer(async (request, response) => {
   }
 });
 
-async function ensureCharlie(): Promise<void> {
-  if (agentStates.has("charlie")) {
-    return;
-  }
-  await upsertRegistration(
-    {
-      id: "charlie",
-      name: "Charlie",
-      role: "Support Agent",
-      emoji: "🐟",
-      type: "resident",
-      appearance: {
-        height: 0.85,
-        headShape: "round",
-        skinColor: "#FF6B35",
-        hairStyle: "none",
-        hairColor: "#FFFFFF",
-        bodyColor: "#FF6B35",
-        pantsColor: "#1A1A1A",
-        accessories: [],
-      },
-    },
-    "create",
-  );
-}
+// Agents are now discovered from providers (Hermes) or created manually via the Agents page.
 
 export async function start(): Promise<void> {
   await loadPersistedAgents();
   await loadPersistedWorkflow();
-  await ensureCharlie();
   await startMissionControl();
 
   websocketServer = new WebSocketServer({ server: httpServer });
@@ -805,7 +811,6 @@ export async function start(): Promise<void> {
     console.log(`Realtime server listening on ${listeningUrls(PORT).join(", ")}`);
   });
 
-  startOpenClawSync();
   startRemoteOfficeMirror();
 }
 

@@ -1,8 +1,35 @@
-export type MissionProvider = "openclaw" | "hermes";
+import type { AgentRuntimeState } from "../types";
+
+export type MissionProvider = "hermes" | "claude-local" | "codex-local";
+export type ProviderAgentActivityStatus =
+  | "idle"
+  | "building"
+  | "reviewing"
+  | "spec-writing"
+  | "pr-opened"
+  | "approved"
+  | "rejected";
+
+export interface AdapterConfigField {
+  key: string;
+  label: string;
+  type: "text" | "url" | "password" | "number" | "boolean";
+  placeholder?: string;
+  hint?: string;
+  required?: boolean;
+  colSpan?: 1 | 2;
+}
 export type MissionHealthStatus = "idle" | "syncing" | "ok" | "error" | "disabled";
 export type MissionScheduleStatus = "scheduled" | "running" | "paused" | "error" | "unknown";
 export type MissionSyncState = "idle" | "syncing" | "ok" | "error";
-export type MissionHandoffStatus = "pending" | "accepted" | "declined";
+export type MissionTaskExecutionStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "blocked"
+  | "review_ready"
+  | "completed"
+  | "failed";
 
 export interface MissionProviderCapabilities {
   agents: boolean;
@@ -23,18 +50,21 @@ export interface ProviderHealth {
 }
 
 export interface ProviderConnector {
+  id: string;
   provider: MissionProvider;
   label: string;
   enabled: boolean;
   baseUrl?: string | undefined;
   websocketUrl?: string | undefined;
   runtimeBaseUrl?: string | undefined;
-  syncIntervalMs: number;
   authMode: "none" | "bearer";
   tokenConfigured: boolean;
   capabilities: MissionProviderCapabilities;
   health: ProviderHealth;
   lastSyncAt?: number | undefined;
+  adapterConfig?: Record<string, unknown> | undefined;
+  configFields?: AdapterConfigField[] | undefined;
+  useHermesDefaults?: boolean | undefined;
 }
 
 export interface ProviderConnectorUpdateRequest {
@@ -42,18 +72,46 @@ export interface ProviderConnectorUpdateRequest {
   baseUrl?: string | undefined;
   websocketUrl?: string | undefined;
   runtimeBaseUrl?: string | undefined;
-  syncIntervalMs?: number | undefined;
   authMode?: "none" | "bearer" | undefined;
+  token?: string | undefined;
+  adapterConfig?: Record<string, unknown> | undefined;
+  useHermesDefaults?: boolean | undefined;
+}
+
+export interface HermesDefaults {
+  sshHost?: string | undefined;
+  runtimeHost?: string | undefined;
+  tokenConfigured: boolean;
+}
+
+export interface HermesDefaultsUpdateRequest {
+  sshHost?: string | undefined;
+  runtimeHost?: string | undefined;
   token?: string | undefined;
 }
 
+export interface MissionTeamSettings {
+  commandAgentId?: string | undefined;
+  defaultRunConnectorId?: string | undefined;
+}
+
 export interface ProviderAgentRecord {
+  connectorId: string;
   provider: MissionProvider;
   externalId: string;
   name: string;
   role?: string | undefined;
+  title?: string | undefined;
+  teamId?: string | undefined;
+  teamName?: string | undefined;
+  managerExternalId?: string | undefined;
+  reportsToExternalId?: string | undefined;
   officeAgentId?: string | undefined;
-  status: "idle" | "working" | "offline" | "unknown";
+  status: "online" | "offline" | "working" | "idle" | "unknown";
+  activityStatus?: ProviderAgentActivityStatus | null;
+  currentTicket?: string | null;
+  taskStage?: string | null;
+  lastActivityAt?: string | null;
   task?: string | undefined;
   lastSeenAt?: number | undefined;
   runtimeBaseUrl?: string | undefined;
@@ -61,6 +119,7 @@ export interface ProviderAgentRecord {
 }
 
 export interface ProviderScheduleEntry {
+  connectorId: string;
   id: string;
   provider: MissionProvider;
   name: string;
@@ -105,11 +164,57 @@ export interface MissionTaskCycle {
   number?: number | undefined;
 }
 
+export interface MissionTaskExecution {
+  runId: string;
+  connectorId: string;
+  status: MissionTaskExecutionStatus;
+  activeOwnerId?: string | undefined;
+  activeOwnerLabel?: string | undefined;
+  stage?: string | undefined;
+  message?: string | undefined;
+  updatedAt: number;
+}
+
+export type MissionTaskRunEventKind =
+  | "submitted"
+  | "started"
+  | "agent_state"
+  | "note"
+  | "completed"
+  | "failed";
+
+export interface MissionTaskRunEvent {
+  id: string;
+  taskId: string;
+  runId: string;
+  kind: MissionTaskRunEventKind;
+  summary: string;
+  status?: MissionTaskExecutionStatus | undefined;
+  actorId?: string | undefined;
+  actorLabel?: string | undefined;
+  createdAt: number;
+}
+
+export type MissionTaskRunArtifactKind = "response" | "link" | "log" | "note";
+
+export interface MissionTaskRunArtifact {
+  id: string;
+  taskId: string;
+  runId: string;
+  kind: MissionTaskRunArtifactKind;
+  label: string;
+  body?: string | undefined;
+  url?: string | undefined;
+  createdAt: number;
+}
+
 export interface MissionTask {
   id: string;
   identifier: string;
   title: string;
   description?: string | undefined;
+  gitBranchName?: string | undefined;
+  pullRequestUrls?: string[] | undefined;
   url?: string | undefined;
   priority: number;
   state: MissionTaskStatus;
@@ -127,6 +232,7 @@ export interface MissionTask {
   updatedAt: number;
   handoffCount: number;
   commentCount: number;
+  execution?: MissionTaskExecution | undefined;
 }
 
 export interface MissionTaskComment {
@@ -135,27 +241,16 @@ export interface MissionTaskComment {
   body: string;
   authorName: string;
   authorId?: string | undefined;
+  parentCommentId?: string | undefined;
   createdAt: number;
   source: "linear" | "office";
-}
-
-export interface MissionTaskHandoff {
-  id: string;
-  taskId: string;
-  fromAgentId?: string | undefined;
-  fromAgentName: string;
-  toAgentId?: string | undefined;
-  toAgentName: string;
-  note: string;
-  status: MissionHandoffStatus;
-  createdAt: number;
-  respondedAt?: number | undefined;
 }
 
 export interface MissionTaskDetail {
   task: MissionTask;
   comments: MissionTaskComment[];
-  handoffs: MissionTaskHandoff[];
+  events: MissionTaskRunEvent[];
+  artifacts: MissionTaskRunArtifact[];
 }
 
 export interface MissionTaskSnapshot {
@@ -181,12 +276,36 @@ export interface MissionRosterImportStatus {
 
 export interface MissionControlSnapshot {
   connectors: ProviderConnector[];
+  hermesDefaults: HermesDefaults;
+  teamSettings: MissionTeamSettings;
   providerAgents: ProviderAgentRecord[];
   schedules: ProviderScheduleEntry[];
   tasks: MissionTask[];
   rosterImport: MissionRosterImportStatus;
   taskSync: MissionSyncStatus;
   syncedAt: number;
+}
+
+export interface MissionTeamBootstrapAgentInput {
+  officeAgentId: string;
+  connectorId: string;
+  externalId: string;
+  name: string;
+  role: string;
+  emoji?: string | undefined;
+  type?: "resident" | "visitor" | undefined;
+  parentOfficeAgentId?: string | null | undefined;
+}
+
+export interface MissionTeamBootstrapRequest {
+  commandAgentId?: string | undefined;
+  defaultRunConnectorId?: string | undefined;
+  agents: MissionTeamBootstrapAgentInput[];
+}
+
+export interface MissionTeamBootstrapResult {
+  agents: AgentRuntimeState[];
+  snapshot: MissionControlSnapshot;
 }
 
 export interface MissionTaskUpdateRequest {
@@ -201,18 +320,15 @@ export interface MissionTaskUpdateRequest {
 
 export interface MissionTaskCommentCreateRequest {
   body: string;
+  parentCommentId?: string | undefined;
 }
 
-export interface MissionTaskHandoffCreateRequest {
-  fromAgentId?: string | undefined;
-  fromAgentName?: string | undefined;
-  toAgentId?: string | undefined;
-  toAgentName?: string | undefined;
-  note: string;
-}
-
-export interface MissionTaskHandoffResponseRequest {
-  status: Extract<MissionHandoffStatus, "accepted" | "declined">;
+export interface AgentMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp?: number | undefined;
+  agentName?: string | undefined;
 }
 
 export interface MissionTaskMutationResult {

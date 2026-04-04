@@ -1,35 +1,68 @@
 import { useEffect, useEffectEvent, useState } from "react";
 import { OfficeWebSocketClient } from "../../network/websocket";
-import type { AgentEvent, AgentRuntimeState, AgentSnapshotState, ServerMessage } from "../../types";
+import type { ActivityLogEntry, AgentEvent, AgentRegistration, AgentRuntimeState, AgentSnapshotState, ServerMessage } from "../../types";
 import type {
+  AgentMessage,
+  HermesDefaultsUpdateRequest,
   MissionControlSnapshot,
+  MissionTeamBootstrapRequest,
   MissionTaskCommentCreateRequest,
   MissionTaskDetail,
-  MissionTaskHandoff,
-  MissionTaskHandoffCreateRequest,
-  MissionTaskHandoffResponseRequest,
   MissionTaskUpdateRequest,
   ProviderConnector,
   ProviderConnectorUpdateRequest,
 } from "../types";
 import {
+  bootstrapMissionTeam,
+  createMissionConnector,
   createMissionTaskComment,
-  createMissionTaskHandoff,
+  deleteAgent,
+  deleteMissionConnector,
+  fetchActivityLog,
+  fetchAgentMessages,
   fetchAgents,
   fetchMissionSnapshot,
   fetchMissionTaskDetail,
-  respondMissionTaskHandoff,
+  registerAgent,
+  sendAgentMessage,
   syncMissionConnector,
   testMissionConnector,
+  startMissionTaskRun,
+  updateHermesDefaults,
+  updateAgent,
   updateMissionConnector,
   updateMissionTask,
 } from "../api";
 
-export type MissionView = "mission" | "tasks" | "schedules" | "settings";
+export type MissionView = "missions" | "agents" | "orgchart" | "issues" | "runs" | "onboarding" | "settings";
 type ConnectionState = "connecting" | "connected" | "offline";
+
+const MISSION_VIEWS: MissionView[] = ["missions", "agents", "orgchart", "issues", "runs", "onboarding", "settings"];
+
+function isMissionView(value: string): value is MissionView {
+  return MISSION_VIEWS.includes(value as MissionView);
+}
+
+const VIEW_ALIASES: Record<string, MissionView> = {
+  team: "orgchart",
+  org: "orgchart",
+  setup: "onboarding",
+  work: "missions",
+};
+
+function initialMissionView(): MissionView {
+  if (typeof window === "undefined") return "missions";
+  const value = window.location.hash.replace(/^#/, "").trim().toLowerCase();
+  if (VIEW_ALIASES[value]) return VIEW_ALIASES[value];
+  return isMissionView(value) ? value : "missions";
+}
 
 const EMPTY_SNAPSHOT: MissionControlSnapshot = {
   connectors: [],
+  hermesDefaults: {
+    tokenConfigured: false,
+  },
+  teamSettings: {},
   providerAgents: [],
   schedules: [],
   tasks: [],
@@ -83,12 +116,18 @@ function applyAgentEvent(previous: AgentRuntimeState[], event: AgentEvent): Agen
 }
 
 export function useMissionControl() {
-  const [activeView, setActiveView] = useState<MissionView>("mission");
+  const [activeView, setActiveViewRaw] = useState<MissionView>(initialMissionView);
+  const setActiveView = (view: MissionView) => {
+    setActiveViewRaw(view);
+  };
   const [agents, setAgents] = useState<AgentRuntimeState[]>([]);
   const [missionSnapshot, setMissionSnapshot] = useState<MissionControlSnapshot>(EMPTY_SNAPSHOT);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<MissionTaskDetail | null>(null);
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+  const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
+  const [agentMessagesLoading, setAgentMessagesLoading] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,9 +136,14 @@ export function useMissionControl() {
   const hydrate = useEffectEvent(async () => {
     setLoading(true);
     try {
-      const [nextAgents, nextMission] = await Promise.all([fetchAgents(), fetchMissionSnapshot()]);
+      const [nextAgents, nextMission, nextActivity] = await Promise.all([
+        fetchAgents(),
+        fetchMissionSnapshot(),
+        fetchActivityLog().catch(() => [] as ActivityLogEntry[]),
+      ]);
       setAgents(sortAgents(nextAgents));
       setMissionSnapshot(nextMission);
+      setActivityLog(nextActivity);
       setError(null);
       if (!selectedTaskId && nextMission.tasks[0]) {
         setSelectedTaskId(nextMission.tasks[0].id);
@@ -147,14 +191,20 @@ export function useMissionControl() {
 
     if (message.type === "agent-removed") {
       setAgents((current) => current.filter((agent) => agent.id !== message.agentId));
+      return;
+    }
+
+    if (message.type === "activity-log") {
+      setActivityLog((current) => [message.entry, ...current].slice(0, 100));
     }
   });
 
   useEffect(() => {
-    void hydrate();
-
     const client = new OfficeWebSocketClient({
-      onOpen: () => setConnectionState("connected"),
+      onOpen: () => {
+        setConnectionState("connected");
+        void hydrate();
+      },
       onClose: () => setConnectionState("offline"),
       onEvent: (event) => setAgents((current) => applyAgentEvent(current, event)),
       onSnapshot: (message) => setAgents(sortAgents(message.agents)),
@@ -169,12 +219,48 @@ export function useMissionControl() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nextHash = `#${activeView}`;
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, "", nextHash);
+    }
+  }, [activeView]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onHashChange = () => {
+      const value = window.location.hash.replace(/^#/, "").trim().toLowerCase();
+      if (VIEW_ALIASES[value]) {
+        setActiveView(VIEW_ALIASES[value]);
+        return;
+      }
+      if (isMissionView(value)) {
+        setActiveView(value);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
     if (!selectedTaskId) {
       setSelectedTaskDetail(null);
       return;
     }
     void hydrateTaskDetail(selectedTaskId);
   }, [selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedAgentId) {
+      setAgentMessages([]);
+      return;
+    }
+    setAgentMessagesLoading(true);
+    fetchAgentMessages(selectedAgentId)
+      .then(setAgentMessages)
+      .catch(() => setAgentMessages([]))
+      .finally(() => setAgentMessagesLoading(false));
+  }, [selectedAgentId]);
 
   useEffect(() => {
     if (selectedTaskId && !missionSnapshot.tasks.some((task) => task.id === selectedTaskId)) {
@@ -223,22 +309,9 @@ export function useMissionControl() {
     }
   }
 
-  async function createHandoff(taskId: string, input: MissionTaskHandoffCreateRequest): Promise<MissionTaskHandoff | null> {
-    const handoff = await runBusyAction(`task:${taskId}:handoff`, () => createMissionTaskHandoff(taskId, input));
-    if (handoff) {
-      const [nextMission, detail] = await Promise.all([
-        fetchMissionSnapshot(),
-        fetchMissionTaskDetail(taskId),
-      ]);
-      setMissionSnapshot(nextMission);
-      setSelectedTaskDetail(detail);
-    }
-    return handoff;
-  }
-
-  async function respondToHandoff(handoffId: string, input: MissionTaskHandoffResponseRequest, taskId: string): Promise<void> {
-    const updated = await runBusyAction(`handoff:${handoffId}`, () => respondMissionTaskHandoff(handoffId, input));
-    if (updated) {
+  async function runTask(taskId: string): Promise<void> {
+    const execution = await runBusyAction(`task:${taskId}:run`, () => startMissionTaskRun(taskId));
+    if (execution) {
       const [nextMission, detail] = await Promise.all([
         fetchMissionSnapshot(),
         fetchMissionTaskDetail(taskId),
@@ -248,44 +321,136 @@ export function useMissionControl() {
     }
   }
 
-  async function saveConnector(provider: ProviderConnector["provider"], input: ProviderConnectorUpdateRequest): Promise<void> {
-    const connector = await runBusyAction(`connector:${provider}:save`, () => updateMissionConnector(provider, input));
+  async function saveConnector(connectorId: string, input: ProviderConnectorUpdateRequest): Promise<void> {
+    const connector = await runBusyAction(`connector:${connectorId}:save`, () => updateMissionConnector(connectorId, input));
     if (connector) {
       setMissionSnapshot((current) => ({
         ...current,
-        connectors: current.connectors.map((entry) => (entry.provider === provider ? connector : entry)),
+        connectors: current.connectors.map((entry) => (entry.id === connectorId ? connector : entry)),
       }));
       const nextMission = await fetchMissionSnapshot();
       setMissionSnapshot(nextMission);
     }
   }
 
-  async function syncConnector(provider: ProviderConnector["provider"]): Promise<void> {
-    const connector = await runBusyAction(`connector:${provider}:sync`, () => syncMissionConnector(provider));
+  async function saveHermesSharedDefaults(input: HermesDefaultsUpdateRequest): Promise<void> {
+    await runBusyAction("hermes-defaults:save", async () => {
+      await updateHermesDefaults(input);
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function syncConnector(connectorId: string): Promise<void> {
+    const connector = await runBusyAction(`connector:${connectorId}:sync`, () => syncMissionConnector(connectorId));
     if (connector) {
       const nextMission = await fetchMissionSnapshot();
       setMissionSnapshot(nextMission);
     }
   }
 
-  async function testConnectorHealth(provider: ProviderConnector["provider"]): Promise<void> {
-    const connector = await runBusyAction(`connector:${provider}:test`, () => testMissionConnector(provider));
+  async function testConnectorHealth(connectorId: string): Promise<void> {
+    const connector = await runBusyAction(`connector:${connectorId}:test`, () => testMissionConnector(connectorId));
     if (connector) {
-      setMissionSnapshot((current) => ({
-        ...current,
-        connectors: current.connectors.map((entry) => (entry.provider === provider ? connector : entry)),
-      }));
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
     }
+  }
+
+  async function addConnector(provider: string, label?: string): Promise<void> {
+    await runBusyAction("connector:create", async () => {
+      await createMissionConnector(provider, label);
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function removeConnector(connectorId: string): Promise<void> {
+    await runBusyAction(`connector:${connectorId}:delete`, async () => {
+      await deleteMissionConnector(connectorId);
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function bootstrapTeam(input: MissionTeamBootstrapRequest): Promise<void> {
+    await runBusyAction("team:bootstrap", async () => {
+      const result = await bootstrapMissionTeam(input);
+      setAgents(sortAgents(result.agents));
+      setMissionSnapshot(result.snapshot);
+      if (result.snapshot.teamSettings.commandAgentId) {
+        setSelectedAgentId(result.snapshot.teamSettings.commandAgentId);
+      }
+    });
+  }
+
+  async function createAgent(input: AgentRegistration): Promise<void> {
+    await runBusyAction("agent:create", async () => {
+      await registerAgent(input);
+      const [nextAgents, nextMission] = await Promise.all([fetchAgents(), fetchMissionSnapshot()]);
+      setAgents(sortAgents(nextAgents));
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function editAgent(agentId: string, input: Partial<AgentRegistration>): Promise<void> {
+    await runBusyAction(`agent:${agentId}:update`, async () => {
+      await updateAgent(agentId, input);
+      const [nextAgents, nextMission] = await Promise.all([fetchAgents(), fetchMissionSnapshot()]);
+      setAgents(sortAgents(nextAgents));
+      setMissionSnapshot(nextMission);
+    });
+  }
+
+  async function removeAgent(agentId: string): Promise<void> {
+    await runBusyAction(`agent:${agentId}:delete`, async () => {
+      await deleteAgent(agentId);
+      const nextAgents = await fetchAgents();
+      setAgents(sortAgents(nextAgents));
+      const nextMission = await fetchMissionSnapshot();
+      setMissionSnapshot(nextMission);
+    });
   }
 
   async function refreshMission(): Promise<void> {
     await runBusyAction("mission:refresh", hydrate);
   }
 
+  async function sendMessageToAgent(agentId: string, message: string): Promise<void> {
+    // Optimistically add user message
+    const userMsg: AgentMessage = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      content: message,
+      timestamp: Date.now(),
+    };
+    setAgentMessages((current) => [...current, userMsg]);
+
+    const response = await runBusyAction(`agent:${agentId}:message`, () => sendAgentMessage(agentId, message));
+    if (response) {
+      setAgentMessages((current) => [...current, response]);
+    }
+  }
+
+  async function refreshAgentMessages(agentId: string): Promise<void> {
+    setAgentMessagesLoading(true);
+    try {
+      const messages = await fetchAgentMessages(agentId);
+      setAgentMessages(messages);
+    } catch {
+      // keep existing
+    } finally {
+      setAgentMessagesLoading(false);
+    }
+  }
+
   return {
     activeView,
     setActiveView,
     agents,
+    activityLog,
+    agentMessages,
+    agentMessagesLoading,
     missionSnapshot,
     selectedAgentId,
     setSelectedAgentId,
@@ -297,12 +462,22 @@ export function useMissionControl() {
     error,
     loading,
     refreshMission,
+    createAgent,
+    editAgent,
+    removeAgent,
     saveTaskUpdate,
     addComment,
-    createHandoff,
-    respondToHandoff,
+    runTask,
     saveConnector,
+    saveHermesSharedDefaults,
     syncConnector,
     testConnectorHealth,
+    addConnector,
+    removeConnector,
+    bootstrapTeam,
+    sendMessageToAgent,
+    refreshAgentMessages,
   };
 }
+
+export type MissionControlState = ReturnType<typeof useMissionControl>;
