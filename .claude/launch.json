@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev:client"],
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-c", "export PATH=$HOME/.nvm/versions/node/v22.19.0/bin:/opt/homebrew/bin:$PATH && pnpm dev:client"],
       "port": 5173
     }
   ]

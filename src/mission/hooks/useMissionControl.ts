@@ -34,20 +34,27 @@ import {
   updateMissionTask,
 } from "../api";
 
-export type MissionView = "setup" | "org" | "work" | "runs" | "settings";
+export type MissionView = "missions" | "agents" | "orgchart" | "issues" | "runs" | "onboarding" | "settings";
 type ConnectionState = "connecting" | "connected" | "offline";
 
-const MISSION_VIEWS: MissionView[] = ["setup", "org", "work", "runs", "settings"];
+const MISSION_VIEWS: MissionView[] = ["missions", "agents", "orgchart", "issues", "runs", "onboarding", "settings"];
 
 function isMissionView(value: string): value is MissionView {
   return MISSION_VIEWS.includes(value as MissionView);
 }
 
+const VIEW_ALIASES: Record<string, MissionView> = {
+  team: "orgchart",
+  org: "orgchart",
+  setup: "onboarding",
+  work: "missions",
+};
+
 function initialMissionView(): MissionView {
-  if (typeof window === "undefined") return "setup";
+  if (typeof window === "undefined") return "missions";
   const value = window.location.hash.replace(/^#/, "").trim().toLowerCase();
-  if (value === "team") return "org";
-  return isMissionView(value) ? value : "setup";
+  if (VIEW_ALIASES[value]) return VIEW_ALIASES[value];
+  return isMissionView(value) ? value : "missions";
 }
 
 const EMPTY_SNAPSHOT: MissionControlSnapshot = {
@@ -109,7 +116,10 @@ function applyAgentEvent(previous: AgentRuntimeState[], event: AgentEvent): Agen
 }
 
 export function useMissionControl() {
-  const [activeView, setActiveView] = useState<MissionView>(initialMissionView);
+  const [activeView, setActiveViewRaw] = useState<MissionView>(initialMissionView);
+  const setActiveView = (view: MissionView) => {
+    setActiveViewRaw(view);
+  };
   const [agents, setAgents] = useState<AgentRuntimeState[]>([]);
   const [missionSnapshot, setMissionSnapshot] = useState<MissionControlSnapshot>(EMPTY_SNAPSHOT);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -220,8 +230,8 @@ export function useMissionControl() {
     if (typeof window === "undefined") return;
     const onHashChange = () => {
       const value = window.location.hash.replace(/^#/, "").trim().toLowerCase();
-      if (value === "team") {
-        setActiveView("org");
+      if (VIEW_ALIASES[value]) {
+        setActiveView(VIEW_ALIASES[value]);
         return;
       }
       if (isMissionView(value)) {
