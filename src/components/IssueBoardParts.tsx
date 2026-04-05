@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import {
   ExternalLinkIcon,
   GitBranchIcon,
@@ -476,6 +476,7 @@ export function IssueBoardView({
   onSelectIssue: (id: string) => void;
   onEditIssue: (issue: IssueRecord) => void;
 }) {
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
   return (
     <div className="flex flex-1 gap-4 overflow-x-auto p-6">
       {ISSUE_COLUMNS.map((column) => {
@@ -483,9 +484,25 @@ export function IssueBoardView({
         return (
           <div
             key={column.id}
-            className="flex w-[260px] shrink-0 flex-col"
-            onDragOver={(event) => event.preventDefault()}
+            className={cn(
+              "flex w-[260px] shrink-0 flex-col rounded-lg transition-colors",
+              dragOverColumn === column.id && "bg-[#5e4ae3]/10 ring-1 ring-[#5e4ae3]/40",
+            )}
+            onDragOver={(event) => {
+              event.preventDefault();
+              if (dragOverColumn !== column.id) setDragOverColumn(column.id);
+            }}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDragOverColumn(column.id);
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                setDragOverColumn(null);
+              }
+            }}
             onDrop={(event) => {
+              setDragOverColumn(null);
               const issueId = event.dataTransfer.getData("text/plain");
               const issue = mission.issues.find((entry) => entry.id === issueId);
               if (!issue) {
