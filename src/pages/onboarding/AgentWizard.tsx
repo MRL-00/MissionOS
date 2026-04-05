@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, RocketIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, RocketIcon, XIcon } from "lucide-react";
 import type { EngineConnectionResult } from "@/mission/appTypes";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { describeEngineVersion, engineConnectionGuide, serializeEngineConfig } from "@/lib/engineConfig";
+import { AGENT_PERSONA_PRESETS, DEFAULT_AGENT_SKILLS, dedupeSkills, normalizeSkillName } from "@/lib/agentPersonaPresets";
 import { cn } from "@/lib/utils";
 
 const STEPS = ["Identification", "Core Engine", "Capabilities", "Persona"];
-const SKILLS = ["Planning", "Code Review", "Testing", "Analysis", "Web Search", "Deployment", "Documentation", "Security"];
 const AGENT_COLORS = ["#5e4ae3", "#10b981", "#f59e0b", "#ef4444", "#3b82f6", "#ec4899", "#8b5cf6", "#06b6d4"];
 
 interface AgentWizardProps {
@@ -32,11 +32,17 @@ interface AgentWizardProps {
 
 export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Cancel", submitLabel = "Initialize Agent", initialAgent }: AgentWizardProps) {
   const isEditing = !!initialAgent;
+  const initialCustomSkills = useMemo(
+    () => dedupeSkills((initialAgent?.skills ?? []).filter((skill) => !DEFAULT_AGENT_SKILLS.some((entry) => entry.toLowerCase() === skill.toLowerCase()))),
+    [initialAgent?.skills],
+  );
   const [currentStep, setCurrentStep] = useState(0);
   const [name, setName] = useState(initialAgent?.name ?? "");
   const [role, setRole] = useState(initialAgent?.role ?? "");
   const [selectedEngine, setSelectedEngine] = useState<string | null>(initialAgent?.engine ?? mission.engines[0]?.id ?? null);
-  const [selectedSkills, setSelectedSkills] = useState<string[]>(initialAgent?.skills ?? []);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(dedupeSkills(initialAgent?.skills ?? []));
+  const [customSkills, setCustomSkills] = useState<string[]>(initialCustomSkills);
+  const [customSkillInput, setCustomSkillInput] = useState("");
   const [selectedColor, setSelectedColor] = useState(initialAgent?.color ?? AGENT_COLORS[0]);
   const [webSearch, setWebSearch] = useState(initialAgent ? initialAgent.tools.includes("web-search") : true);
   const [codeExec, setCodeExec] = useState(initialAgent ? initialAgent.tools.includes("code-exec") : true);
@@ -97,6 +103,55 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
     : "{}";
   const selectedGuide = selectedEngineDefinition ? engineConnectionGuide(selectedEngineDefinition) : null;
   const selectedTestResult = selectedEngineDefinition ? (testResultsByEngine[selectedEngineDefinition.id] ?? null) : null;
+  const allSkills = useMemo(
+    () => dedupeSkills([...DEFAULT_AGENT_SKILLS, ...customSkills]),
+    [customSkills],
+  );
+
+  function toggleSkill(skill: string) {
+    setSelectedSkills((current) => {
+      const next = current.includes(skill)
+        ? current.filter((entry) => entry !== skill)
+        : [...current, skill];
+      return dedupeSkills(next);
+    });
+  }
+
+  function addCustomSkill() {
+    const normalized = normalizeSkillName(customSkillInput);
+    if (!normalized) {
+      return;
+    }
+    setCustomSkills((current) => dedupeSkills([...current, normalized]));
+    setSelectedSkills((current) => dedupeSkills([...current, normalized]));
+    setCustomSkillInput("");
+  }
+
+  function removeCustomSkill(skill: string) {
+    setCustomSkills((current) => current.filter((entry) => entry !== skill));
+    setSelectedSkills((current) => current.filter((entry) => entry !== skill));
+  }
+
+  function applyPreset(presetId: string) {
+    const preset = AGENT_PERSONA_PRESETS.find((entry) => entry.id === presetId);
+    if (!preset) {
+      return;
+    }
+
+    setName((current) => current || preset.suggestedName);
+    setRole(preset.suggestedRole);
+    setCustomSkills((current) => dedupeSkills([
+      ...current,
+      ...preset.skills.filter((skill) => !DEFAULT_AGENT_SKILLS.some((entry) => entry.toLowerCase() === skill.toLowerCase())),
+    ]));
+    setSelectedSkills((current) => dedupeSkills([...current, ...preset.skills]));
+    setWebSearch(preset.tools.webSearch);
+    setCodeExec(preset.tools.codeExec);
+    setFileSystem(preset.tools.fileSystem);
+    setManagedExternally(false);
+    setSoulMd(preset.soulMd);
+    setAgentsMd(preset.agentsMd);
+  }
 
   async function handleSubmit() {
     try {
@@ -109,7 +164,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
         engine: selectedEngineDefinition?.id ?? mission.engines[0]?.id ?? "codex",
         connection_type: selectedEngineDefinition?.connectionType ?? "cli",
         connection_config: connectionConfig,
-        skills: selectedSkills,
+        skills: dedupeSkills(selectedSkills),
         tools: [webSearch ? "web-search" : null, codeExec ? "code-exec" : null, fileSystem ? "file-system" : null].filter(Boolean),
         soul_md: soulMd,
         agents_md: agentsMd,
@@ -325,10 +380,10 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
             <div>
               <label className="mb-2 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Skills</label>
               <div className="flex flex-wrap gap-1.5">
-                {SKILLS.map((skill) => (
+                {allSkills.map((skill) => (
                   <button
                     key={skill}
-                    onClick={() => setSelectedSkills((current) => current.includes(skill) ? current.filter((entry) => entry !== skill) : [...current, skill])}
+                    onClick={() => toggleSkill(skill)}
                     className={cn(
                       "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all",
                       selectedSkills.includes(skill)
@@ -341,6 +396,42 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
                   </button>
                 ))}
               </div>
+              <div className="mt-3 flex gap-2">
+                <input
+                  value={customSkillInput}
+                  onChange={(event) => setCustomSkillInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addCustomSkill();
+                    }
+                  }}
+                  placeholder="Add custom skill, e.g. React Native"
+                  className="flex-1 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
+                />
+                <button
+                  onClick={addCustomSkill}
+                  type="button"
+                  className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
+                >
+                  Add Skill
+                </button>
+              </div>
+              {customSkills.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {customSkills.map((skill) => (
+                    <button
+                      key={skill}
+                      type="button"
+                      onClick={() => removeCustomSkill(skill)}
+                      className="inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 text-[11px] text-[#918f90] transition-colors hover:border-red-400/30 hover:text-red-300"
+                    >
+                      {skill}
+                      <XIcon className="size-3" />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div>
@@ -357,12 +448,34 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
         {currentStep === 3 ? (
           <div className="space-y-5">
             <SectionTitle title="Agent Persona" subtitle="Define the agent's personality and behavior guidelines" />
+            <div>
+              <label className="mb-2 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Quick Presets</label>
+              <div className="grid grid-cols-3 gap-2">
+                {AGENT_PERSONA_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyPreset(preset.id)}
+                    className="rounded-xl border border-white/[0.08] bg-white/[0.02] px-3 py-2.5 text-left transition-colors hover:border-[#5e4ae3]/40 hover:bg-[#39147e]/10"
+                  >
+                    <div className="text-[12px] font-semibold text-white">{preset.label}</div>
+                    <div className="mt-0.5 text-[11px] text-[#918f90]">{preset.suggestedRole}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-[#585658]">
+                Presets update role, tools, skills, and inline prompt scaffolding for the selected agent.
+              </p>
+            </div>
             <label className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-[#0f0f10] px-3.5 py-2.5 text-[12px] text-[#918f90]">
               <input type="checkbox" checked={managedExternally} onChange={(event) => setManagedExternally(event.target.checked)} className="accent-[#5e4ae3]" />
               Managed externally
             </label>
             {!managedExternally ? (
               <>
+                <div className="rounded-xl border border-white/[0.06] bg-[#0f0f10] px-3.5 py-2.5 text-[11px] leading-relaxed text-[#918f90]">
+                  Selected skills, <code className="text-[#c8c4d7]">SOUL.md</code>, and <code className="text-[#c8c4d7]">AGENTS.md</code> are prepended to each run prompt when this agent is managed here.
+                </div>
                 <div>
                   <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">SOUL.md</label>
                   <textarea

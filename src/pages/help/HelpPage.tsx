@@ -15,7 +15,7 @@ Only on first run, until the first agent exists.
 Engine and integration values are stored in SQLite settings, not in environment variables.
 
 ### How do agent files work?
-If an agent is not managed externally, \`SOUL.md\` and \`AGENTS.md\` are prepended to each run prompt.
+If an agent is not managed externally, selected skills plus inline \`SOUL.md\` and \`AGENTS.md\` are prepended to each run prompt.
 `;
 
 export function HelpPage({ mission }: { mission: MissionControlState }) {
@@ -54,6 +54,12 @@ export function HelpPage({ mission }: { mission: MissionControlState }) {
             className="rounded-lg border border-white/[0.08] px-4 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
           >
             Issues Docs
+          </button>
+          <button
+            onClick={() => mission.setActiveView("docs", { search: "path=agent-handoff-testing.md" })}
+            className="rounded-lg border border-white/[0.08] px-4 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
+          >
+            Handoff Test
           </button>
         </div>
       </div>

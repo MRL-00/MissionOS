@@ -22,6 +22,7 @@ import {
   pushBranch,
   makeBranchName,
 } from "./git-workspace.js";
+import { buildRunPrompt } from "./runPrompt.js";
 import { getNextRunAt, validateCronExpression } from "./schedules.js";
 
 type UserRow = {
@@ -262,16 +263,6 @@ function getBootstrapState() {
 
 function signToken(user: UserRow): string {
   return jwt.sign({ sub: user.id, username: user.username }, getJwtSecret(), { expiresIn: "7d" });
-}
-
-function buildRunPrompt(agentRow: Record<string, unknown>, prompt: string): string {
-  if (asFlag(typeof agentRow.external_config === "number" ? agentRow.external_config : 0)) {
-    return prompt;
-  }
-
-  const soul = typeof agentRow.soul_md === "string" ? agentRow.soul_md : "";
-  const agents = typeof agentRow.agents_md === "string" ? agentRow.agents_md : "";
-  return `[SOUL]\n${soul}\n\n[AGENTS]\n${agents}\n\n[TASK]\n${prompt}`;
 }
 
 function listAgents() {
