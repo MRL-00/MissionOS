@@ -1,21 +1,26 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import {
+  ChevronDownIcon,
+  ChevronRightIcon,
   ExternalLinkIcon,
   GitBranchIcon,
   GitPullRequestIcon,
+  LoaderIcon,
   MaximizeIcon,
   MessageSquareIcon,
   MinimizeIcon,
   PencilIcon,
+  PlayIcon,
   PlusIcon,
   RefreshCwIcon,
   ShareIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import type { IssueCommentRecord, IssueRecord } from "@/mission/appTypes";
+import type { AgentRecord, IssueCommentRecord, IssueRecord, RunRecord } from "@/mission/appTypes";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
+import { formatDate, formatDateTime } from "@/lib/dateFormat";
 import { Select as UISelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 function formatTicketId(issue: IssueRecord, prefix?: string) {
@@ -485,7 +490,7 @@ export function IssueBoardView({
           <div
             key={column.id}
             className={cn(
-              "flex w-[260px] shrink-0 flex-col rounded-lg transition-colors",
+              "flex min-w-[180px] flex-1 flex-col rounded-lg bg-white/[0.03] p-3 transition-colors",
               dragOverColumn === column.id && "bg-[#5e4ae3]/10 ring-1 ring-[#5e4ae3]/40",
             )}
             onDragOver={(event) => {
@@ -511,7 +516,7 @@ export function IssueBoardView({
               void mission.updateIssue(issue.id, { ...issue, status: column.id, labels: issue.labels });
             }}
           >
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between border-b border-white/[0.06] pb-3">
               <div className="flex items-center gap-2">
                 <span className="text-[13px] font-semibold text-white">{column.label}</span>
                 <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-[#918f90]">{issues.length}</span>
@@ -584,11 +589,13 @@ export function IssueListView({
   selectedIssueId,
   onSelectIssue,
   onEditIssue,
+  timeZone,
 }: {
   filteredIssues: IssueRecord[];
   selectedIssueId: string | null;
   onSelectIssue: (id: string) => void;
   onEditIssue: (issue: IssueRecord) => void;
+  timeZone?: string | undefined;
 }) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -617,7 +624,7 @@ export function IssueListView({
               <span><StatusBadge status={issue.status} /></span>
               <span className="text-[12px] text-[#c8c4d7]">{issue.assignee_name || "Unassigned"}</span>
               <span className="text-[12px] text-[#918f90]">{issue.mission_title || "None"}</span>
-              <span className="text-[12px] text-[#918f90]">{new Date(issue.created_at).toLocaleDateString()}</span>
+              <span className="text-[12px] text-[#918f90]">{formatDate(issue.created_at, timeZone)}</span>
             </button>
           ))}
         </div>
@@ -636,6 +643,11 @@ export function IssueDetailsPanel({
   onPostComment,
   onToggleStatus,
   issuePrefix,
+  agents,
+  issueRuns,
+  isRunning,
+  onRunIssue,
+  timeZone,
 }: {
   selectedIssue: IssueRecord | null;
   comments: IssueCommentRecord[];
@@ -646,6 +658,11 @@ export function IssueDetailsPanel({
   onPostComment: () => Promise<void>;
   onToggleStatus: () => void;
   issuePrefix?: string | undefined;
+  agents?: AgentRecord[];
+  issueRuns?: RunRecord[];
+  isRunning?: boolean;
+  onRunIssue?: (agentId: string) => void;
+  timeZone?: string | undefined;
 }) {
   if (!selectedIssue) {
     return null;
@@ -693,6 +710,19 @@ export function IssueDetailsPanel({
         <PropertyRow label="Labels" value={selectedIssue.labels.join(", ") || "None"} />
       </div>
 
+      {onRunIssue && agents && agents.length > 0 ? (
+        <IssueRunButton
+          issue={selectedIssue}
+          agents={agents}
+          isRunning={isRunning ?? false}
+          onRun={onRunIssue}
+        />
+      ) : null}
+
+      {issueRuns && issueRuns.length > 0 ? (
+        <IssueRunsSection runs={issueRuns} />
+      ) : null}
+
       {(selectedIssue.github_repo || selectedIssue.github_pr_url || selectedIssue.github_branch) ? (
         <div className="mb-5 space-y-2">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">GitHub</div>
@@ -721,8 +751,8 @@ export function IssueDetailsPanel({
 
       <div className="mb-5 space-y-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Metadata</div>
-        <div className="text-[12px] text-[#918f90]">Created: {new Date(selectedIssue.created_at).toLocaleString()}</div>
-        <div className="text-[12px] text-[#918f90]">Updated: {new Date(selectedIssue.updated_at).toLocaleString()}</div>
+        <div className="text-[12px] text-[#918f90]">Created: {formatDateTime(selectedIssue.created_at, timeZone)}</div>
+        <div className="text-[12px] text-[#918f90]">Updated: {formatDateTime(selectedIssue.updated_at, timeZone)}</div>
       </div>
 
       <div className="mb-5">
@@ -731,7 +761,7 @@ export function IssueDetailsPanel({
           {comments.map((comment) => (
             <div key={comment.id} className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
               <div className="text-[11px] text-[#918f90]">
-                {comment.author_emoji} {comment.author_name || "Unknown"} • {new Date(comment.created_at).toLocaleString()}
+                {comment.author_emoji} {comment.author_name || "Unknown"} • {formatDateTime(comment.created_at, timeZone)}
               </div>
               <div className="mt-1 whitespace-pre-wrap text-[12px] text-[#c8c4d7]">{comment.body}</div>
             </div>
@@ -760,6 +790,114 @@ export function IssueDetailsPanel({
           <ShareIcon className="size-3.5" />
         </button>
       </div>
+    </div>
+  );
+}
+
+function IssueRunButton({
+  issue,
+  agents,
+  isRunning,
+  onRun,
+}: {
+  issue: IssueRecord;
+  agents: AgentRecord[];
+  isRunning: boolean;
+  onRun: (agentId: string) => void;
+}) {
+  const [pickedAgentId, setPickedAgentId] = useState("");
+  const assignedAgent = agents.find((a) => a.id === issue.assignee_agent_id);
+  const activeAgents = agents.filter((a) => a.active);
+
+  return (
+    <div className="mb-5">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Actions</div>
+      {assignedAgent ? (
+        <button
+          disabled={isRunning}
+          onClick={() => onRun(assignedAgent.id)}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {isRunning ? <LoaderIcon className="size-3.5 animate-spin" /> : <PlayIcon className="size-3.5" />}
+          {isRunning ? "Running..." : `Run with ${assignedAgent.name}`}
+        </button>
+      ) : (
+        <div className="mt-2 flex gap-2">
+          <select
+            value={pickedAgentId}
+            onChange={(event) => setPickedAgentId(event.target.value)}
+            className="flex-1 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2 py-2 text-[12px] text-white outline-none"
+          >
+            <option value="">Select agent...</option>
+            {activeAgents.map((a) => (
+              <option key={a.id} value={a.id}>{a.emoji} {a.name}</option>
+            ))}
+          </select>
+          <button
+            disabled={isRunning || !pickedAgentId}
+            onClick={() => pickedAgentId && onRun(pickedAgentId)}
+            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {isRunning ? <LoaderIcon className="size-3.5 animate-spin" /> : <PlayIcon className="size-3.5" />}
+            Run
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const RUN_STATUS_COLORS: Record<string, string> = {
+  running: "bg-blue-500/20 text-blue-400",
+  complete: "bg-emerald-500/20 text-emerald-400",
+  failed: "bg-red-500/20 text-red-400",
+  planning: "bg-amber-500/20 text-amber-400",
+};
+
+function IssueRunsSection({ runs }: { runs: RunRecord[] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  return (
+    <div className="mb-5 space-y-2">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Runs</div>
+      {runs.map((run) => {
+        const isExpanded = expandedId === run.id;
+        const durationStr = run.duration_ms != null ? `${Math.round(run.duration_ms / 1000)}s` : "...";
+        return (
+          <div key={run.id} className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+            <button
+              onClick={() => setExpandedId(isExpanded ? null : run.id)}
+              className="flex w-full items-center justify-between text-left"
+            >
+              <div className="flex items-center gap-2">
+                {isExpanded ? <ChevronDownIcon className="size-3 text-[#918f90]" /> : <ChevronRightIcon className="size-3 text-[#918f90]" />}
+                <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", RUN_STATUS_COLORS[run.status] ?? "bg-white/10 text-white/60")}>
+                  {run.status}
+                </span>
+                <span className="text-[11px] text-[#c8c4d7]">{run.agent_emoji} {run.agent_name}</span>
+              </div>
+              <span className="text-[10px] text-[#918f90]">{durationStr}</span>
+            </button>
+            {run.github_pr_url ? (
+              <a
+                href={run.github_pr_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 flex items-center gap-1 text-[11px] text-[#5e4ae3] hover:text-[#c6bfff]"
+              >
+                <GitPullRequestIcon className="size-3" />
+                Pull Request
+                <ExternalLinkIcon className="size-2.5" />
+              </a>
+            ) : null}
+            {isExpanded && run.output ? (
+              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-2 text-[11px] text-[#918f90]">
+                {run.output.length > 1000 ? `${run.output.slice(0, 1000)}...` : run.output}
+              </pre>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

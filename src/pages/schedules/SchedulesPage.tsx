@@ -12,6 +12,7 @@ import {
 import type { ScheduleRecord } from "@/mission/appTypes";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/dateFormat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface SchedulesPageProps {
@@ -25,15 +26,11 @@ const CRON_PRESETS = [
   { label: "Daily 6:30pm", cron: "30 18 * * *" },
 ];
 
-function formatTimestamp(value: string | null) {
+function formatTimestamp(value: string | null, timeZone?: string) {
   if (!value) {
     return "Never";
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
+  return formatDateTime(value, timeZone);
 }
 
 function formatRelative(value: string | null) {
@@ -358,7 +355,7 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
                   <div>
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Next Run</div>
                     <div className="mt-1 text-[12px] text-white">{formatRelative(schedule.next_run_at)}</div>
-                    <div className="mt-1 text-[11px] text-[#918f90]">{formatTimestamp(schedule.next_run_at)}</div>
+                    <div className="mt-1 text-[11px] text-[#918f90]">{formatTimestamp(schedule.next_run_at, mission.settingsMap.user_timezone)}</div>
                   </div>
 
                   <div>
@@ -461,7 +458,7 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
                   </span>
                 </div>
                 <div className="mt-1 line-clamp-2 text-[12px] text-[#c8c4d7]">{run.prompt}</div>
-                <div className="mt-2 text-[11px] text-[#918f90]">{formatTimestamp(run.started_at)}</div>
+                <div className="mt-2 text-[11px] text-[#918f90]">{formatTimestamp(run.started_at, mission.settingsMap.user_timezone)}</div>
               </div>
             ))}
             {scheduledRuns.length === 0 ? (

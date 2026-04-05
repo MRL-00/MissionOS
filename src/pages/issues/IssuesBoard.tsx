@@ -94,11 +94,43 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
 
   const selectedIssue = filteredIssues.find((issue) => issue.id === selectedIssueId) ?? mission.issues.find((issue) => issue.id === selectedIssueId) ?? null;
 
+  const [runningIssueRunId, setRunningIssueRunId] = useState<string | null>(null);
+
   useEffect(() => {
     if (selectedIssue) {
       void mission.loadIssueComments(selectedIssue.id);
+      void mission.loadIssueRuns(selectedIssue.id);
     }
   }, [selectedIssue?.id]);
+
+  const handleRunIssue = useCallback(
+    (agentId: string) => {
+      if (!selectedIssue) return;
+      // Show loading immediately so the user gets instant feedback
+      setRunningIssueRunId("pending");
+      void (async () => {
+        try {
+          const run = await mission.runIssue(selectedIssue.id, agentId);
+          if (run) {
+            setRunningIssueRunId(run.id);
+            await mission.streamSelectedRun(run.id, (updatedRun) => {
+              if (updatedRun.status !== "running") {
+                setRunningIssueRunId(null);
+                void mission.refreshWorkspace();
+                void mission.loadIssueComments(selectedIssue.id);
+                void mission.loadIssueRuns(selectedIssue.id);
+              }
+            });
+          } else {
+            setRunningIssueRunId(null);
+          }
+        } catch {
+          setRunningIssueRunId(null);
+        }
+      })();
+    },
+    [mission, selectedIssue],
+  );
 
   const getInheritedRepo = useCallback(
     (missionId: string | null) => {
@@ -248,6 +280,7 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
             selectedIssueId={selectedIssue?.id ?? selectedIssueId}
             onSelectIssue={setSelectedIssueId}
             onEditIssue={openEditModal}
+            timeZone={mission.settingsMap.user_timezone}
           />
         )}
       </div>
@@ -262,6 +295,11 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
         onPostComment={handlePostComment}
         onToggleStatus={handleToggleIssueStatus}
         issuePrefix={mission.settingsMap.issue_prefix}
+        agents={mission.agents}
+        issueRuns={mission.issueRuns}
+        isRunning={runningIssueRunId != null}
+        onRunIssue={handleRunIssue}
+        timeZone={mission.settingsMap.user_timezone}
       />
 
       {!draftOpen && !editingIssue ? (

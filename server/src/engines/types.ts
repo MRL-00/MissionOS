@@ -30,6 +30,7 @@ export interface RunParams {
   agent: {
     id: string;
     name: string;
+    role?: string;
     tools: string[];
   };
   context?: Record<string, unknown>;

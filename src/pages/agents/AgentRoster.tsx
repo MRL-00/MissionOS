@@ -3,6 +3,7 @@ import { FilterIcon, MoreHorizontalIcon, PencilIcon, PlusIcon, SearchIcon, Trash
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { AgentWizard } from "@/pages/onboarding/AgentWizard";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/dateFormat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface AgentRosterProps {
@@ -137,7 +138,7 @@ export function AgentRoster({ mission }: AgentRosterProps) {
                 <span className="text-[12px] text-[#918f90]">{agent.statusLabel}</span>
               </div>
               <span className="text-[11px] text-[#585658]">
-                {agent.lastRunLabel ? new Date(agent.lastRunLabel).toLocaleDateString() : "Never"}
+                {agent.lastRunLabel ? formatDate(agent.lastRunLabel, mission.settingsMap.user_timezone) : "Never"}
               </span>
               <button
                 onClick={(event) => {

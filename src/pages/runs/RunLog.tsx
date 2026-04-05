@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CpuIcon, ExternalLinkIcon, FilterIcon, GitBranchIcon, GitPullRequestIcon, ZapIcon } from "lucide-react";
+import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CpuIcon, ExternalLinkIcon, FilterIcon, GitBranchIcon, GitPullRequestIcon, Trash2Icon, ZapIcon } from "lucide-react";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
 import { estimateRunUsage, formatMoneyFromUsd, formatTokenCount } from "@/lib/usageEstimates";
+import { formatDateTime } from "@/lib/dateFormat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface RunLogProps {
@@ -191,7 +192,7 @@ export function RunLog({ mission }: RunLogProps) {
                   }}
                   className="grid w-full grid-cols-[170px_1.5fr_1.2fr_1fr_1fr_80px_40px] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/[0.02]"
                 >
-                  <span className="font-mono text-[12px] text-[#918f90]">{new Date(run.started_at).toLocaleString()}</span>
+                  <span className="font-mono text-[12px] text-[#918f90]">{formatDateTime(run.started_at, mission.settingsMap.user_timezone)}</span>
                   <div className="flex items-center gap-2.5">
                     <div className="flex size-6 items-center justify-center rounded-full bg-gradient-to-br from-[#39147e] to-[#2e1065] text-[10px] font-semibold text-white">
                       {run.agent_emoji ?? "A"}
@@ -210,35 +211,53 @@ export function RunLog({ mission }: RunLogProps) {
                 </button>
 
                 {expandedId === run.id ? (
-                  <div className="border-t border-white/[0.04] bg-[#0f0f10] px-6 py-3">
-                    <div className="space-y-2">
-                      {run.github_branch || run.github_pr_url ? (
-                        <div className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
-                          {run.github_branch ? (
-                            <span className="flex items-center gap-1.5 text-[12px] text-[#c8c4d7]">
-                              <GitBranchIcon className="size-3 text-[#918f90]" />
-                              <code className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[11px]">{run.github_branch}</code>
-                            </span>
-                          ) : null}
-                          {run.github_pr_url ? (
-                            <a href={run.github_pr_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[12px] text-[#5e4ae3] hover:text-[#c6bfff]">
-                              <GitPullRequestIcon className="size-3" />
-                              Pull Request
-                              <ExternalLinkIcon className="size-3" />
-                            </a>
-                          ) : null}
+                  <div className="border-t border-white/[0.04] bg-[#0f0f10]">
+                    <div className="max-h-[400px] overflow-y-auto px-6 py-3">
+                      <div className="space-y-2">
+                        {run.github_branch || run.github_pr_url ? (
+                          <div className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+                            {run.github_branch ? (
+                              <span className="flex items-center gap-1.5 text-[12px] text-[#c8c4d7]">
+                                <GitBranchIcon className="size-3 text-[#918f90]" />
+                                <code className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[11px]">{run.github_branch}</code>
+                              </span>
+                            ) : null}
+                            {run.github_pr_url ? (
+                              <a href={run.github_pr_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[12px] text-[#5e4ae3] hover:text-[#c6bfff]">
+                                <GitPullRequestIcon className="size-3" />
+                                Pull Request
+                                <ExternalLinkIcon className="size-3" />
+                              </a>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 font-mono text-[11px] text-[#918f90]">prompt</span>
+                          <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase bg-white/[0.04] text-[#918f90]">task</span>
+                          <span className="text-[12px] text-[#c8c4d7]">{run.prompt}</span>
                         </div>
-                      ) : null}
-                      <div className="flex items-start gap-3">
-                        <span className="mt-0.5 font-mono text-[11px] text-[#918f90]">prompt</span>
-                        <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase bg-white/[0.04] text-[#918f90]">task</span>
-                        <span className="text-[12px] text-[#c8c4d7]">{run.prompt}</span>
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 font-mono text-[11px] text-[#918f90]">output</span>
+                          <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase bg-cyan-500/10 text-cyan-400">stream</span>
+                          <pre className="whitespace-pre-wrap text-[12px] text-[#c8c4d7]">{mission.selectedRun?.id === run.id ? mission.selectedRun.output : run.output || "No output yet."}</pre>
+                        </div>
                       </div>
-                      <div className="flex items-start gap-3">
-                        <span className="mt-0.5 font-mono text-[11px] text-[#918f90]">output</span>
-                        <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase bg-cyan-500/10 text-cyan-400">stream</span>
-                        <pre className="whitespace-pre-wrap text-[12px] text-[#c8c4d7]">{mission.selectedRun?.id === run.id ? mission.selectedRun.output : run.output || "No output yet."}</pre>
-                      </div>
+                    </div>
+                    <div className="flex justify-end border-t border-white/[0.04] px-6 py-2">
+                      <button
+                        onClick={async () => {
+                          const confirmed = window.confirm("Delete this run? This action cannot be undone.");
+                          if (!confirmed) return;
+                          const ok = await mission.removeRun(run.id);
+                          if (ok) {
+                            setExpandedId(null);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[12px] font-medium text-red-400 transition-colors hover:border-red-500/40 hover:bg-red-500/20"
+                      >
+                        <Trash2Icon className="size-3.5" />
+                        Delete Run
+                      </button>
                     </div>
                   </div>
                 ) : null}

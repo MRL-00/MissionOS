@@ -22,7 +22,7 @@ export const codexAdapter: EngineAdapter = {
       upgradeCommand: "npm install -g @openai/codex",
     });
   },
-  async *run({ prompt, connectionConfig }) {
+  async *run({ prompt, connectionConfig, agent }) {
     const command =
       typeof connectionConfig.codexPath === "string" && connectionConfig.codexPath
         ? connectionConfig.codexPath
@@ -34,7 +34,12 @@ export const codexAdapter: EngineAdapter = {
         ? connectionConfig.workingDirectory
         : repoRoot;
 
-    yield* streamProcess(command, ["exec", "--full-auto", "--color", "never", "--cd", cwd, prompt], {
+    // Orchestrator agents should not execute code — they only plan and delegate.
+    // Use read-only sandbox so they can only produce text output (where @agent: directives live).
+    const isOrchestrator = agent?.role?.toLowerCase() === "orchestrator";
+    const sandboxArgs: string[] = isOrchestrator ? ["--sandbox", "read-only"] : ["--full-auto"];
+
+    yield* streamProcess(command, ["exec", ...sandboxArgs, "--color", "never", "--cd", cwd, prompt], {
       env: {
         ...process.env,
         ...(apiKey ? { OPENAI_API_KEY: apiKey } : {}),

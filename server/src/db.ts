@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS agent_messages (
   from_agent_id TEXT REFERENCES agents(id),
   to_agent_id TEXT REFERENCES agents(id),
   mission_id TEXT REFERENCES missions(id),
-  run_id TEXT REFERENCES runs(id),
+  run_id TEXT REFERENCES runs(id) ON DELETE CASCADE,
   message TEXT NOT NULL,
   created_at TEXT DEFAULT (datetime('now'))
 );

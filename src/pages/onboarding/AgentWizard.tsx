@@ -5,6 +5,7 @@ import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { describeEngineVersion, engineConnectionGuide, serializeEngineConfig } from "@/lib/engineConfig";
 import { AGENT_PERSONA_PRESETS, DEFAULT_AGENT_SKILLS, dedupeSkills, normalizeSkillName } from "@/lib/agentPersonaPresets";
 import { cn } from "@/lib/utils";
+import { EmojiPicker } from "@/components/EmojiPicker";
 
 const STEPS = ["Identification", "Core Engine", "Capabilities", "Persona"];
 const AGENT_COLORS = ["#5e4ae3", "#10b981", "#f59e0b", "#ef4444", "#3b82f6", "#ec4899", "#8b5cf6", "#06b6d4"];
@@ -19,6 +20,7 @@ interface AgentWizardProps {
     id: string;
     name: string;
     role: string | null;
+    emoji: string;
     color: string;
     engine: string;
     skills: string[];
@@ -39,6 +41,8 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
   const [currentStep, setCurrentStep] = useState(0);
   const [name, setName] = useState(initialAgent?.name ?? "");
   const [role, setRole] = useState(initialAgent?.role ?? "");
+  const [emoji, setEmoji] = useState(initialAgent?.emoji ?? "");
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedEngine, setSelectedEngine] = useState<string | null>(initialAgent?.engine ?? mission.engines[0]?.id ?? null);
   const [selectedSkills, setSelectedSkills] = useState<string[]>(dedupeSkills(initialAgent?.skills ?? []));
   const [customSkills, setCustomSkills] = useState<string[]>(initialCustomSkills);
@@ -159,7 +163,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
       const payload = {
         name,
         role,
-        emoji: name[0]?.toUpperCase() ?? "🤖",
+        emoji: emoji || name[0]?.toUpperCase() || "🤖",
         color: selectedColor,
         engine: selectedEngineDefinition?.id ?? mission.engines[0]?.id ?? "codex",
         connection_type: selectedEngineDefinition?.connectionType ?? "cli",
@@ -240,13 +244,23 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
             <SectionTitle title="Agent Identification" subtitle="Set up the basic identity for your new agent" />
             <div className="flex items-start gap-5">
               <div className="flex flex-col items-center gap-1.5">
-                <div
-                  className="flex size-16 items-center justify-center rounded-2xl text-xl font-bold text-white shadow-lg"
+                <button
+                  type="button"
+                  onClick={() => setShowEmojiPicker(true)}
+                  className="flex size-16 items-center justify-center rounded-2xl text-xl font-bold text-white shadow-lg transition-all hover:scale-105 hover:brightness-110"
                   style={{ background: `linear-gradient(135deg, ${selectedColor}90, ${selectedColor})`, boxShadow: `0 8px 24px ${selectedColor}30` }}
                 >
-                  {name ? name[0]?.toUpperCase() : "?"}
-                </div>
-                <span className="text-[10px] text-[#585658]">Avatar</span>
+                  {emoji || (name ? name[0]?.toUpperCase() : "?")}
+                </button>
+                <span className="text-[10px] text-[#585658]">Click to pick</span>
+                {showEmojiPicker ? (
+                  <EmojiPicker
+                    value={emoji}
+                    onSelect={(e) => setEmoji(e)}
+                    onClear={() => setEmoji("")}
+                    onClose={() => setShowEmojiPicker(false)}
+                  />
+                ) : null}
               </div>
               <div className="flex-1 space-y-3">
                 <FormField label="Agent Name" placeholder="e.g. Pickle, Scout-01" value={name} onChange={setName} />

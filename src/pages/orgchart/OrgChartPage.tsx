@@ -4,6 +4,7 @@ import ReactFlow, { Background, Handle, MarkerType, MiniMap, Position, ReactFlow
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { AgentWizard } from "@/pages/onboarding/AgentWizard";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/dateFormat";
 
 interface OrgChartPageProps {
   mission: MissionControlState;
@@ -399,7 +400,7 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
                       <div className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", isRecent ? "bg-[#5e4ae3] animate-pulse" : "bg-white/[0.15]")} />
                       <div>
                         <div className="text-[11px] text-[#918f90]">{entry.message}</div>
-                        <div className="text-[10px] text-[#585658]">{new Date(entry.created_at).toLocaleString()}</div>
+                        <div className="text-[10px] text-[#585658]">{formatDateTime(entry.created_at, mission.settingsMap.user_timezone)}</div>
                       </div>
                     </div>
                   );

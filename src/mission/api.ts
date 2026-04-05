@@ -340,6 +340,12 @@ export function createRun(token: string, input: { agent_id: string; prompt: stri
   }, token);
 }
 
+export function deleteRun(token: string, runId: string) {
+  return requestJson<{ ok: boolean }>(`/api/runs/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+  }, token);
+}
+
 export async function streamRun(
   token: string,
   runId: string,

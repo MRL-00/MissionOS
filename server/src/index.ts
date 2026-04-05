@@ -385,6 +385,7 @@ function listIssues(filters: {
 function listRuns(filters: {
   agentId?: string | undefined;
   missionId?: string | undefined;
+  issueId?: string | undefined;
   status?: string | undefined;
   q?: string | undefined;
 }) {
@@ -399,6 +400,10 @@ function listRuns(filters: {
   if (filters.missionId) {
     conditions.push("runs.mission_id = ?");
     params.push(filters.missionId);
+  }
+  if (filters.issueId) {
+    conditions.push("runs.issue_id = ?");
+    params.push(filters.issueId);
   }
   if (filters.status) {
     conditions.push("runs.status = ?");
@@ -1051,6 +1056,15 @@ app.delete("/api/missions/:id/agents/:agentId", (req, res) => {
   res.json({ ok: true });
 });
 
+function insertAgentComment(issueId: string, agentId: string, body: string) {
+  getDb()
+    .prepare(
+      `INSERT INTO issue_comments (id, issue_id, parent_id, author_type, author_id, body)
+       VALUES (?, ?, NULL, 'agent', ?, ?)`,
+    )
+    .run(randomUUID(), issueId, agentId, body);
+}
+
 async function createRunRecord(input: {
   agentId: string;
   prompt: string;
@@ -1229,15 +1243,25 @@ function startScheduleLoop(): void {
   void pollSchedules();
 }
 
-async function processAgentDirectives(runId: string, fromAgentId: string, missionId: string | null, output: string) {
-  const directivePattern = /@agent:([^:]+):\s*([^\n]+)/gu;
+async function processAgentDirectives(runId: string, fromAgentId: string, missionId: string | null, output: string, prompt?: string) {
   const db = getDb();
   const fromAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(fromAgentId) as Record<string, unknown> | undefined;
   if (!fromAgent) {
     return;
   }
 
-  for (const match of output.matchAll(directivePattern)) {
+  // Strip the echoed prompt from the output so that example @agent: directives
+  // inside SOUL.md / AGENTS.md are not treated as real handoff commands.
+  let agentOutput = output;
+  if (prompt) {
+    const promptIndex = agentOutput.indexOf(prompt);
+    if (promptIndex !== -1) {
+      agentOutput = agentOutput.slice(promptIndex + prompt.length);
+    }
+  }
+
+  const directivePattern = /@agent:([^:]+):\s*([^\n]+)/gu;
+  for (const match of agentOutput.matchAll(directivePattern)) {
     const agentName = match[1]?.trim();
     const message = match[2]?.trim();
     if (!agentName || !message) {
@@ -1292,6 +1316,11 @@ async function executeRun(runId: string) {
   const startedAt = Date.now();
   let output = "";
 
+  // Post "started" comment on the issue
+  if (row.issue_id) {
+    insertAgentComment(String(row.issue_id), String(row.agent_id), `Started working on this issue.`);
+  }
+
   // Merge working directory into connection config if set
   const baseConfig = parseJson<Record<string, unknown>>(String(agentRow.connection_config ?? "{}"), {});
   const workingDir = typeof row.working_directory === "string" ? row.working_directory : null;
@@ -1305,6 +1334,7 @@ async function executeRun(runId: string) {
       agent: {
         id: String(agentRow.id),
         name: String(agentRow.name),
+        ...(typeof agentRow.role === "string" ? { role: agentRow.role } : {}),
         tools: parseJson<string[]>(String(agentRow.tools ?? "[]"), []),
       },
       context: {
@@ -1325,7 +1355,7 @@ async function executeRun(runId: string) {
       `,
     ).run(output, Date.now() - startedAt, runId);
     publishRunEvent(runId, { type: "complete", output, duration_ms: Date.now() - startedAt });
-    await processAgentDirectives(runId, String(agentRow.id), (row.mission_id as string | null) ?? null, output);
+    await processAgentDirectives(runId, String(agentRow.id), (row.mission_id as string | null) ?? null, output, fullPrompt);
 
     // After successful run, push branch and create PR if GitHub-linked
     const ghBranch = typeof row.github_branch === "string" ? row.github_branch : null;
@@ -1365,6 +1395,19 @@ async function executeRun(runId: string) {
         publishRunEvent(runId, { type: "pr_error", message: prError instanceof Error ? prError.message : "PR creation failed." });
       }
     }
+
+    // Post "completed" comment on the issue
+    if (row.issue_id) {
+      const durationSec = Math.round((Date.now() - startedAt) / 1000);
+      const truncatedOutput = output.length > 500 ? `${output.slice(0, 500)}...` : output;
+      const updatedRun = db.prepare("SELECT github_pr_url FROM runs WHERE id = ?").get(runId) as { github_pr_url: string | null } | undefined;
+      const prLine = updatedRun?.github_pr_url ? `\nPR: ${updatedRun.github_pr_url}` : "";
+      insertAgentComment(
+        String(row.issue_id),
+        String(row.agent_id),
+        `Completed this issue in ${durationSec}s.${prLine}\n\n${truncatedOutput}`,
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Run failed.";
     const failedOutput = `${output}${output ? "\n\n" : ""}[error] ${message}`;
@@ -1376,6 +1419,15 @@ async function executeRun(runId: string) {
       `,
     ).run(failedOutput, Date.now() - startedAt, runId);
     publishRunEvent(runId, { type: "error", message, output: failedOutput });
+
+    // Post "failed" comment on the issue
+    if (row.issue_id) {
+      insertAgentComment(
+        String(row.issue_id),
+        String(row.agent_id),
+        `Failed to complete this issue.\n\nError: ${message}`,
+      );
+    }
   }
 }
 
@@ -1886,6 +1938,7 @@ app.get("/api/runs", (req, res) => {
     runs: listRuns({
       agentId: typeof req.query.agent_id === "string" ? req.query.agent_id : undefined,
       missionId: typeof req.query.mission_id === "string" ? req.query.mission_id : undefined,
+      issueId: typeof req.query.issue_id === "string" ? req.query.issue_id : undefined,
       status: typeof req.query.status === "string" ? req.query.status : undefined,
       q: typeof req.query.q === "string" ? req.query.q : undefined,
     }),
@@ -1918,6 +1971,18 @@ app.get("/api/runs/:id", (req, res) => {
     return;
   }
   res.json({ run });
+});
+
+app.delete("/api/runs/:id", (req, res) => {
+  const database = getDb();
+  // Delete child rows that reference this run (handles existing DBs without ON DELETE CASCADE)
+  database.prepare("DELETE FROM agent_messages WHERE run_id = ?").run(req.params.id);
+  const result = database.prepare("DELETE FROM runs WHERE id = ?").run(req.params.id);
+  if (result.changes === 0) {
+    res.status(404).json({ error: "Run not found." });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 app.get("/api/runs/:id/stream", (req, res) => {

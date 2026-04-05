@@ -1,5 +1,5 @@
 import { useRef, useMemo, useState } from "react";
-import { AlertTriangleIcon, CheckCircleIcon, GitBranchIcon, HashIcon, ImageIcon, KeyIcon, LinkIcon, PaletteIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckCircleIcon, ClockIcon, GitBranchIcon, HashIcon, ImageIcon, KeyIcon, LinkIcon, PaletteIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import type { EngineConnectionResult } from "@/mission/appTypes";
 import { describeEngineVersion, seedEngineConfig } from "@/lib/engineConfig";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
@@ -17,6 +17,7 @@ const NAV_ANCHORS = [
   { id: "issues", label: "Issues" },
   { id: "usage", label: "Usage & Billing" },
   { id: "appearance", label: "Appearance" },
+  { id: "timezone", label: "Date & Time" },
   { id: "danger", label: "Danger Zone" },
 ];
 
@@ -379,6 +380,73 @@ export function Settings({ mission }: SettingsProps) {
                   onClick={async () => {
                     const ok = await mission.updateSettingsMap(settingsDraft);
                     if (ok) setStatus("Usage settings saved.");
+                  }}
+                  className="rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-4 py-2.5 text-[13px] font-medium text-white"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section id="timezone" className={activeSection !== "timezone" ? "hidden" : ""}>
+            <SectionHeader icon={<ClockIcon className="size-4" />} title="Date & Time" subtitle="Set your timezone so all dates and times display in your local time" />
+            <div className="mt-4 rounded-xl border border-white/[0.06] bg-[#1c1b1c] p-5">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Timezone</label>
+                <Select
+                  value={settingsDraft.user_timezone ?? "auto"}
+                  onValueChange={(value) => setSettingsDraft({ ...settingsDraft, user_timezone: value ?? "auto" })}
+                >
+                  <SelectTrigger className="w-full border-white/[0.08] bg-[#0f0f10] text-[13px] text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto-detect (browser default)</SelectItem>
+                    <SelectItem value="Pacific/Auckland">Pacific/Auckland (NZST)</SelectItem>
+                    <SelectItem value="Australia/Sydney">Australia/Sydney (AEST)</SelectItem>
+                    <SelectItem value="Australia/Melbourne">Australia/Melbourne (AEST)</SelectItem>
+                    <SelectItem value="Australia/Brisbane">Australia/Brisbane (AEST)</SelectItem>
+                    <SelectItem value="Australia/Perth">Australia/Perth (AWST)</SelectItem>
+                    <SelectItem value="Asia/Tokyo">Asia/Tokyo (JST)</SelectItem>
+                    <SelectItem value="Asia/Shanghai">Asia/Shanghai (CST)</SelectItem>
+                    <SelectItem value="Asia/Singapore">Asia/Singapore (SGT)</SelectItem>
+                    <SelectItem value="Asia/Kolkata">Asia/Kolkata (IST)</SelectItem>
+                    <SelectItem value="Asia/Dubai">Asia/Dubai (GST)</SelectItem>
+                    <SelectItem value="Europe/London">Europe/London (GMT/BST)</SelectItem>
+                    <SelectItem value="Europe/Paris">Europe/Paris (CET)</SelectItem>
+                    <SelectItem value="Europe/Berlin">Europe/Berlin (CET)</SelectItem>
+                    <SelectItem value="Europe/Amsterdam">Europe/Amsterdam (CET)</SelectItem>
+                    <SelectItem value="America/New_York">America/New_York (EST)</SelectItem>
+                    <SelectItem value="America/Chicago">America/Chicago (CST)</SelectItem>
+                    <SelectItem value="America/Denver">America/Denver (MST)</SelectItem>
+                    <SelectItem value="America/Los_Angeles">America/Los_Angeles (PST)</SelectItem>
+                    <SelectItem value="America/Anchorage">America/Anchorage (AKST)</SelectItem>
+                    <SelectItem value="Pacific/Honolulu">Pacific/Honolulu (HST)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+                <div className="text-[11px] text-[#918f90]">Preview</div>
+                <div className="mt-1 text-[13px] text-white">
+                  {new Date().toLocaleString(undefined, {
+                    timeZone: settingsDraft.user_timezone && settingsDraft.user_timezone !== "auto" ? settingsDraft.user_timezone : undefined,
+                    weekday: "long",
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                    timeZoneName: "short",
+                  })}
+                </div>
+              </div>
+              <div className="mt-3">
+                <button
+                  onClick={async () => {
+                    const ok = await mission.updateSettingsMap(settingsDraft);
+                    if (ok) setStatus("Timezone saved.");
                   }}
                   className="rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-4 py-2.5 text-[13px] font-medium text-white"
                 >

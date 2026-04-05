@@ -28,6 +28,7 @@ import {
   createSchedule,
   createRelationship,
   createRun,
+  deleteRun,
   deleteSchedule,
   deleteAgent,
   deleteIssue,
@@ -226,6 +227,7 @@ export function useMissionControl() {
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [selectedIssueComments, setSelectedIssueComments] = useState<IssueCommentRecord[]>([]);
+  const [issueRuns, setIssueRuns] = useState<RunRecord[]>([]);
   const [agentMessages, setAgentMessages] = useState<AgentMessageRecord[]>([]);
   const [docs, setDocs] = useState<DocFileRecord[]>([]);
   const [docContent, setDocContent] = useState("");
@@ -723,6 +725,47 @@ export function useMissionControl() {
     return true;
   }
 
+  async function loadIssueRuns(issueId: string) {
+    if (!token) {
+      return [];
+    }
+    const result = await runBusyAction(`issue:${issueId}:runs`, () => fetchRuns(token, { issue_id: issueId }));
+    if (!result) {
+      return [];
+    }
+    setIssueRuns(result.runs);
+    return result.runs;
+  }
+
+  async function runIssue(issueId: string, agentId: string) {
+    const issue = issues.find((i) => i.id === issueId);
+    if (!issue || !token) {
+      return null;
+    }
+    const lines = [`Resolve the following issue:`, ``, `Title: ${issue.title}`];
+    if (issue.description) {
+      lines.push(``, `Description: ${issue.description}`);
+    }
+    lines.push(``, `Priority: ${issue.priority}`);
+    if (issue.labels.length > 0) {
+      lines.push(`Labels: ${issue.labels.join(", ")}`);
+    }
+    const prompt = lines.join("\n");
+    const input: { agent_id: string; prompt: string; mission_id?: string; issue_id?: string } = {
+      agent_id: agentId,
+      prompt,
+      issue_id: issueId,
+    };
+    if (issue.mission_id) {
+      input.mission_id = issue.mission_id;
+    }
+    const result = await createRunRecord(input);
+    if (result) {
+      await loadIssueRuns(issueId);
+    }
+    return result;
+  }
+
   async function syncLinear() {
     if (!token) {
       return false;
@@ -829,6 +872,18 @@ export function useMissionControl() {
     setSelectedRun(result.run);
     await refreshRuns();
     return result.run;
+  }
+
+  async function removeRunRecord(runId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`run:${runId}:delete`, () => deleteRun(token, runId));
+    if (!result) {
+      return false;
+    }
+    await refreshRuns();
+    return true;
   }
 
   async function loadRun(runId: string) {
@@ -1047,7 +1102,7 @@ export function useMissionControl() {
           engineLabel: engineLabel(agent.engine),
           statusLabel: status,
           lastRunLabel: recentRun ? recentRun.started_at : null,
-          avatarText: agent.name.charAt(0).toUpperCase(),
+          avatarText: agent.emoji && /\p{Emoji_Presentation}/u.test(agent.emoji) ? agent.emoji : agent.name.charAt(0).toUpperCase(),
         };
       }),
     [agents, runs],
@@ -1071,6 +1126,7 @@ export function useMissionControl() {
     schedules,
     selectedRun,
     selectedIssueComments,
+    issueRuns,
     agentMessages,
     docs,
     docContent,
@@ -1110,6 +1166,8 @@ export function useMissionControl() {
     removeIssue: removeIssueRecord,
     loadIssueComments,
     addIssueComment: addIssueCommentRecord,
+    loadIssueRuns,
+    runIssue,
     syncLinear,
     syncGitHub,
     testGitHubConnection: verifyGitHubConnection,
@@ -1121,6 +1179,7 @@ export function useMissionControl() {
     removeSchedule: removeScheduleRecord,
     runSchedule: runScheduleRecord,
     createRun: createRunRecord,
+    removeRun: removeRunRecord,
     loadRun,
     streamSelectedRun,
     refreshOrgMessages,
