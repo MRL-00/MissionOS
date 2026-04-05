@@ -123,7 +123,7 @@ export async function createGitHubIssue(
     owner,
     repo,
     title,
-    body: body ?? undefined,
+    ...(body ? { body } : {}),
   });
   return {
     id: data.id,
@@ -155,7 +155,7 @@ export async function createGitHubPR(
     head,
     base,
     title,
-    body: body ?? undefined,
+    ...(body ? { body } : {}),
   });
   return {
     id: data.id,
@@ -176,13 +176,14 @@ export async function syncGitHubIssuesToLocal(
   const { randomUUID } = await import("node:crypto");
 
   const upsert = db.prepare(`
-    INSERT INTO issues (id, title, description, status, priority, mission_id, source, github_id, github_number, github_repo, labels)
-    VALUES (?, ?, ?, 'backlog', 'medium', ?, 'github', ?, ?, ?, ?)
+    INSERT INTO issues (id, issue_number, title, description, status, priority, mission_id, source, github_id, github_number, github_repo, labels)
+    VALUES (?, ?, ?, ?, 'backlog', 'medium', ?, 'github', ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       description = excluded.description,
       github_number = excluded.github_number,
       labels = excluded.labels,
+      issue_number = COALESCE(issues.issue_number, excluded.issue_number),
       updated_at = datetime('now')
   `);
 
@@ -194,9 +195,16 @@ export async function syncGitHubIssuesToLocal(
   let synced = 0;
   const transaction = db.transaction(() => {
     for (const issue of issues) {
+      const isNew = !existingByGhId.has(issue.id);
       const localId = existingByGhId.get(issue.id) ?? randomUUID();
+      let nextNumber: number | null = null;
+      if (isNew) {
+        const maxRow = db.prepare("SELECT COALESCE(MAX(issue_number), 0) AS m FROM issues").get() as { m: number };
+        nextNumber = maxRow.m + 1;
+      }
       upsert.run(
         localId,
+        nextNumber,
         issue.title,
         issue.body,
         missionId,

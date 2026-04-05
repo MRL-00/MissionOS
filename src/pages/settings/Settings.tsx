@@ -1,5 +1,5 @@
 import { useRef, useMemo, useState } from "react";
-import { AlertTriangleIcon, CheckCircleIcon, GitBranchIcon, ImageIcon, KeyIcon, LinkIcon, PaletteIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckCircleIcon, GitBranchIcon, HashIcon, ImageIcon, KeyIcon, LinkIcon, PaletteIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import type { EngineConnectionResult } from "@/mission/appTypes";
 import { describeEngineVersion, seedEngineConfig } from "@/lib/engineConfig";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
@@ -14,6 +14,7 @@ const NAV_ANCHORS = [
   { id: "profile", label: "Profile" },
   { id: "integrations", label: "Integrations" },
   { id: "credentials", label: "Execution Engines" },
+  { id: "issues", label: "Issues" },
   { id: "usage", label: "Usage & Billing" },
   { id: "appearance", label: "Appearance" },
   { id: "danger", label: "Danger Zone" },
@@ -282,6 +283,32 @@ export function Settings({ mission }: SettingsProps) {
                   ) : null}
                 </div>
               ))}
+            </div>
+          </section>
+
+          <section id="issues" className={activeSection !== "issues" ? "hidden" : ""}>
+            <SectionHeader icon={<HashIcon className="size-4" />} title="Issue Settings" subtitle="Configure how issue ticket numbers are displayed" />
+            <div className="mt-4 rounded-xl border border-white/[0.06] bg-[#1c1b1c] p-5">
+              <FormField
+                label="Ticket Prefix"
+                value={settingsDraft.issue_prefix ?? "EPIC"}
+                onChange={(value) => setSettingsDraft({ ...settingsDraft, issue_prefix: value })}
+                placeholder="EPIC"
+              />
+              <div className="mt-2 text-[12px] text-[#918f90]">
+                Issues will be displayed as {settingsDraft.issue_prefix || "EPIC"}-001, {settingsDraft.issue_prefix || "EPIC"}-002, etc.
+              </div>
+              <div className="mt-3">
+                <button
+                  onClick={async () => {
+                    const ok = await mission.updateSettingsMap(settingsDraft);
+                    if (ok) setStatus("Issue settings saved.");
+                  }}
+                  className="rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-4 py-2.5 text-[13px] font-medium text-white"
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </section>
 

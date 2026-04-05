@@ -96,6 +96,7 @@ function serializeMission(row: Record<string, unknown>, assignedAgents: unknown[
     title: row.title,
     description: row.description,
     status: row.status,
+    color: row.color ?? null,
     lead_agent_id: row.lead_agent_id,
     lead_agent_name: row.lead_agent_name,
     lead_agent_emoji: row.lead_agent_emoji,
@@ -117,6 +118,7 @@ function serializeMission(row: Record<string, unknown>, assignedAgents: unknown[
 function serializeIssue(row: Record<string, unknown>) {
   return {
     id: row.id,
+    issue_number: row.issue_number ?? null,
     title: row.title,
     description: row.description,
     status: row.status,
@@ -137,6 +139,7 @@ function serializeIssue(row: Record<string, unknown>) {
     assignee_name: row.assignee_name,
     assignee_emoji: row.assignee_emoji,
     mission_title: row.mission_title,
+    mission_color: row.mission_color ?? null,
   };
 }
 
@@ -375,7 +378,8 @@ function listIssues(filters: {
         issues.*,
         assignee.name AS assignee_name,
         assignee.emoji AS assignee_emoji,
-        missions.title AS mission_title
+        missions.title AS mission_title,
+        missions.color AS mission_color
       FROM issues
       LEFT JOIN agents AS assignee ON assignee.id = issues.assignee_agent_id
       LEFT JOIN missions ON missions.id = issues.mission_id
@@ -501,11 +505,17 @@ async function syncLinearIssueToLocal(linearIssue: Record<string, unknown>) {
   const existing = db.prepare("SELECT id FROM issues WHERE linear_id = ?").get(linearId) as { id: string } | undefined;
   const issueId = existing?.id ?? id;
 
+  const isNew = !existing;
+  let nextNumber: number | null = null;
+  if (isNew) {
+    const maxRow = db.prepare("SELECT COALESCE(MAX(issue_number), 0) AS m FROM issues").get() as { m: number };
+    nextNumber = maxRow.m + 1;
+  }
   db.prepare(
     `
     INSERT INTO issues (
-      id, title, description, status, priority, labels, source, linear_id, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'linear', ?, datetime('now'))
+      id, issue_number, title, description, status, priority, labels, source, linear_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'linear', ?, datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       description = excluded.description,
@@ -514,10 +524,12 @@ async function syncLinearIssueToLocal(linearIssue: Record<string, unknown>) {
       labels = excluded.labels,
       source = 'linear',
       linear_id = excluded.linear_id,
+      issue_number = COALESCE(issues.issue_number, excluded.issue_number),
       updated_at = datetime('now')
     `,
   ).run(
     issueId,
+    nextNumber,
     String(linearIssue.title ?? "Untitled"),
     typeof linearIssue.description === "string" ? linearIssue.description : null,
     String(linearIssue.status ?? "backlog"),
@@ -949,6 +961,7 @@ app.post("/api/missions", (req, res) => {
   const {
     title,
     description,
+    color,
     lead_agent_id: leadAgentId,
     linear_project_id: linearProjectId,
     github_repo: githubRepo,
@@ -956,6 +969,7 @@ app.post("/api/missions", (req, res) => {
   } = req.body as {
     title?: string;
     description?: string;
+    color?: string;
     lead_agent_id?: string;
     linear_project_id?: string;
     github_repo?: string;
@@ -970,11 +984,11 @@ app.post("/api/missions", (req, res) => {
   getDb()
     .prepare(
       `
-      INSERT INTO missions (id, title, description, status, lead_agent_id, linear_project_id, github_repo, github_default_branch, updated_at)
-      VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, datetime('now'))
+      INSERT INTO missions (id, title, description, status, color, lead_agent_id, linear_project_id, github_repo, github_default_branch, updated_at)
+      VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, datetime('now'))
       `,
     )
-    .run(id, title, description ?? null, leadAgentId ?? null, linearProjectId ?? null, githubRepo ?? null, githubDefaultBranch ?? "main");
+    .run(id, title, description ?? null, color ?? null, leadAgentId ?? null, linearProjectId ?? null, githubRepo ?? null, githubDefaultBranch ?? "main");
 
   if (leadAgentId) {
     getDb().prepare("INSERT OR IGNORE INTO mission_agents (mission_id, agent_id) VALUES (?, ?)").run(id, leadAgentId);
@@ -989,6 +1003,7 @@ app.put("/api/missions/:id", (req, res) => {
     title,
     description,
     status,
+    color,
     lead_agent_id: leadAgentId,
     linear_project_id: linearProjectId,
     github_repo: githubRepo,
@@ -997,6 +1012,7 @@ app.put("/api/missions/:id", (req, res) => {
     title?: string;
     description?: string;
     status?: string;
+    color?: string;
     lead_agent_id?: string;
     linear_project_id?: string;
     github_repo?: string;
@@ -1007,12 +1023,12 @@ app.put("/api/missions/:id", (req, res) => {
     .prepare(
       `
       UPDATE missions
-      SET title = ?, description = ?, status = ?, lead_agent_id = ?, linear_project_id = ?,
+      SET title = ?, description = ?, status = ?, color = ?, lead_agent_id = ?, linear_project_id = ?,
           github_repo = ?, github_default_branch = ?, updated_at = datetime('now')
       WHERE id = ?
       `,
     )
-    .run(title, description ?? null, status ?? "planning", leadAgentId ?? null, linearProjectId ?? null,
+    .run(title, description ?? null, status ?? "planning", color ?? null, leadAgentId ?? null, linearProjectId ?? null,
       githubRepo ?? null, githubDefaultBranch ?? "main", req.params.id);
 
   if (leadAgentId) {
@@ -1429,14 +1445,18 @@ app.post("/api/issues", async (req, res) => {
   }
 
   const id = randomUUID();
-  getDb().prepare(
+  const db = getDb();
+  const maxRow = db.prepare("SELECT COALESCE(MAX(issue_number), 0) AS m FROM issues").get() as { m: number };
+  const nextNumber = maxRow.m + 1;
+  db.prepare(
     `
     INSERT INTO issues (
-      id, title, description, status, priority, assignee_agent_id, mission_id, labels, source, linear_id, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      id, issue_number, title, description, status, priority, assignee_agent_id, mission_id, labels, source, linear_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `,
   ).run(
     id,
+    nextNumber,
     body.title,
     typeof body.description === "string" ? body.description : null,
     typeof body.status === "string" ? body.status : "backlog",

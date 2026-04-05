@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS missions (
   title TEXT NOT NULL,
   description TEXT,
   status TEXT DEFAULT 'planning',
+  color TEXT,
   lead_agent_id TEXT REFERENCES agents(id),
   linear_project_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS mission_agents (
 
 CREATE TABLE IF NOT EXISTS issues (
   id TEXT PRIMARY KEY,
+  issue_number INTEGER,
   title TEXT NOT NULL,
   description TEXT,
   status TEXT DEFAULT 'backlog',
@@ -174,6 +176,8 @@ function runMigrations(database: Database.Database): void {
     "ALTER TABLE runs ADD COLUMN working_directory TEXT",
     "ALTER TABLE runs ADD COLUMN github_branch TEXT",
     "ALTER TABLE runs ADD COLUMN github_pr_url TEXT",
+    "ALTER TABLE missions ADD COLUMN color TEXT",
+    "ALTER TABLE issues ADD COLUMN issue_number INTEGER",
   ];
 
   for (const sql of migrations) {
@@ -182,6 +186,25 @@ function runMigrations(database: Database.Database): void {
     } catch {
       // Column already exists — safe to ignore
     }
+  }
+
+  // Backfill issue_number for any issues missing one
+  try {
+    const rows = database.prepare(
+      "SELECT id FROM issues WHERE issue_number IS NULL ORDER BY created_at ASC"
+    ).all() as { id: string }[];
+    if (rows.length > 0) {
+      const maxRow = database.prepare(
+        "SELECT COALESCE(MAX(issue_number), 0) AS m FROM issues"
+      ).get() as { m: number };
+      let next = maxRow.m + 1;
+      const stmt = database.prepare("UPDATE issues SET issue_number = ? WHERE id = ?");
+      for (const row of rows) {
+        stmt.run(next++, row.id);
+      }
+    }
+  } catch {
+    // ignore
   }
 }
 

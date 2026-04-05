@@ -87,6 +87,7 @@ export interface MissionRecord {
   title: string;
   description: string | null;
   status: string;
+  color: string | null;
   lead_agent_id: string | null;
   lead_agent_name: string | null;
   lead_agent_emoji: string | null;
@@ -106,6 +107,7 @@ export interface MissionRecord {
 
 export interface IssueRecord {
   id: string;
+  issue_number: number | null;
   title: string;
   description: string | null;
   status: string;
@@ -126,6 +128,7 @@ export interface IssueRecord {
   assignee_name?: string | null;
   assignee_emoji?: string | null;
   mission_title?: string | null;
+  mission_color?: string | null;
 }
 
 export interface IssueCommentRecord {
