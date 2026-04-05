@@ -1,7 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, TrashIcon, XIcon, ZapIcon, PencilIcon } from "lucide-react";
-import ReactFlow, { Background, Handle, MarkerType, MiniMap, Position, ReactFlowProvider, applyNodeChanges, useReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from "reactflow";
+import ReactFlow, {
+  Background,
+  BaseEdge,
+  EdgeLabelRenderer,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  ReactFlowProvider,
+  applyNodeChanges,
+  getBezierPath,
+  useReactFlow,
+  type Connection,
+  type Edge,
+  type EdgeProps,
+  type Node,
+  type NodeChange,
+  type NodeProps,
+} from "reactflow";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
+import type { AgentMessageRecord } from "@/mission/appTypes";
 import { AgentWizard } from "@/pages/onboarding/AgentWizard";
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "@/lib/dateFormat";
@@ -20,13 +39,6 @@ const STATUS_COLORS: Record<string, string> = {
   Active: "bg-blue-400",
   Idle: "bg-yellow-400",
   Offline: "bg-red-400",
-};
-
-const STATUS_RING: Record<string, string> = {
-  Running: "ring-emerald-400/30",
-  Active: "ring-blue-400/20",
-  Idle: "",
-  Offline: "",
 };
 
 const ENGINE_COLORS: Record<string, string> = {
@@ -56,75 +68,211 @@ function FlowNode({ data, selected }: NodeProps<{
   const isActive = agent.statusLabel === "Active";
 
   return (
-    <div
-      className={cn(
-        "w-[240px] rounded-xl border-t-2 border bg-[#1e1e20] p-4 text-left transition-all",
-        ENGINE_BORDER[agent.engineLabel] ?? "border-t-[#5e4ae3]",
-        selected
-          ? "border-[#5e4ae3]/60 bg-[#39147e]/[0.08] shadow-[0_0_20px_rgba(94,74,227,0.2)]"
-          : "border-white/[0.08]",
-        isRunning && "org-node-running",
-        isActive && !selected && "org-node-active",
-      )}
-    >
-      <Handle type="target" position={Position.Top} className="!size-2 !border-0 !bg-white/30" />
-      <div className="mb-2.5 flex items-center gap-2.5">
-        <div className="relative">
-          <div
-            className="flex size-9 items-center justify-center rounded-xl text-[13px] font-bold text-white"
-            style={{ background: `linear-gradient(135deg, ${agent.color}90, ${agent.color})` }}
-          >
-            {agent.avatarText}
+    <div className={cn("relative w-[240px] rounded-xl", isRunning && "org-node-running-shell")}>
+      <div
+        className={cn(
+          "org-node-card relative rounded-xl border-t-2 border bg-[#1e1e20] p-4 text-left transition-all",
+          ENGINE_BORDER[agent.engineLabel] ?? "border-t-[#5e4ae3]",
+          selected
+            ? "border-[#5e4ae3]/60 bg-[#39147e]/[0.08] shadow-[0_0_20px_rgba(94,74,227,0.2)]"
+            : "border-white/[0.08]",
+          isRunning && "org-node-running",
+          isActive && !selected && "org-node-active",
+        )}
+      >
+        <Handle type="target" position={Position.Top} className="!size-2 !border-0 !bg-white/30" />
+        <div className="mb-2.5 flex items-center gap-2.5">
+          <div className="relative">
+            <div
+              className="flex size-9 items-center justify-center rounded-xl text-[13px] font-bold text-white"
+              style={{ background: `linear-gradient(135deg, ${agent.color}90, ${agent.color})` }}
+            >
+              {agent.avatarText}
+            </div>
+            <span
+              className={cn(
+                "absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-[#1e1e20]",
+                STATUS_COLORS[agent.statusLabel] ?? STATUS_COLORS.Idle,
+                isRunning && "animate-pulse",
+              )}
+            />
           </div>
-          <span
-            className={cn(
-              "absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-[#1e1e20]",
-              STATUS_COLORS[agent.statusLabel] ?? STATUS_COLORS.Idle,
-              isRunning && "animate-pulse",
-            )}
-          />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-semibold text-white">{agent.name}</div>
+            <div className="truncate text-[11px] text-[#918f90]">{agent.role || "Unassigned"}</div>
+          </div>
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-semibold text-white">{agent.name}</div>
-          <div className="truncate text-[11px] text-[#918f90]">{agent.role || "Unassigned"}</div>
+        <div className="flex items-center justify-between">
+          <span className={cn("text-[10px] font-medium", ENGINE_COLORS[agent.engineLabel] ?? ENGINE_COLORS.OpenClaw)}>
+            {agent.engineLabel}
+          </span>
+          <div className="flex items-center gap-1.5">
+            {agent.skills.length > 0 ? (
+              <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9px] text-[#918f90]">
+                {agent.skills.length} skill{agent.skills.length > 1 ? "s" : ""}
+              </span>
+            ) : null}
+            {isRunning ? (
+              <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium text-emerald-400">
+                <ZapIcon className="size-2.5" />
+                Running
+              </span>
+            ) : null}
+          </div>
         </div>
+        {data.activeRun ? (
+          <div className="mt-2 truncate rounded-md bg-white/[0.04] px-2 py-1 text-[10px] text-[#918f90]">
+            {data.activeRun.mission_title || data.activeRun.issue_title || "Active run"}
+          </div>
+        ) : null}
+        <Handle type="source" position={Position.Bottom} className="!size-2 !border-0 !bg-white/30" />
       </div>
-      <div className="flex items-center justify-between">
-        <span className={cn("text-[10px] font-medium", ENGINE_COLORS[agent.engineLabel] ?? ENGINE_COLORS.OpenClaw)}>
-          {agent.engineLabel}
-        </span>
-        <div className="flex items-center gap-1.5">
-          {agent.skills.length > 0 ? (
-            <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9px] text-[#918f90]">
-              {agent.skills.length} skill{agent.skills.length > 1 ? "s" : ""}
-            </span>
-          ) : null}
-          {isRunning ? (
-            <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium text-emerald-400">
-              <ZapIcon className="size-2.5" />
-              Running
-            </span>
-          ) : null}
-        </div>
-      </div>
-      {data.activeRun ? (
-        <div className="mt-2 truncate rounded-md bg-white/[0.04] px-2 py-1 text-[10px] text-[#918f90]">
-          {data.activeRun.mission_title || data.activeRun.issue_title || "Active run"}
-        </div>
-      ) : null}
-      <Handle type="source" position={Position.Bottom} className="!size-2 !border-0 !bg-white/30" />
     </div>
   );
 }
 
 const nodeTypes = { agent: FlowNode };
 
+interface DelegationEdgeData {
+  isDelegating?: boolean;
+  label?: string;
+}
+
+function DelegationEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerEnd,
+  style,
+  data,
+}: EdgeProps<DelegationEdgeData>) {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+  });
+
+  const isDelegating = data?.isDelegating ?? false;
+  const edgeStyle = style as CSSProperties | undefined;
+  const baseEdgeProps = {
+    id,
+    path: edgePath,
+    ...(markerEnd ? { markerEnd } : {}),
+    ...(edgeStyle ? { style: edgeStyle } : {}),
+  };
+
+  return (
+    <>
+      <BaseEdge {...baseEdgeProps} />
+      {isDelegating ? (
+        <>
+          <path
+            d={edgePath}
+            className="org-edge-flow"
+            style={{
+              stroke: edgeStyle?.stroke ?? "#19e6a7",
+              strokeWidth: Number(edgeStyle?.strokeWidth ?? 2.5),
+            }}
+          />
+          <g className="org-edge-traveler">
+            {/* Soft trail glow */}
+            <circle r="10" fill={typeof edgeStyle?.stroke === "string" ? edgeStyle.stroke : "#19e6a7"} opacity="0.15">
+              <animateMotion dur="1.6s" repeatCount="indefinite" path={edgePath} />
+            </circle>
+            {/* Core dot */}
+            <circle r="4.5" fill={typeof edgeStyle?.stroke === "string" ? edgeStyle.stroke : "#19e6a7"}>
+              <animateMotion dur="1.6s" repeatCount="indefinite" path={edgePath} />
+              <animate attributeName="r" values="4;5.5;4" dur="1s" repeatCount="indefinite" />
+            </circle>
+            {/* Bright center */}
+            <circle r="2" fill="#fff" opacity="0.85">
+              <animateMotion dur="1.6s" repeatCount="indefinite" path={edgePath} />
+            </circle>
+          </g>
+        </>
+      ) : null}
+      {data?.label ? (
+        <EdgeLabelRenderer>
+          <div
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-md border border-[#5e4ae3]/30 bg-[#1e1e20]/95 px-2 py-1 text-[10px] font-medium text-[#c6bfff] shadow-[0_0_12px_rgba(94,74,227,0.18)]"
+            style={{
+              left: `${labelX}px`,
+              top: `${labelY}px`,
+            }}
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </>
+  );
+}
+
+const edgeTypes = { delegation: DelegationEdge };
+
 function OrgChartFlow({ mission }: OrgChartPageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [demoDelegation, setDemoDelegation] = useState<{
+    fromAgentId: string;
+    toAgentId: string;
+    startedAt: string;
+    message: string;
+  } | null>(null);
   const { fitView, zoomIn, zoomOut } = useReactFlow();
 
+  useEffect(() => {
+    if (!demoDelegation) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setDemoDelegation(null), 12000);
+    return () => window.clearTimeout(timeout);
+  }, [demoDelegation]);
+
+  const demoAgents = useMemo(() => {
+    const boss = mission.derivedAgents.find((agent) => agent.name === "Boss");
+    const claudy = mission.derivedAgents.find((agent) => agent.name === "Claudy");
+    if (boss && claudy) {
+      return { from: boss, to: claudy };
+    }
+
+    const fallbackRelationship = mission.relationships[0];
+    if (!fallbackRelationship) {
+      return null;
+    }
+
+    const from = mission.derivedAgents.find((agent) => agent.id === fallbackRelationship.parent_id);
+    const to = mission.derivedAgents.find((agent) => agent.id === fallbackRelationship.child_id);
+    return from && to ? { from, to } : null;
+  }, [mission.derivedAgents, mission.relationships]);
+
+  const effectiveAgentMessages = useMemo(() => {
+    if (!demoDelegation) {
+      return mission.agentMessages;
+    }
+    const demoMessage: AgentMessageRecord = {
+      id: "demo-delegation-message",
+      from_agent_id: demoDelegation.fromAgentId,
+      to_agent_id: demoDelegation.toAgentId,
+      mission_id: null,
+      run_id: null,
+      message: demoDelegation.message,
+      created_at: demoDelegation.startedAt,
+      from_agent_name: null,
+      from_agent_emoji: null,
+      to_agent_name: null,
+      to_agent_emoji: null,
+    };
+    return [demoMessage, ...mission.agentMessages];
+  }, [demoDelegation, mission.agentMessages]);
 
   // Find active runs per agent
   const activeRunsByAgent = useMemo(() => {
@@ -137,15 +285,31 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
     return map;
   }, [mission.runs]);
 
+  const effectiveAgents = useMemo(
+    () =>
+      mission.derivedAgents.map((agent) =>
+        demoDelegation && agent.id === demoDelegation.toAgentId
+          ? { ...agent, statusLabel: "Running" }
+          : agent,
+      ),
+    [demoDelegation, mission.derivedAgents],
+  );
+
   const externalNodes: Node[] = useMemo(
     () =>
-      mission.derivedAgents.map((agent) => ({
+      effectiveAgents.map((agent) => ({
         id: agent.id,
         type: "agent",
         position: agent.position,
-        data: { agent, activeRun: activeRunsByAgent.get(agent.id) ?? null },
+        data: {
+          agent,
+          activeRun:
+            demoDelegation && agent.id === demoDelegation.toAgentId
+              ? { mission_title: "Demo handoff in progress", issue_title: null }
+              : activeRunsByAgent.get(agent.id) ?? null,
+        },
       })),
-    [mission.derivedAgents, activeRunsByAgent],
+    [effectiveAgents, activeRunsByAgent, demoDelegation],
   );
 
   const [nodes, setNodes] = useState<Node[]>(externalNodes);
@@ -171,33 +335,29 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
   const edges: Edge[] = useMemo(
     () =>
       mission.relationships.map((relationship) => {
-        const latestMessage = mission.agentMessages.find(
+        const latestMessage = [...effectiveAgentMessages].reverse().find(
           (message) => message.from_agent_id === relationship.parent_id && message.to_agent_id === relationship.child_id,
         );
-        const isHot = latestMessage ? Date.now() - new Date(latestMessage.created_at).getTime() < 5000 : false;
+        const isDelegating = latestMessage ? Date.now() - new Date(latestMessage.created_at).getTime() < 12000 : false;
         return {
           id: relationship.id,
           source: relationship.parent_id,
           target: relationship.child_id,
-          animated: isHot,
-          markerEnd: { type: MarkerType.ArrowClosed, color: isHot ? "#5e4ae3" : "rgba(255,255,255,0.25)", width: 16, height: 16 },
+          type: "delegation",
+          animated: false,
+          markerEnd: { type: MarkerType.ArrowClosed, color: isDelegating ? "#19e6a7" : "rgba(255,255,255,0.25)", width: 16, height: 16 },
           style: {
-            stroke: isHot ? "#5e4ae3" : "rgba(255,255,255,0.12)",
-            strokeWidth: isHot ? 2.5 : 1.5,
-            ...(isHot ? { filter: "drop-shadow(0 0 4px rgba(94,74,227,0.4))" } : {}),
+            stroke: isDelegating ? "#19e6a7" : "rgba(255,255,255,0.12)",
+            strokeWidth: isDelegating ? 2.5 : 1.5,
+            ...(isDelegating ? { filter: "drop-shadow(0 0 8px rgba(25,230,167,0.32))" } : {}),
           },
-          labelBgPadding: [6, 3] as [number, number],
-          labelBgBorderRadius: 4,
-          ...(isHot && latestMessage
-            ? {
-                label: latestMessage.message.slice(0, 30),
-                labelStyle: { fill: "#c6bfff", fontSize: 10, fontWeight: 500 },
-                labelBgStyle: { fill: "#1e1e20", fillOpacity: 0.9 },
-              }
-            : {}),
+          data: {
+            isDelegating,
+            label: isDelegating && latestMessage ? latestMessage.message.slice(0, 30) : undefined,
+          },
         };
       }),
-    [mission.agentMessages, mission.relationships],
+    [effectiveAgentMessages, mission.relationships],
   );
 
   const selectedNode = mission.derivedAgents.find((agent) => agent.id === selectedNodeId) ?? null;
@@ -227,6 +387,7 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
           panOnScroll
           selectionOnDrag
@@ -264,6 +425,23 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
 
         {/* Top-right zoom controls */}
         <div className="absolute right-4 top-4 flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              if (!demoAgents) return;
+              setDemoDelegation({
+                fromAgentId: demoAgents.from.id,
+                toAgentId: demoAgents.to.id,
+                startedAt: new Date().toISOString(),
+                message: `Delegating to ${demoAgents.to.name}`,
+              });
+            }}
+            disabled={!demoAgents}
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#1e1e20] px-3 text-[11px] font-medium text-[#c8c4d7] transition-colors hover:border-emerald-400/30 hover:text-emerald-300 disabled:cursor-not-allowed disabled:text-[#777]"
+            title={demoAgents ? "Trigger a demo delegation animation" : "Add a relationship first to demo delegation"}
+          >
+            <ZapIcon className="size-3.5" />
+            Demo Delegation
+          </button>
           <div className="flex items-center overflow-hidden rounded-lg border border-white/[0.08] bg-[#1e1e20] shadow-lg">
             <button
               onClick={() => zoomIn({ duration: 200 })}

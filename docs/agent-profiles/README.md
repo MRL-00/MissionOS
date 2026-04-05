@@ -17,6 +17,6 @@ Suggested use:
 
 Recommended pairing:
 
-- `Boss`: delegation-only, code execution off, file system off
+- `Boss`: delegation-only by prompt and role, but keep runtime writable if Boss is expected to hand work to an implementation agent within the same Codex run
 - `Claudy`: engineering owner, code execution on, file system on
 - `Cody`: iOS specialist, code execution on, file system on

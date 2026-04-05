@@ -103,6 +103,15 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
     }
   }, [selectedIssue?.id]);
 
+  // Poll for issue runs while selected so delegated/background runs appear automatically
+  useEffect(() => {
+    if (!selectedIssue) return;
+    const interval = setInterval(() => {
+      void mission.loadIssueRuns(selectedIssue.id);
+    }, 5_000);
+    return () => clearInterval(interval);
+  }, [selectedIssue?.id, mission]);
+
   const handleRunIssue = useCallback(
     (agentId: string) => {
       if (!selectedIssue) return;

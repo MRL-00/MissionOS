@@ -1250,6 +1250,11 @@ async function processAgentDirectives(runId: string, fromAgentId: string, missio
     return;
   }
 
+  // Inherit the issueId from the originating run so delegated runs stay linked
+  // to the same issue and get the correct workspace context.
+  const originRun = db.prepare("SELECT issue_id FROM runs WHERE id = ?").get(runId) as { issue_id: string | null } | undefined;
+  const issueId = originRun?.issue_id ?? null;
+
   // Strip the echoed prompt from the output so that example @agent: directives
   // inside SOUL.md / AGENTS.md are not treated as real handoff commands.
   let agentOutput = output;
@@ -1287,6 +1292,7 @@ async function processAgentDirectives(runId: string, fromAgentId: string, missio
         agentId: String(target.id),
         prompt: `Mission handoff from ${String(fromAgent.name)}: ${message}`,
         missionId,
+        issueId,
       });
     }
   }

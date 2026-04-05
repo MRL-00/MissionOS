@@ -13,6 +13,7 @@ export const codexAdapter: EngineAdapter = {
   fields: [
     { key: "codexPath", label: "Codex Path", type: "text", defaultValue: "codex", required: true },
     { key: "apiKey", label: "OpenAI API Key", type: "password" },
+    { key: "sandboxMode", label: "Sandbox Mode", type: "text", defaultValue: "full-auto" },
   ],
   async test(config) {
     const command = typeof config.codexPath === "string" && config.codexPath ? config.codexPath : "codex";
@@ -22,7 +23,7 @@ export const codexAdapter: EngineAdapter = {
       upgradeCommand: "npm install -g @openai/codex",
     });
   },
-  async *run({ prompt, connectionConfig, agent }) {
+  async *run({ prompt, connectionConfig }) {
     const command =
       typeof connectionConfig.codexPath === "string" && connectionConfig.codexPath
         ? connectionConfig.codexPath
@@ -34,10 +35,12 @@ export const codexAdapter: EngineAdapter = {
         ? connectionConfig.workingDirectory
         : repoRoot;
 
-    // Orchestrator agents should not execute code — they only plan and delegate.
-    // Use read-only sandbox so they can only produce text output (where @agent: directives live).
-    const isOrchestrator = agent?.role?.toLowerCase() === "orchestrator";
-    const sandboxArgs: string[] = isOrchestrator ? ["--sandbox", "read-only"] : ["--full-auto"];
+    const sandboxMode =
+      typeof connectionConfig.sandboxMode === "string" && connectionConfig.sandboxMode.trim()
+        ? connectionConfig.sandboxMode.trim().toLowerCase()
+        : "full-auto";
+    const sandboxArgs: string[] =
+      sandboxMode === "read-only" ? ["--sandbox", "read-only"] : ["--full-auto"];
 
     yield* streamProcess(command, ["exec", ...sandboxArgs, "--color", "never", "--cd", cwd, prompt], {
       env: {

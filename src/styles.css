@@ -1584,17 +1584,6 @@ canvas {
 }
 
 /* Org chart agent pulse animations */
-@keyframes agent-pulse-ring {
-  0% {
-    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.35);
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(52, 211, 153, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
-  }
-}
 
 @keyframes agent-glow {
   0%,
@@ -1606,9 +1595,28 @@ canvas {
   }
 }
 
+@keyframes org-running-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 12px rgba(25, 230, 167, 0.12), 0 0 4px rgba(25, 230, 167, 0.08);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(25, 230, 167, 0.28), 0 0 8px rgba(25, 230, 167, 0.18);
+  }
+}
+
+@keyframes org-border-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes edge-flow {
   0% {
-    stroke-dashoffset: 24;
+    stroke-dashoffset: 18;
   }
   100% {
     stroke-dashoffset: 0;
@@ -1616,11 +1624,64 @@ canvas {
 }
 
 .org-node-running {
-  animation: agent-pulse-ring 2s ease-in-out infinite;
+  /* glow handled by shell — no conflicting box-shadow pulse */
+}
+
+.org-node-running-shell {
+  position: relative;
+  border-radius: 12px;
+  padding: 1.5px;
+  overflow: hidden;
+  animation: org-running-glow 3s ease-in-out infinite;
+}
+
+.org-node-running-shell::before {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    rgba(25, 230, 167, 0.85) 20%,
+    rgba(94, 74, 227, 0.65) 40%,
+    transparent 50%,
+    rgba(25, 230, 167, 0.85) 70%,
+    rgba(94, 74, 227, 0.65) 90%,
+    transparent 100%
+  );
+  animation: org-border-spin 2.4s linear infinite;
+  z-index: 0;
+}
+
+.org-node-running-shell::after {
+  content: "";
+  position: absolute;
+  inset: 1.5px;
+  background: #1e1e20;
+  border-radius: 11px;
+  z-index: 0;
+}
+
+.org-node-card {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
 }
 
 .org-node-active {
   animation: agent-glow 3s ease-in-out infinite;
+}
+
+.org-edge-flow {
+  fill: none;
+  stroke-linecap: round;
+  stroke-dasharray: 8 6;
+  animation: edge-flow 0.7s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(25, 230, 167, 0.6));
+}
+
+.org-edge-traveler {
+  filter: drop-shadow(0 0 10px rgba(25, 230, 167, 0.9)) drop-shadow(0 0 4px rgba(25, 230, 167, 1));
 }
 
 /* Org chart — base node grab cursor */
@@ -1637,7 +1698,7 @@ canvas {
   cursor: grabbing !important;
 }
 
-.react-flow__node.dragging > div {
+.react-flow__node.dragging .org-node-card {
   border-color: rgba(94, 74, 227, 0.6) !important;
   box-shadow: 0 0 30px rgba(94, 74, 227, 0.35), inset 0 0 0 1px rgba(94, 74, 227, 0.2);
 }
