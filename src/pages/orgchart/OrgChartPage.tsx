@@ -1,11 +1,18 @@
-import { useCallback, useMemo, useState } from "react";
-import { MaximizeIcon, MinusIcon, PlusIcon, SendIcon, XIcon, ZapIcon } from "lucide-react";
-import ReactFlow, { Background, Handle, MarkerType, MiniMap, Position, ReactFlowProvider, useReactFlow, type Connection, type Edge, type Node, type NodeProps } from "reactflow";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { MaximizeIcon, MinusIcon, PlusIcon, TrashIcon, XIcon, ZapIcon, ListChecksIcon, ChevronRightIcon, PencilIcon } from "lucide-react";
+import ReactFlow, { Background, Handle, MarkerType, MiniMap, Position, ReactFlowProvider, applyNodeChanges, useReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from "reactflow";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
+import type { DelegationRule } from "@/mission/appTypes";
+import { AgentWizard } from "@/pages/onboarding/AgentWizard";
 import { cn } from "@/lib/utils";
 
 interface OrgChartPageProps {
   mission: MissionControlState;
+}
+
+interface ActiveRunSummary {
+  mission_title: string | null | undefined;
+  issue_title: string | null | undefined;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -42,7 +49,7 @@ const ENGINE_BORDER: Record<string, string> = {
 
 function FlowNode({ data, selected }: NodeProps<{
   agent: MissionControlState["derivedAgents"][number];
-  activeRun: { mission_title?: string | null; issue_title?: string | null } | null;
+  activeRun: ActiveRunSummary | null;
 }>) {
   const agent = data.agent;
   const isRunning = agent.statusLabel === "Running";
@@ -51,7 +58,7 @@ function FlowNode({ data, selected }: NodeProps<{
   return (
     <div
       className={cn(
-        "w-[240px] rounded-xl border-t-2 border bg-[#1c1b1c] p-4 text-left transition-all",
+        "w-[240px] rounded-xl border-t-2 border bg-[#1e1e20] p-4 text-left transition-all",
         ENGINE_BORDER[agent.engineLabel] ?? "border-t-[#5e4ae3]",
         selected
           ? "border-[#5e4ae3]/60 bg-[#39147e]/[0.08] shadow-[0_0_20px_rgba(94,74,227,0.2)]"
@@ -71,7 +78,7 @@ function FlowNode({ data, selected }: NodeProps<{
           </div>
           <span
             className={cn(
-              "absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-[#1c1b1c]",
+              "absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-[#1e1e20]",
               STATUS_COLORS[agent.statusLabel] ?? STATUS_COLORS.Idle,
               isRunning && "animate-pulse",
             )}
@@ -114,15 +121,22 @@ const nodeTypes = { agent: FlowNode };
 
 function OrgChartFlow({ mission }: OrgChartPageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [delegateOpen, setDelegateOpen] = useState(false);
-  const [delegateTargetId, setDelegateTargetId] = useState("");
-  const [delegatePrompt, setDelegatePrompt] = useState("");
-  const [delegating, setDelegating] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const { fitView, zoomIn, zoomOut } = useReactFlow();
+
+  // Delegation rules state
+  const [addingRule, setAddingRule] = useState(false);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [ruleTrigger, setRuleTrigger] = useState("");
+  const [ruleTargetId, setRuleTargetId] = useState("");
+  const [ruleInstruction, setRuleInstruction] = useState("");
+  const [ruleOnComplete, setRuleOnComplete] = useState("");
+  const [savingRule, setSavingRule] = useState(false);
 
   // Find active runs per agent
   const activeRunsByAgent = useMemo(() => {
-    const map = new Map<string, { mission_title?: string | null; issue_title?: string | null }>();
+    const map = new Map<string, ActiveRunSummary>();
     for (const run of mission.runs) {
       if (run.status === "running" && run.agent_id) {
         map.set(run.agent_id, { mission_title: run.mission_title, issue_title: run.issue_title });
@@ -131,7 +145,7 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
     return map;
   }, [mission.runs]);
 
-  const nodes: Node[] = useMemo(
+  const externalNodes: Node[] = useMemo(
     () =>
       mission.derivedAgents.map((agent) => ({
         id: agent.id,
@@ -141,6 +155,26 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
       })),
     [mission.derivedAgents, activeRunsByAgent],
   );
+
+  const [nodes, setNodes] = useState<Node[]>(externalNodes);
+
+  useEffect(() => {
+    setNodes((current) => {
+      const currentById = new Map(current.map((node) => [node.id, node]));
+      return externalNodes.map((node) => {
+        const existing = currentById.get(node.id);
+        if (!existing) {
+          return node;
+        }
+        return {
+          ...node,
+          position: existing.position,
+          ...(existing.selected !== undefined ? { selected: existing.selected } : {}),
+          ...(existing.dragging !== undefined ? { dragging: existing.dragging } : {}),
+        };
+      });
+    });
+  }, [externalNodes]);
 
   const edges: Edge[] = useMemo(
     () =>
@@ -158,19 +192,36 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
           style: {
             stroke: isHot ? "#5e4ae3" : "rgba(255,255,255,0.12)",
             strokeWidth: isHot ? 2.5 : 1.5,
-            filter: isHot ? "drop-shadow(0 0 4px rgba(94,74,227,0.4))" : undefined,
+            ...(isHot ? { filter: "drop-shadow(0 0 4px rgba(94,74,227,0.4))" } : {}),
           },
-          label: isHot ? latestMessage?.message.slice(0, 30) : undefined,
-          labelStyle: isHot ? { fill: "#c6bfff", fontSize: 10, fontWeight: 500 } : undefined,
-          labelBgStyle: isHot ? { fill: "#1c1b1c", fillOpacity: 0.9 } : undefined,
           labelBgPadding: [6, 3] as [number, number],
           labelBgBorderRadius: 4,
+          ...(isHot && latestMessage
+            ? {
+                label: latestMessage.message.slice(0, 30),
+                labelStyle: { fill: "#c6bfff", fontSize: 10, fontWeight: 500 },
+                labelBgStyle: { fill: "#1e1e20", fillOpacity: 0.9 },
+              }
+            : {}),
         };
       }),
     [mission.agentMessages, mission.relationships],
   );
 
   const selectedNode = mission.derivedAgents.find((agent) => agent.id === selectedNodeId) ?? null;
+
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes((current) => applyNodeChanges(changes, current));
+  }, []);
+
+  // Find direct children of selected node (for delegation rule targets)
+  const childAgents = useMemo(() => {
+    if (!selectedNode) return [];
+    const childIds = mission.relationships
+      .filter((r) => r.parent_id === selectedNode.id)
+      .map((r) => r.child_id);
+    return mission.derivedAgents.filter((a) => childIds.includes(a.id));
+  }, [selectedNode, mission.relationships, mission.derivedAgents]);
 
   // Find missions this agent is assigned to
   const agentMissions = useMemo(() => {
@@ -186,9 +237,67 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
     [mission],
   );
 
+  const resetRuleForm = () => {
+    setAddingRule(false);
+    setEditingRuleId(null);
+    setRuleTrigger("");
+    setRuleTargetId("");
+    setRuleInstruction("");
+    setRuleOnComplete("");
+  };
+
+  const startEditRule = (rule: DelegationRule) => {
+    setEditingRuleId(rule.id);
+    setAddingRule(true);
+    setRuleTrigger(rule.trigger);
+    setRuleTargetId(rule.target_agent_id);
+    setRuleInstruction(rule.instruction);
+    setRuleOnComplete(rule.on_complete);
+  };
+
+  const saveRule = async () => {
+    if (!selectedNode || !ruleTrigger.trim() || !ruleTargetId || !ruleInstruction.trim()) return;
+    setSavingRule(true);
+
+    const existingRules: DelegationRule[] = selectedNode.delegation_rules ?? [];
+    let updatedRules: DelegationRule[];
+
+    if (editingRuleId) {
+      updatedRules = existingRules.map((r) =>
+        r.id === editingRuleId
+          ? { ...r, trigger: ruleTrigger.trim(), target_agent_id: ruleTargetId, instruction: ruleInstruction.trim(), on_complete: ruleOnComplete.trim() }
+          : r,
+      );
+    } else {
+      const newRule: DelegationRule = {
+        id: crypto.randomUUID(),
+        trigger: ruleTrigger.trim(),
+        target_agent_id: ruleTargetId,
+        instruction: ruleInstruction.trim(),
+        on_complete: ruleOnComplete.trim(),
+      };
+      updatedRules = [...existingRules, newRule];
+    }
+
+    await mission.editAgent(selectedNode.id, { ...selectedNode, delegation_rules: updatedRules });
+    setSavingRule(false);
+    resetRuleForm();
+  };
+
+  const deleteRule = async (ruleId: string) => {
+    if (!selectedNode) return;
+    const existingRules: DelegationRule[] = selectedNode.delegation_rules ?? [];
+    const updatedRules = existingRules.filter((r) => r.id !== ruleId);
+    await mission.editAgent(selectedNode.id, { ...selectedNode, delegation_rules: updatedRules });
+  };
+
+  const getAgentName = (agentId: string) => {
+    return mission.derivedAgents.find((a) => a.id === agentId)?.name ?? "Unknown";
+  };
+
   return (
     <div className="flex h-full">
-      <div className="relative flex-1">
+      <div className={cn("relative flex-1", isDragging && "orgchart-dragging-active")}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -196,6 +305,7 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
           fitView
           panOnScroll
           selectionOnDrag
+          onNodesChange={handleNodesChange}
           onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
           onPaneClick={() => setSelectedNodeId(null)}
           onEdgeDoubleClick={(_event, edge) => {
@@ -204,7 +314,11 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
           onConnect={(connection) => {
             void handleConnect(connection);
           }}
+          onNodeDragStart={() => {
+            setIsDragging(true);
+          }}
           onNodeDragStop={(_event, node) => {
+            setIsDragging(false);
             const positions = nodes.map((entry) => ({
               agent_id: entry.id,
               x: entry.id === node.id ? node.position.x : entry.position.x,
@@ -213,8 +327,9 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
             void mission.persistPositions(positions);
           }}
           proOptions={{ hideAttribution: true }}
+          style={{ background: "#161618" }}
         >
-          <Background color="rgba(255,255,255,0.03)" gap={24} />
+          <Background color="rgba(255,255,255,0.06)" gap={24} />
           <MiniMap
             nodeColor={(node) => (node.data as { agent: { color: string } }).agent.color}
             maskColor="rgba(0,0,0,0.7)"
@@ -224,7 +339,7 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
 
         {/* Top-right zoom controls */}
         <div className="absolute right-4 top-4 flex items-center gap-1.5">
-          <div className="flex items-center overflow-hidden rounded-lg border border-white/[0.08] bg-[#1c1b1c] shadow-lg">
+          <div className="flex items-center overflow-hidden rounded-lg border border-white/[0.08] bg-[#1e1e20] shadow-lg">
             <button
               onClick={() => zoomIn({ duration: 200 })}
               className="flex size-8 items-center justify-center text-[#918f90] transition-colors hover:bg-white/[0.06] hover:text-white"
@@ -267,9 +382,18 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
         <div className="w-[320px] shrink-0 overflow-y-auto border-l border-white/[0.06] bg-[#131314] p-5">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[#585658]">Agent Inspector</h2>
-            <button onClick={() => setSelectedNodeId(null)} className="rounded-lg p-1 text-[#585658] hover:bg-white/[0.06] hover:text-white">
-              <XIcon className="size-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setEditingAgentId(selectedNode.id)}
+                className="rounded-lg p-1 text-[#585658] hover:bg-white/[0.06] hover:text-white"
+                title="Edit agent"
+              >
+                <PencilIcon className="size-3.5" />
+              </button>
+              <button onClick={() => setSelectedNodeId(null)} className="rounded-lg p-1 text-[#585658] hover:bg-white/[0.06] hover:text-white">
+                <XIcon className="size-4" />
+              </button>
+            </div>
           </div>
 
           <div className="mb-5 flex items-center gap-3">
@@ -362,70 +486,163 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
             </div>
           </div>
 
-          {/* Delegation / Request Work */}
+          {/* Delegation Rules */}
           <div className="mt-5 border-t border-white/[0.06] pt-5">
-            {delegateOpen ? (
-              <div className="space-y-3">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Request Work From Agent</div>
-                <div>
-                  <label className="mb-1 block text-[10px] text-[#585658]">Ask which agent?</label>
-                  <select
-                    value={delegateTargetId}
-                    onChange={(e) => setDelegateTargetId(e.target.value)}
-                    className="w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none"
-                  >
-                    <option value="">Select agent...</option>
-                    {mission.derivedAgents.filter((a) => a.id !== selectedNode.id).map((a) => (
-                      <option key={a.id} value={a.id}>{a.name} ({a.engineLabel})</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-[10px] text-[#585658]">What should they do?</label>
-                  <textarea
-                    value={delegatePrompt}
-                    onChange={(e) => setDelegatePrompt(e.target.value)}
-                    placeholder="e.g. Review the PR at github.com/..."
-                    className="h-20 w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    disabled={!delegateTargetId || !delegatePrompt.trim() || delegating}
-                    onClick={async () => {
-                      if (!delegateTargetId || !delegatePrompt.trim()) return;
-                      setDelegating(true);
-                      await mission.sendAgentMessage(selectedNode.id, delegateTargetId, delegatePrompt);
-                      setDelegating(false);
-                      setDelegatePrompt("");
-                      setDelegateTargetId("");
-                      setDelegateOpen(false);
-                    }}
-                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#39147e] py-2 text-[12px] font-medium text-white transition-all hover:bg-[#7c3aed] disabled:opacity-40"
-                  >
-                    <SendIcon className="size-3" />
-                    {delegating ? "Sending..." : "Send Request"}
-                  </button>
-                  <button
-                    onClick={() => { setDelegateOpen(false); setDelegatePrompt(""); setDelegateTargetId(""); }}
-                    className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] text-[#918f90] transition-colors hover:bg-white/[0.04]"
-                  >
-                    Cancel
-                  </button>
-                </div>
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#585658]">
+                <ListChecksIcon className="size-3" />
+                Delegation Rules
+              </div>
+              {!addingRule && childAgents.length > 0 ? (
+                <button
+                  onClick={() => setAddingRule(true)}
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-[#918f90] transition-colors hover:bg-white/[0.06] hover:text-white"
+                >
+                  <PlusIcon className="size-3" />
+                  Add
+                </button>
+              ) : null}
+            </div>
+
+            {childAgents.length === 0 ? (
+              <div className="text-[11px] text-[#585658]">
+                No subordinate agents. Connect agents below this one in the org chart to add delegation rules.
               </div>
             ) : (
-              <button
-                onClick={() => setDelegateOpen(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-white/[0.1] px-3 py-2.5 text-[12px] text-[#918f90] transition-colors hover:border-[#5e4ae3]/40 hover:text-[#c6bfff]"
-              >
-                <SendIcon className="size-3.5" />
-                Request Work
-              </button>
+              <>
+                {/* Existing rules */}
+                <div className="space-y-2">
+                  {(selectedNode.delegation_rules ?? []).map((rule) => (
+                    <div
+                      key={rule.id}
+                      className="group rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5"
+                    >
+                      <div className="mb-1.5 flex items-center gap-1.5">
+                        <span className="rounded bg-[#39147e]/30 px-1.5 py-0.5 text-[10px] font-medium text-[#c6bfff]">
+                          {rule.trigger}
+                        </span>
+                        <ChevronRightIcon className="size-3 text-[#585658]" />
+                        <span className="text-[10px] font-medium text-[#c8c4d7]">
+                          {getAgentName(rule.target_agent_id)}
+                        </span>
+                        <div className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                          <button
+                            onClick={() => startEditRule(rule)}
+                            className="rounded p-0.5 text-[#585658] hover:bg-white/[0.06] hover:text-white"
+                          >
+                            <PencilIcon className="size-3" />
+                          </button>
+                          <button
+                            onClick={() => void deleteRule(rule.id)}
+                            className="rounded p-0.5 text-[#585658] hover:bg-red-500/20 hover:text-red-400"
+                          >
+                            <TrashIcon className="size-3" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="text-[10px] leading-relaxed text-[#918f90]">{rule.instruction}</div>
+                      {rule.on_complete ? (
+                        <div className="mt-1 text-[10px] text-[#585658]">
+                          On complete: {rule.on_complete}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Add/Edit rule form */}
+                {addingRule ? (
+                  <div className="mt-2.5 space-y-2.5 rounded-lg border border-[#5e4ae3]/30 bg-[#39147e]/[0.05] p-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#585658]">
+                      {editingRuleId ? "Edit Rule" : "New Rule"}
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] text-[#585658]">When this type of work comes in</label>
+                      <input
+                        value={ruleTrigger}
+                        onChange={(e) => setRuleTrigger(e.target.value)}
+                        placeholder="e.g. coding tasks, bug fixes, PR reviews"
+                        className="w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] text-[#585658]">Delegate to</label>
+                      <select
+                        value={ruleTargetId}
+                        onChange={(e) => setRuleTargetId(e.target.value)}
+                        className="w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none"
+                      >
+                        <option value="">Select subordinate...</option>
+                        {childAgents.map((a) => (
+                          <option key={a.id} value={a.id}>{a.name} ({a.engineLabel})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] text-[#585658]">Instructions for them</label>
+                      <textarea
+                        value={ruleInstruction}
+                        onChange={(e) => setRuleInstruction(e.target.value)}
+                        placeholder="e.g. Complete the task, create a PR, and let me know when done"
+                        className="h-16 w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] text-[#585658]">When they finish</label>
+                      <textarea
+                        value={ruleOnComplete}
+                        onChange={(e) => setRuleOnComplete(e.target.value)}
+                        placeholder="e.g. Review the PR and merge if it looks good"
+                        className="h-12 w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        disabled={!ruleTrigger.trim() || !ruleTargetId || !ruleInstruction.trim() || savingRule}
+                        onClick={() => void saveRule()}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#39147e] py-2 text-[12px] font-medium text-white transition-all hover:bg-[#7c3aed] disabled:opacity-40"
+                      >
+                        {savingRule ? "Saving..." : editingRuleId ? "Update Rule" : "Add Rule"}
+                      </button>
+                      <button
+                        onClick={resetRuleForm}
+                        className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] text-[#918f90] transition-colors hover:bg-white/[0.04]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         </div>
       ) : null}
+
+      {/* Edit Agent Modal */}
+      {editingAgentId ? (() => {
+        const agentToEdit = mission.agents.find((a) => a.id === editingAgentId);
+        if (!agentToEdit) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="flex w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141415] shadow-2xl shadow-black/50">
+              <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-3">
+                <h2 className="text-[14px] font-semibold text-white">Edit Agent</h2>
+                <button onClick={() => setEditingAgentId(null)} className="rounded-lg p-1 text-[#585658] transition-colors hover:bg-white/[0.06] hover:text-white">
+                  <XIcon className="size-4" />
+                </button>
+              </div>
+              <AgentWizard
+                mission={mission}
+                onComplete={() => setEditingAgentId(null)}
+                onCancel={() => setEditingAgentId(null)}
+                submitLabel="Save Changes"
+                initialAgent={agentToEdit}
+              />
+            </div>
+          </div>
+        );
+      })() : null}
     </div>
   );
 }

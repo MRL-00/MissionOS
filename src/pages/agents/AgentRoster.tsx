@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FilterIcon, MoreHorizontalIcon, PlusIcon, SearchIcon, Trash2Icon, WifiIcon, XIcon } from "lucide-react";
+import { FilterIcon, MoreHorizontalIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon, WifiIcon, XIcon } from "lucide-react";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { AgentWizard } from "@/pages/onboarding/AgentWizard";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,7 @@ export function AgentRoster({ mission }: AgentRosterProps) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editAgentId, setEditAgentId] = useState<string | null>(null);
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
 
@@ -162,6 +163,16 @@ export function AgentRoster({ mission }: AgentRosterProps) {
             style={{ top: menuPosition.top, left: menuPosition.left }}
           >
             <button
+              onClick={() => {
+                setEditAgentId(contextMenuId);
+                setContextMenuId(null);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-[#918f90] transition-colors hover:bg-white/[0.04] hover:text-white"
+            >
+              <PencilIcon className="size-3.5" />
+              Edit Agent
+            </button>
+            <button
               onClick={async () => {
                 const result = await mission.testAgentConnection(contextMenuId);
                 if (result) {
@@ -206,6 +217,31 @@ export function AgentRoster({ mission }: AgentRosterProps) {
           </div>
         </div>
       ) : null}
+
+      {/* Edit Agent Modal */}
+      {editAgentId ? (() => {
+        const agentToEdit = mission.agents.find((a) => a.id === editAgentId);
+        if (!agentToEdit) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="flex w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141415] shadow-2xl shadow-black/50">
+              <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-3">
+                <h2 className="text-[14px] font-semibold text-white">Edit Agent</h2>
+                <button onClick={() => setEditAgentId(null)} className="rounded-lg p-1 text-[#585658] transition-colors hover:bg-white/[0.06] hover:text-white">
+                  <XIcon className="size-4" />
+                </button>
+              </div>
+              <AgentWizard
+                mission={mission}
+                onComplete={() => setEditAgentId(null)}
+                onCancel={() => setEditAgentId(null)}
+                submitLabel="Save Changes"
+                initialAgent={agentToEdit}
+              />
+            </div>
+          </div>
+        );
+      })() : null}
     </div>
   );
 }

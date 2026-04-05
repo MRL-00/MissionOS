@@ -1623,18 +1623,44 @@ canvas {
   animation: agent-glow 3s ease-in-out infinite;
 }
 
+/* Org chart — base node grab cursor */
+.react-flow__node {
+  cursor: grab;
+}
+
 /* Org chart drag feedback */
 .react-flow__node.dragging {
-  opacity: 0.85;
-  transform: scale(1.04);
+  opacity: 1;
   z-index: 1000 !important;
-  filter: drop-shadow(0 8px 24px rgba(94, 74, 227, 0.35));
+  filter: drop-shadow(0 12px 32px rgba(94, 74, 227, 0.5)) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6));
   transition: none !important;
+  cursor: grabbing !important;
+}
+
+.react-flow__node.dragging > div {
+  border-color: rgba(94, 74, 227, 0.6) !important;
+  box-shadow: 0 0 30px rgba(94, 74, 227, 0.35), inset 0 0 0 1px rgba(94, 74, 227, 0.2);
 }
 
 .react-flow__node.dragging .org-node-running,
 .react-flow__node.dragging .org-node-active {
   animation: none;
+}
+
+/* Dim non-dragged items */
+.orgchart-dragging-active .react-flow__node:not(.dragging) {
+  opacity: 0.4;
+  transition: opacity 0.2s ease;
+}
+
+.orgchart-dragging-active .react-flow__edge {
+  opacity: 0.25;
+  transition: opacity 0.2s ease;
+}
+
+/* Pane cursor while dragging */
+.orgchart-dragging-active .react-flow__pane {
+  cursor: grabbing !important;
 }
 
 @media (max-width: 1080px) {

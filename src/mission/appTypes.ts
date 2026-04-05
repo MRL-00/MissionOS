@@ -46,6 +46,14 @@ export interface ProjectRecord {
   created_at?: string;
 }
 
+export interface DelegationRule {
+  id: string;
+  trigger: string;
+  target_agent_id: string;
+  instruction: string;
+  on_complete: string;
+}
+
 export interface AgentRecord {
   id: string;
   name: string;
@@ -59,6 +67,7 @@ export interface AgentRecord {
   connection_config: Record<string, unknown>;
   soul_md: string | null;
   agents_md: string | null;
+  delegation_rules: DelegationRule[];
   external_config: boolean;
   active: boolean;
   created_at: string;

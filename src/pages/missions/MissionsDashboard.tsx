@@ -47,7 +47,6 @@ export function MissionsDashboard({ mission }: MissionsDashboardProps) {
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set());
   const [githubRepo, setGithubRepo] = useState("");
   const [githubDefaultBranch, setGithubDefaultBranch] = useState("main");
-  const [repoOptions, setRepoOptions] = useState<Array<{ full_name: string; default_branch: string }>>([]);
   const [repoQuery, setRepoQuery] = useState("");
 
   // Inline edit state for side panel
@@ -58,7 +57,6 @@ export function MissionsDashboard({ mission }: MissionsDashboardProps) {
   const [editGithubRepo, setEditGithubRepo] = useState("");
   const [editGithubBranch, setEditGithubBranch] = useState("main");
   const [editRepoQuery, setEditRepoQuery] = useState("");
-  const [editRepoOptions, setEditRepoOptions] = useState<Array<{ full_name: string; default_branch: string }>>([]);
 
   const startEditing = useCallback(() => {
     const sel = mission.missions.find((m) => m.id === selectedMissionId);
@@ -69,7 +67,6 @@ export function MissionsDashboard({ mission }: MissionsDashboardProps) {
     setEditGithubRepo(sel.github_repo || "");
     setEditGithubBranch(sel.github_default_branch || "main");
     setEditRepoQuery(sel.github_repo || "");
-    setEditRepoOptions([]);
     setEditing(true);
   }, [mission.missions, selectedMissionId]);
 
@@ -87,21 +84,36 @@ export function MissionsDashboard({ mission }: MissionsDashboardProps) {
     if (ok) setEditing(false);
   }, [selectedMissionId, editTitle, editDescription, editStatus, editGithubRepo, editGithubBranch, mission]);
 
-  const searchRepos = useCallback(
-    async (query: string) => {
-      const repos = await mission.loadGitHubRepos(query || undefined);
-      setRepoOptions(repos.map((r) => ({ full_name: r.full_name, default_branch: r.default_branch })));
-    },
-    [mission],
-  );
+  // Auto-load repos when PAT is available
+  const [allRepos, setAllRepos] = useState<Array<{ full_name: string; default_branch: string }>>([]);
+  const [reposLoaded, setReposLoaded] = useState(false);
+  const [repoDropdownOpen, setRepoDropdownOpen] = useState(false);
+  const [editRepoDropdownOpen, setEditRepoDropdownOpen] = useState(false);
 
-  const searchEditRepos = useCallback(
-    async (query: string) => {
-      const repos = await mission.loadGitHubRepos(query || undefined);
-      setEditRepoOptions(repos.map((r) => ({ full_name: r.full_name, default_branch: r.default_branch })));
-    },
-    [mission],
-  );
+  const loadAllRepos = useCallback(async () => {
+    if (!mission.settingsMap.github_pat || reposLoaded) return;
+    const repos = await mission.loadGitHubRepos(undefined);
+    setAllRepos(repos.map((r) => ({ full_name: r.full_name, default_branch: r.default_branch })));
+    setReposLoaded(true);
+  }, [mission, reposLoaded]);
+
+  useEffect(() => {
+    if (mission.settingsMap.github_pat) {
+      void loadAllRepos();
+    }
+  }, [mission.settingsMap.github_pat, loadAllRepos]);
+
+  const filteredRepos = useMemo(() => {
+    if (!repoQuery.trim()) return allRepos;
+    const q = repoQuery.toLowerCase();
+    return allRepos.filter((r) => r.full_name.toLowerCase().includes(q));
+  }, [allRepos, repoQuery]);
+
+  const filteredEditRepos = useMemo(() => {
+    if (!editRepoQuery.trim()) return allRepos;
+    const q = editRepoQuery.toLowerCase();
+    return allRepos.filter((r) => r.full_name.toLowerCase().includes(q));
+  }, [allRepos, editRepoQuery]);
 
   useEffect(() => {
     setSelectedMissionId((current) => current ?? mission.missions[0]?.id ?? null);
@@ -234,59 +246,101 @@ export function MissionsDashboard({ mission }: MissionsDashboardProps) {
               </div>
               <div className="mb-4">
                   <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">GitHub Repository</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={editRepoQuery}
-                      onChange={(e) => setEditRepoQuery(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          if (mission.settingsMap.github_pat) { void searchEditRepos(editRepoQuery); }
-                          else if (editRepoQuery.includes("/")) { setEditGithubRepo(editRepoQuery); }
-                        }
-                      }}
-                      placeholder={mission.settingsMap.github_pat ? "Search repos..." : "owner/repo (e.g. acme/my-app)"}
-                      className="flex-1 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[13px] text-white outline-none"
-                    />
-                    {mission.settingsMap.github_pat ? (
-                      <button type="button" onClick={() => void searchEditRepos(editRepoQuery)} className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]">
-                        Search
-                      </button>
-                    ) : editRepoQuery.includes("/") && editRepoQuery !== editGithubRepo ? (
-                      <button type="button" onClick={() => setEditGithubRepo(editRepoQuery)} className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]">
-                        Set
-                      </button>
-                    ) : null}
-                  </div>
-                  {editRepoOptions.length > 0 ? (
-                    <div className="mt-2 max-h-32 overflow-y-auto rounded-lg border border-white/[0.08] bg-[#0f0f10]">
-                      {editRepoOptions.map((repo) => (
-                        <button
-                          key={repo.full_name}
-                          type="button"
-                          onClick={() => { setEditGithubRepo(repo.full_name); setEditGithubBranch(repo.default_branch); setEditRepoOptions([]); setEditRepoQuery(repo.full_name); }}
-                          className={cn(
-                            "flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors hover:bg-white/[0.03]",
-                            editGithubRepo === repo.full_name ? "bg-[#39147e]/[0.08] text-white" : "text-[#c8c4d7]",
-                          )}
-                        >
-                          <GitBranchIcon className="size-3.5 text-[#918f90]" />
-                          {repo.full_name}
-                          <span className="ml-auto text-[10px] text-[#585658]">{repo.default_branch}</span>
+                  {mission.settingsMap.github_pat ? (
+                    <div className="relative">
+                      <div
+                        className="flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2"
+                        onClick={() => setEditRepoDropdownOpen(!editRepoDropdownOpen)}
+                      >
+                        {editGithubRepo ? (
+                          <div className="flex flex-1 items-center gap-1.5">
+                            <GitBranchIcon className="size-3.5 text-emerald-400" />
+                            <span className="text-[13px] text-white">{editGithubRepo}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setEditGithubRepo(""); setEditRepoQuery(""); }}
+                              className="ml-auto text-[#918f90] hover:text-white"
+                            >
+                              <XIcon className="size-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="flex-1 text-[13px] text-[#585658]">Select a repository...</span>
+                        )}
+                        <ChevronRightIcon className={cn("size-3.5 text-[#585658] transition-transform", editRepoDropdownOpen && "rotate-90")} />
+                      </div>
+                      {editRepoDropdownOpen ? (
+                        <div className="absolute left-0 right-0 z-10 mt-1 overflow-hidden rounded-lg border border-white/[0.08] bg-[#0f0f10] shadow-xl">
+                          <div className="border-b border-white/[0.06] p-2">
+                            <input
+                              type="text"
+                              value={editRepoQuery}
+                              onChange={(e) => setEditRepoQuery(e.target.value)}
+                              placeholder="Filter repos..."
+                              className="w-full rounded-md border border-white/[0.08] bg-[#131314] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
+                              autoFocus
+                            />
+                          </div>
+                          <div className="max-h-48 overflow-y-auto">
+                            {filteredEditRepos.length > 0 ? filteredEditRepos.map((repo) => (
+                              <button
+                                key={repo.full_name}
+                                type="button"
+                                onClick={() => {
+                                  setEditGithubRepo(repo.full_name);
+                                  setEditGithubBranch(repo.default_branch);
+                                  setEditRepoQuery("");
+                                  setEditRepoDropdownOpen(false);
+                                }}
+                                className={cn(
+                                  "flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors hover:bg-white/[0.03]",
+                                  editGithubRepo === repo.full_name ? "bg-[#39147e]/[0.08] text-white" : "text-[#c8c4d7]",
+                                )}
+                              >
+                                <GitBranchIcon className="size-3.5 text-[#918f90]" />
+                                {repo.full_name}
+                                <span className="ml-auto text-[10px] text-[#585658]">{repo.default_branch}</span>
+                              </button>
+                            )) : (
+                              <div className="px-3 py-3 text-center text-[12px] text-[#585658]">
+                                {reposLoaded ? "No matching repos" : "Loading repos..."}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={editRepoQuery}
+                        onChange={(e) => setEditRepoQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && editRepoQuery.includes("/")) {
+                            e.preventDefault();
+                            setEditGithubRepo(editRepoQuery);
+                          }
+                        }}
+                        placeholder="owner/repo (e.g. acme/my-app)"
+                        className="flex-1 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[13px] text-white outline-none"
+                      />
+                      {editRepoQuery.includes("/") && editRepoQuery !== editGithubRepo ? (
+                        <button type="button" onClick={() => setEditGithubRepo(editRepoQuery)} className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]">
+                          Set
                         </button>
-                      ))}
+                      ) : null}
+                      {editGithubRepo ? (
+                        <div className="mt-2 flex items-center gap-1.5 text-[12px] text-emerald-400">
+                          <GitBranchIcon className="size-3" />
+                          {editGithubRepo}
+                          <button type="button" onClick={() => { setEditGithubRepo(""); setEditRepoQuery(""); }} className="ml-1 text-[#918f90] hover:text-white">
+                            <XIcon className="size-3" />
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                  {editGithubRepo ? (
-                    <div className="mt-2 flex items-center gap-1.5 text-[12px] text-emerald-400">
-                      <GitBranchIcon className="size-3" />
-                      {editGithubRepo}
-                      <button type="button" onClick={() => { setEditGithubRepo(""); setEditRepoQuery(""); }} className="ml-1 text-[#918f90] hover:text-white">
-                        <XIcon className="size-3" />
-                      </button>
-                    </div>
-                  ) : null}
+                  )}
                 </div>
               <button
                 onClick={() => void saveEditing()}
@@ -442,64 +496,97 @@ export function MissionsDashboard({ mission }: MissionsDashboardProps) {
                 </div>
                 <div>
                     <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">GitHub Repository</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={repoQuery}
-                        onChange={(event) => setRepoQuery(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            if (mission.settingsMap.github_pat) { void searchRepos(repoQuery); }
-                            else if (repoQuery.includes("/")) { setGithubRepo(repoQuery); }
-                          }
-                        }}
-                        placeholder={mission.settingsMap.github_pat ? "Search repos..." : "owner/repo (e.g. acme/my-app)"}
-                        className="flex-1 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[13px] text-white outline-none"
-                      />
-                      {mission.settingsMap.github_pat ? (
-                        <button
-                          type="button"
-                          onClick={() => void searchRepos(repoQuery)}
-                          className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
+                    {mission.settingsMap.github_pat ? (
+                      <div className="relative">
+                        <div
+                          className="flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2"
+                          onClick={() => setRepoDropdownOpen(!repoDropdownOpen)}
                         >
-                          Search
-                        </button>
-                      ) : repoQuery.includes("/") && repoQuery !== githubRepo ? (
-                        <button
-                          type="button"
-                          onClick={() => setGithubRepo(repoQuery)}
-                          className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
-                        >
-                          Set
-                        </button>
-                      ) : null}
-                    </div>
-                    {repoOptions.length > 0 ? (
-                      <div className="mt-2 max-h-32 overflow-y-auto rounded-lg border border-white/[0.08] bg-[#0f0f10]">
-                        {repoOptions.map((repo) => (
-                          <button
-                            key={repo.full_name}
-                            type="button"
-                            onClick={() => {
-                              setGithubRepo(repo.full_name);
-                              setGithubDefaultBranch(repo.default_branch);
-                              setRepoOptions([]);
-                              setRepoQuery(repo.full_name);
-                            }}
-                            className={cn(
-                              "flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors hover:bg-white/[0.03]",
-                              githubRepo === repo.full_name ? "bg-[#39147e]/[0.08] text-white" : "text-[#c8c4d7]",
-                            )}
-                          >
-                            <GitBranchIcon className="size-3.5 text-[#918f90]" />
-                            {repo.full_name}
-                            <span className="ml-auto text-[10px] text-[#585658]">{repo.default_branch}</span>
-                          </button>
-                        ))}
+                          {githubRepo ? (
+                            <div className="flex flex-1 items-center gap-1.5">
+                              <GitBranchIcon className="size-3.5 text-emerald-400" />
+                              <span className="text-[13px] text-white">{githubRepo}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setGithubRepo(""); setRepoQuery(""); }}
+                                className="ml-auto text-[#918f90] hover:text-white"
+                              >
+                                <XIcon className="size-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="flex-1 text-[13px] text-[#585658]">Select a repository...</span>
+                          )}
+                          <ChevronRightIcon className={cn("size-3.5 text-[#585658] transition-transform", repoDropdownOpen && "rotate-90")} />
+                        </div>
+                        {repoDropdownOpen ? (
+                          <div className="absolute left-0 right-0 z-10 mt-1 overflow-hidden rounded-lg border border-white/[0.08] bg-[#0f0f10] shadow-xl">
+                            <div className="border-b border-white/[0.06] p-2">
+                              <input
+                                type="text"
+                                value={repoQuery}
+                                onChange={(event) => setRepoQuery(event.target.value)}
+                                placeholder="Filter repos..."
+                                className="w-full rounded-md border border-white/[0.08] bg-[#131314] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
+                                autoFocus
+                              />
+                            </div>
+                            <div className="max-h-48 overflow-y-auto">
+                              {filteredRepos.length > 0 ? filteredRepos.map((repo) => (
+                                <button
+                                  key={repo.full_name}
+                                  type="button"
+                                  onClick={() => {
+                                    setGithubRepo(repo.full_name);
+                                    setGithubDefaultBranch(repo.default_branch);
+                                    setRepoQuery("");
+                                    setRepoDropdownOpen(false);
+                                  }}
+                                  className={cn(
+                                    "flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors hover:bg-white/[0.03]",
+                                    githubRepo === repo.full_name ? "bg-[#39147e]/[0.08] text-white" : "text-[#c8c4d7]",
+                                  )}
+                                >
+                                  <GitBranchIcon className="size-3.5 text-[#918f90]" />
+                                  {repo.full_name}
+                                  <span className="ml-auto text-[10px] text-[#585658]">{repo.default_branch}</span>
+                                </button>
+                              )) : (
+                                <div className="px-3 py-3 text-center text-[12px] text-[#585658]">
+                                  {reposLoaded ? "No matching repos" : "Loading repos..."}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                    {githubRepo ? (
+                    ) : (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={repoQuery}
+                          onChange={(event) => setRepoQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && repoQuery.includes("/")) {
+                              event.preventDefault();
+                              setGithubRepo(repoQuery);
+                            }
+                          }}
+                          placeholder="owner/repo (e.g. acme/my-app)"
+                          className="flex-1 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[13px] text-white outline-none"
+                        />
+                        {repoQuery.includes("/") && repoQuery !== githubRepo ? (
+                          <button
+                            type="button"
+                            onClick={() => setGithubRepo(repoQuery)}
+                            className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
+                          >
+                            Set
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
+                    {githubRepo && !mission.settingsMap.github_pat ? (
                       <div className="mt-2 flex items-center gap-1.5 text-[12px] text-emerald-400">
                         <GitBranchIcon className="size-3" />
                         {githubRepo}
@@ -591,7 +678,6 @@ export function MissionsDashboard({ mission }: MissionsDashboardProps) {
                     setGithubRepo("");
                     setGithubDefaultBranch("main");
                     setRepoQuery("");
-                    setRepoOptions([]);
                     setDraftOpen(false);
                   }
                 }}

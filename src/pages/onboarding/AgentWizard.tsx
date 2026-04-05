@@ -15,22 +15,38 @@ interface AgentWizardProps {
   onCancel: () => void;
   cancelLabel?: string;
   submitLabel?: string;
+  initialAgent?: {
+    id: string;
+    name: string;
+    role: string | null;
+    color: string;
+    engine: string;
+    skills: string[];
+    tools: string[];
+    connection_config: Record<string, unknown>;
+    soul_md: string | null;
+    agents_md: string | null;
+    external_config: boolean;
+  };
 }
 
-export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Cancel", submitLabel = "Initialize Agent" }: AgentWizardProps) {
+export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Cancel", submitLabel = "Initialize Agent", initialAgent }: AgentWizardProps) {
+  const isEditing = !!initialAgent;
   const [currentStep, setCurrentStep] = useState(0);
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [selectedEngine, setSelectedEngine] = useState<string | null>(mission.engines[0]?.id ?? null);
-  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const [selectedColor, setSelectedColor] = useState(AGENT_COLORS[0]);
-  const [webSearch, setWebSearch] = useState(true);
-  const [codeExec, setCodeExec] = useState(true);
-  const [fileSystem, setFileSystem] = useState(false);
-  const [managedExternally, setManagedExternally] = useState(false);
-  const [connectionConfigByEngine, setConnectionConfigByEngine] = useState<Record<string, string>>({});
-  const [soulMd, setSoulMd] = useState("# Purpose\nBe an effective operator.");
-  const [agentsMd, setAgentsMd] = useState("# Rules\nCollaborate clearly with other agents.");
+  const [name, setName] = useState(initialAgent?.name ?? "");
+  const [role, setRole] = useState(initialAgent?.role ?? "");
+  const [selectedEngine, setSelectedEngine] = useState<string | null>(initialAgent?.engine ?? mission.engines[0]?.id ?? null);
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(initialAgent?.skills ?? []);
+  const [selectedColor, setSelectedColor] = useState(initialAgent?.color ?? AGENT_COLORS[0]);
+  const [webSearch, setWebSearch] = useState(initialAgent ? initialAgent.tools.includes("web-search") : true);
+  const [codeExec, setCodeExec] = useState(initialAgent ? initialAgent.tools.includes("code-exec") : true);
+  const [fileSystem, setFileSystem] = useState(initialAgent ? initialAgent.tools.includes("file-system") : false);
+  const [managedExternally, setManagedExternally] = useState(initialAgent?.external_config ?? false);
+  const [connectionConfigByEngine, setConnectionConfigByEngine] = useState<Record<string, string>>(
+    initialAgent ? { [initialAgent.engine]: JSON.stringify(initialAgent.connection_config, null, 2) } : {},
+  );
+  const [soulMd, setSoulMd] = useState(initialAgent?.soul_md ?? "# Purpose\nBe an effective operator.");
+  const [agentsMd, setAgentsMd] = useState(initialAgent?.agents_md ?? "# Rules\nCollaborate clearly with other agents.");
   const [testResultsByEngine, setTestResultsByEngine] = useState<Record<string, EngineConnectionResult>>({});
 
   const selectedEngineDefinition = useMemo(
@@ -85,7 +101,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
   async function handleSubmit() {
     try {
       const connectionConfig = JSON.parse(selectedConnectionConfigText) as Record<string, unknown>;
-      const ok = await mission.createAgent({
+      const payload = {
         name,
         role,
         emoji: name[0]?.toUpperCase() ?? "🤖",
@@ -99,7 +115,12 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
         agents_md: agentsMd,
         external_config: managedExternally,
         active: true,
-      });
+      };
+
+      const ok = isEditing
+        ? await mission.editAgent(initialAgent.id, payload)
+        : await mission.createAgent(payload);
+
       if (ok) {
         onComplete();
       }
