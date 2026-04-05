@@ -1,482 +1,1139 @@
-import { useEffect, useEffectEvent, useState } from "react";
-import { OfficeWebSocketClient } from "../../network/websocket";
-import type { ActivityLogEntry, AgentEvent, AgentRegistration, AgentRuntimeState, AgentSnapshotState, ServerMessage } from "../../types";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import type {
-  AgentMessage,
-  HermesDefaultsUpdateRequest,
-  MissionControlSnapshot,
-  MissionTeamBootstrapRequest,
-  MissionTaskCommentCreateRequest,
-  MissionTaskDetail,
-  MissionTaskUpdateRequest,
-  ProviderConnector,
-  ProviderConnectorUpdateRequest,
-} from "../types";
+  AgentMessageRecord,
+  AgentRecord,
+  AuthUser,
+  BootstrapState,
+  DocFileRecord,
+  EngineDefinition,
+  IssueCommentRecord,
+  IssueRecord,
+  MissionRecord,
+  ProjectRecord,
+  RelationshipRecord,
+  RunRecord,
+  ScheduleRecord,
+  SearchResults,
+} from "../appTypes";
 import {
-  bootstrapMissionTeam,
-  createMissionConnector,
-  createMissionTaskComment,
+  assignMissionAgent,
+  AUTH_TOKEN_STORAGE_KEY,
+  changePassword,
+  createAgent,
+  createAgentMessage,
+  createIssue,
+  createIssueComment,
+  createMission,
+  createProject,
+  createSchedule,
+  createRelationship,
+  createRun,
+  deleteSchedule,
   deleteAgent,
-  deleteMissionConnector,
-  fetchActivityLog,
+  deleteIssue,
+  deleteMission,
+  deleteRelationship,
   fetchAgentMessages,
   fetchAgents,
-  fetchMissionSnapshot,
-  fetchMissionTaskDetail,
-  registerAgent,
-  sendAgentMessage,
-  syncMissionConnector,
-  testMissionConnector,
-  startMissionTaskRun,
-  updateHermesDefaults,
+  fetchCurrentUser,
+  fetchDocContent,
+  fetchDocsTree,
+  fetchEngines,
+  fetchIssueComments,
+  fetchIssues,
+  fetchMissions,
+  fetchProject,
+  fetchRelationships,
+  fetchRun,
+  fetchRuns,
+  fetchSchedules,
+  fetchSettings,
+  getBootstrap,
+  getStoredAuthToken,
+  loginAccount,
+  registerAccount,
+  removeMissionAgent,
+  resetProject,
+  runSchedule,
+  savePositions,
+  saveSettings,
+  searchAll,
+  setStoredAuthToken,
+  startMission,
+  streamRun,
+  submitFeedback,
+  syncLinearIssues,
+  testAgentConnection,
+  testEngineConnection,
+  testLinearConnection,
+  testGitHubConnection,
+  fetchGitHubRepos,
+  syncGitHubIssues,
   updateAgent,
-  updateMissionConnector,
-  updateMissionTask,
+  updateIssue,
+  updateMission,
+  updateSchedule,
+  updateProfile,
 } from "../api";
 
-export type MissionView = "missions" | "agents" | "orgchart" | "issues" | "runs" | "onboarding" | "settings";
+export type MissionView =
+  | "setup"
+  | "login"
+  | "project-setup"
+  | "missions"
+  | "agents"
+  | "orgchart"
+  | "issues"
+  | "runs"
+  | "schedules"
+  | "onboarding"
+  | "settings"
+  | "docs"
+  | "help"
+  | "search";
+
 type ConnectionState = "connecting" | "connected" | "offline";
 
-const MISSION_VIEWS: MissionView[] = ["missions", "agents", "orgchart", "issues", "runs", "onboarding", "settings"];
+const VIEW_PATHS: Record<MissionView, string> = {
+  setup: "/setup",
+  login: "/login",
+  "project-setup": "/setup/project",
+  missions: "/",
+  agents: "/agents",
+  orgchart: "/org-chart",
+  issues: "/issues",
+  runs: "/runs",
+  schedules: "/schedules",
+  onboarding: "/onboarding",
+  settings: "/settings",
+  docs: "/docs",
+  help: "/help",
+  search: "/search",
+};
+
+const PATH_VIEWS = new Map<string, MissionView>(Object.entries(VIEW_PATHS).map(([view, path]) => [path, view as MissionView]));
+
+const MAIN_VIEWS: MissionView[] = ["missions", "agents", "orgchart", "issues", "runs", "schedules", "settings", "docs", "help", "search"];
 
 function isMissionView(value: string): value is MissionView {
-  return MISSION_VIEWS.includes(value as MissionView);
+  return [
+    "setup",
+    "login",
+    "project-setup",
+    "missions",
+    "agents",
+    "orgchart",
+    "issues",
+    "runs",
+    "schedules",
+    "onboarding",
+    "settings",
+    "docs",
+    "help",
+    "search",
+  ].includes(value);
 }
 
-const VIEW_ALIASES: Record<string, MissionView> = {
-  team: "orgchart",
-  org: "orgchart",
-  setup: "onboarding",
-  work: "missions",
-};
-
-function initialMissionView(): MissionView {
-  if (typeof window === "undefined") return "missions";
-  const value = window.location.hash.replace(/^#/, "").trim().toLowerCase();
-  if (VIEW_ALIASES[value]) return VIEW_ALIASES[value];
-  return isMissionView(value) ? value : "missions";
-}
-
-const EMPTY_SNAPSHOT: MissionControlSnapshot = {
-  connectors: [],
-  hermesDefaults: {
-    tokenConfigured: false,
-  },
-  teamSettings: {},
-  providerAgents: [],
-  schedules: [],
-  tasks: [],
-  rosterImport: {
-    imported: 0,
-    linked: 0,
-    staged: 0,
-    updatedAt: Date.now(),
-  },
-  taskSync: {
-    state: "idle",
-    updatedAt: Date.now(),
-    message: "Waiting for mission sync.",
-  },
-  syncedAt: Date.now(),
-};
-
-function sortAgents(agents: AgentRuntimeState[]): AgentRuntimeState[] {
-  return [...agents].sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function mergeAgentState(previous: AgentRuntimeState[], next: AgentRuntimeState): AgentRuntimeState[] {
-  const matchIndex = previous.findIndex((agent) => agent.id === next.id);
-  if (matchIndex === -1) {
-    return sortAgents([...previous, next]);
+function initialView(): MissionView {
+  if (typeof window === "undefined") {
+    return "missions";
   }
 
-  const merged = [...previous];
-  merged[matchIndex] = {
-    ...merged[matchIndex],
-    ...next,
-  };
-  return sortAgents(merged);
+  return PATH_VIEWS.get(window.location.pathname) ?? "missions";
 }
 
-function applyAgentEvent(previous: AgentRuntimeState[], event: AgentEvent): AgentRuntimeState[] {
-  const existing = previous.find((agent) => agent.id === event.agentId);
-  if (!existing) {
-    return previous;
+function replacePath(view: MissionView, search?: string) {
+  if (typeof window === "undefined") {
+    return;
   }
 
-  const next: AgentRuntimeState = {
-    ...existing,
-    status: event.status,
-    timestamp: event.timestamp,
-    location: event.location ?? existing.location,
-    task: event.task ?? existing.task,
-    message: event.message ?? existing.message,
+  const nextUrl = `${VIEW_PATHS[view]}${search ? `?${search}` : ""}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}`;
+  if (currentUrl !== nextUrl) {
+    window.history.replaceState(null, "", nextUrl);
+  }
+}
+
+function pushPath(view: MissionView, search?: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const nextUrl = `${VIEW_PATHS[view]}${search ? `?${search}` : ""}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}`;
+  if (currentUrl !== nextUrl) {
+    window.history.pushState(null, "", nextUrl);
+  }
+}
+
+function normalizeStatus(status: string, active: boolean) {
+  if (!active) {
+    return "Offline";
+  }
+  if (status === "running") {
+    return "Running";
+  }
+  if (status === "active") {
+    return "Active";
+  }
+  return "Idle";
+}
+
+function engineLabel(engine: string) {
+  switch (engine) {
+    case "claude-code":
+      return "Claude";
+    case "codex":
+      return "Codex";
+    case "openclaw":
+      return "OpenClaw";
+    case "hermes":
+      return "Hermes";
+    case "pi":
+      return "Pi";
+    case "cursor":
+      return "Cursor";
+    default:
+      return engine;
+  }
+}
+
+function parseSearchParams() {
+  if (typeof window === "undefined") {
+    return { q: "", docPath: "getting-started.md" };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  return {
+    q: params.get("q") ?? "",
+    docPath: params.get("path") ?? "getting-started.md",
   };
-  return mergeAgentState(previous, next);
 }
 
 export function useMissionControl() {
-  const [activeView, setActiveViewRaw] = useState<MissionView>(initialMissionView);
-  const setActiveView = (view: MissionView) => {
-    setActiveViewRaw(view);
-  };
-  const [agents, setAgents] = useState<AgentRuntimeState[]>([]);
-  const [missionSnapshot, setMissionSnapshot] = useState<MissionControlSnapshot>(EMPTY_SNAPSHOT);
+  const [activeView, setActiveViewRaw] = useState<MissionView>(initialView);
+  const [token, setToken] = useState<string | null>(() => getStoredAuthToken());
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
+  const [project, setProject] = useState<ProjectRecord | null>(null);
+  const [engines, setEngines] = useState<EngineDefinition[]>([]);
+  const [settingsMap, setSettingsMap] = useState<Record<string, string>>({});
+  const [agents, setAgents] = useState<AgentRecord[]>([]);
+  const [relationships, setRelationships] = useState<RelationshipRecord[]>([]);
+  const [missions, setMissions] = useState<MissionRecord[]>([]);
+  const [issues, setIssues] = useState<IssueRecord[]>([]);
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
+  const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
+  const [selectedIssueComments, setSelectedIssueComments] = useState<IssueCommentRecord[]>([]);
+  const [agentMessages, setAgentMessages] = useState<AgentMessageRecord[]>([]);
+  const [docs, setDocs] = useState<DocFileRecord[]>([]);
+  const [docContent, setDocContent] = useState("");
+  const [{ q: searchQuery, docPath }, setQueryState] = useState(parseSearchParams);
+  const [searchResults, setSearchResults] = useState<SearchResults>({
+    agents: [],
+    missions: [],
+    issues: [],
+    runs: [],
+    comments: [],
+  });
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [selectedTaskDetail, setSelectedTaskDetail] = useState<MissionTaskDetail | null>(null);
-  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
-  const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
-  const [agentMessagesLoading, setAgentMessagesLoading] = useState(false);
+  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const setActiveView = (view: MissionView, options?: { search?: string }) => {
+    setActiveViewRaw(view);
+    pushPath(view, options?.search);
+    if (view === "search") {
+      const nextQuery = new URLSearchParams(options?.search ?? "");
+      setQueryState((current) => ({
+        ...current,
+        q: nextQuery.get("q") ?? "",
+      }));
+    }
+    if (view === "docs") {
+      const nextQuery = new URLSearchParams(options?.search ?? "");
+      setQueryState((current) => ({
+        ...current,
+        docPath: nextQuery.get("path") ?? current.docPath,
+      }));
+    }
+  };
+
+  const applyGuard = useEffectEvent((nextBootstrap: BootstrapState | null, nextToken: string | null, nextUser: AuthUser | null) => {
+    if (!nextBootstrap) {
+      return;
+    }
+
+    let nextView: MissionView | null = null;
+
+    if (!nextBootstrap.hasAccount) {
+      nextView = "setup";
+    } else if (!nextToken || !nextUser) {
+      nextView = "login";
+    } else if (!nextBootstrap.hasProject) {
+      nextView = "project-setup";
+    } else if (!nextBootstrap.hasAgents) {
+      nextView = "onboarding";
+    } else if (!MAIN_VIEWS.includes(activeView)) {
+      nextView = "missions";
+    }
+
+    if (nextView) {
+      setActiveViewRaw(nextView);
+      replacePath(nextView);
+    }
+  });
+
+  const loadWorkspace = useEffectEvent(async (authToken: string) => {
+    const [
+      projectResponse,
+      engineResponse,
+      settingsResponse,
+      agentResponse,
+      relationshipResponse,
+      missionResponse,
+      issueResponse,
+      runResponse,
+      scheduleResponse,
+      docsResponse,
+    ] = await Promise.all([
+      fetchProject(authToken),
+      fetchEngines(authToken),
+      fetchSettings(authToken),
+      fetchAgents(authToken),
+      fetchRelationships(authToken),
+      fetchMissions(authToken),
+      fetchIssues(authToken),
+      fetchRuns(authToken),
+      fetchSchedules(authToken),
+      fetchDocsTree(authToken).catch(() => ({ files: [] as DocFileRecord[] })),
+    ]);
+
+    setProject(projectResponse.project);
+    setEngines(engineResponse.engines);
+    setSettingsMap(settingsResponse.settingsMap);
+    setAgents(agentResponse.agents);
+    setRelationships(relationshipResponse.relationships);
+    setMissions(missionResponse.missions);
+    setIssues(issueResponse.issues);
+    setRuns(runResponse.runs);
+    setSchedules(scheduleResponse.schedules);
+    setDocs(docsResponse.files);
+    setSelectedAgentId((current) => current ?? agentResponse.agents[0]?.id ?? null);
+    setSelectedMissionId((current) => current ?? missionResponse.missions[0]?.id ?? null);
+  });
+
   const hydrate = useEffectEvent(async () => {
     setLoading(true);
+    setConnectionState("connecting");
     try {
-      const [nextAgents, nextMission, nextActivity] = await Promise.all([
-        fetchAgents(),
-        fetchMissionSnapshot(),
-        fetchActivityLog().catch(() => [] as ActivityLogEntry[]),
-      ]);
-      setAgents(sortAgents(nextAgents));
-      setMissionSnapshot(nextMission);
-      setActivityLog(nextActivity);
+      const nextBootstrap = await getBootstrap();
+      setBootstrap(nextBootstrap);
+
+      const storedToken = getStoredAuthToken();
+      let nextUser: AuthUser | null = null;
+
+      if (storedToken) {
+        try {
+          const response = await fetchCurrentUser(storedToken);
+          nextUser = response.user;
+          setToken(storedToken);
+          setUser(response.user);
+          await loadWorkspace(storedToken);
+        } catch {
+          setStoredAuthToken(null);
+          setToken(null);
+          setUser(null);
+        }
+      } else {
+        setToken(null);
+        setUser(null);
+      }
+
+      applyGuard(nextBootstrap, storedToken, nextUser);
+      setConnectionState("connected");
       setError(null);
-      if (!selectedTaskId && nextMission.tasks[0]) {
-        setSelectedTaskId(nextMission.tasks[0].id);
-      }
-      if (!selectedAgentId && nextAgents[0]) {
-        setSelectedAgentId(nextAgents[0].id);
-      }
-    } catch (fetchError) {
-      setError(fetchError instanceof Error ? fetchError.message : "Failed to load mission control.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Failed to load MissionOS.");
+      setConnectionState("offline");
     } finally {
       setLoading(false);
     }
   });
 
-  const hydrateTaskDetail = useEffectEvent(async (taskId: string) => {
-    try {
-      const detail = await fetchMissionTaskDetail(taskId);
-      setSelectedTaskDetail(detail);
-    } catch (fetchError) {
-      setError(fetchError instanceof Error ? fetchError.message : "Failed to load task detail.");
-    }
-  });
-
-  const applyServerMessage = useEffectEvent((message: ServerMessage) => {
-    if (message.type === "mission-snapshot") {
-      setMissionSnapshot(message.snapshot);
-      return;
-    }
-
-    if (message.type === "agent-registered") {
-      const { appearance: _appearance, ...agent } = message.agent;
-      setAgents((current) => mergeAgentState(current, agent));
-      return;
-    }
-
-    if (message.type === "agent-event") {
-      setAgents((current) => applyAgentEvent(current, message.event));
-      return;
-    }
-
-    if (message.type === "agents-snapshot") {
-      setAgents(sortAgents(message.agents));
-      return;
-    }
-
-    if (message.type === "agent-removed") {
-      setAgents((current) => current.filter((agent) => agent.id !== message.agentId));
-      return;
-    }
-
-    if (message.type === "activity-log") {
-      setActivityLog((current) => [message.entry, ...current].slice(0, 100));
-    }
-  });
-
   useEffect(() => {
-    const client = new OfficeWebSocketClient({
-      onOpen: () => {
-        setConnectionState("connected");
-        void hydrate();
-      },
-      onClose: () => setConnectionState("offline"),
-      onEvent: (event) => setAgents((current) => applyAgentEvent(current, event)),
-      onSnapshot: (message) => setAgents(sortAgents(message.agents)),
-      onAgentRemoved: (agentId) => setAgents((current) => current.filter((agent) => agent.id !== agentId)),
-      onServerMessage: applyServerMessage,
-    });
-    client.connect();
-
-    return () => {
-      client.disconnect();
-    };
+    void hydrate();
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const nextHash = `#${activeView}`;
-    if (window.location.hash !== nextHash) {
-      window.history.replaceState(null, "", nextHash);
-    }
-  }, [activeView]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onHashChange = () => {
-      const value = window.location.hash.replace(/^#/, "").trim().toLowerCase();
-      if (VIEW_ALIASES[value]) {
-        setActiveView(VIEW_ALIASES[value]);
-        return;
+    const onPopState = () => {
+      const nextView = PATH_VIEWS.get(window.location.pathname);
+      if (nextView && isMissionView(nextView)) {
+        setActiveViewRaw(nextView);
       }
-      if (isMissionView(value)) {
-        setActiveView(value);
-      }
+      setQueryState(parseSearchParams());
     };
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   useEffect(() => {
-    if (!selectedTaskId) {
-      setSelectedTaskDetail(null);
+    applyGuard(bootstrap, token, user);
+  }, [activeView, applyGuard, bootstrap, token, user]);
+
+  useEffect(() => {
+    if (activeView !== "docs" || !token) {
       return;
     }
-    void hydrateTaskDetail(selectedTaskId);
-  }, [selectedTaskId]);
+    void fetchDocContent(token, docPath)
+      .then((response) => setDocContent(response.content))
+      .catch(() => setDocContent(""));
+  }, [activeView, docPath, token]);
 
   useEffect(() => {
-    if (!selectedAgentId) {
-      setAgentMessages([]);
+    if (activeView !== "search" || !token || !searchQuery) {
       return;
     }
-    setAgentMessagesLoading(true);
-    fetchAgentMessages(selectedAgentId)
-      .then(setAgentMessages)
-      .catch(() => setAgentMessages([]))
-      .finally(() => setAgentMessagesLoading(false));
-  }, [selectedAgentId]);
+    void searchAll(token, searchQuery)
+      .then(setSearchResults)
+      .catch(() => {
+        setSearchResults({ agents: [], missions: [], issues: [], runs: [], comments: [] });
+      });
+  }, [activeView, searchQuery, token]);
 
   useEffect(() => {
-    if (selectedTaskId && !missionSnapshot.tasks.some((task) => task.id === selectedTaskId)) {
-      setSelectedTaskId(missionSnapshot.tasks[0]?.id ?? null);
+    if (activeView !== "orgchart" || !token) {
+      return;
     }
-  }, [missionSnapshot.tasks, selectedTaskId]);
+    const missionId = missions.find((mission) => mission.status === "active")?.id ?? selectedMissionId ?? undefined;
+    void fetchAgentMessages(token, missionId)
+      .then((response) => setAgentMessages(response.messages))
+      .catch(() => undefined);
+    const interval = window.setInterval(() => {
+      void fetchAgentMessages(token, missionId)
+        .then((response) => setAgentMessages(response.messages))
+        .catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, [activeView, missions, selectedMissionId, token]);
 
-  useEffect(() => {
-    if (selectedAgentId && !agents.some((agent) => agent.id === selectedAgentId)) {
-      setSelectedAgentId(agents[0]?.id ?? null);
-    }
-  }, [agents, selectedAgentId]);
-
-  async function runBusyAction<T>(key: string, operation: () => Promise<T>): Promise<T | null> {
+  async function runBusyAction<T>(key: string, action: () => Promise<T>): Promise<T | null> {
     setBusyKey(key);
     setError(null);
     try {
-      return await operation();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Mission control action failed.");
+      return await action();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "MissionOS action failed.");
       return null;
     } finally {
       setBusyKey(null);
     }
   }
 
-  async function saveTaskUpdate(taskId: string, input: MissionTaskUpdateRequest): Promise<void> {
-    const updated = await runBusyAction(`task:${taskId}:update`, async () => {
-      await updateMissionTask(taskId, input);
-      const [nextMission, detail] = await Promise.all([
-        fetchMissionSnapshot(),
-        fetchMissionTaskDetail(taskId),
-      ]);
-      setMissionSnapshot(nextMission);
-      setSelectedTaskDetail(detail);
-    });
-    void updated;
+  async function refreshWorkspace(): Promise<void> {
+    if (!token) {
+      return;
+    }
+    await runBusyAction("workspace:refresh", () => loadWorkspace(token));
   }
 
-  async function addComment(taskId: string, input: MissionTaskCommentCreateRequest): Promise<void> {
-    const detail = await runBusyAction(`task:${taskId}:comment`, () => createMissionTaskComment(taskId, input));
-    if (detail) {
-      setSelectedTaskDetail(detail);
-      const nextMission = await fetchMissionSnapshot();
-      setMissionSnapshot(nextMission);
+  async function register(input: { username: string; password: string; displayName: string }) {
+    const result = await runBusyAction("auth:register", () => registerAccount(input));
+    if (!result) {
+      return false;
+    }
+    setStoredAuthToken(result.token);
+    setToken(result.token);
+    setUser(result.user);
+    await hydrate();
+    return true;
+  }
+
+  async function login(input: { username: string; password: string }) {
+    const result = await runBusyAction("auth:login", () => loginAccount(input));
+    if (!result) {
+      return false;
+    }
+    setStoredAuthToken(result.token);
+    setToken(result.token);
+    setUser(result.user);
+    await hydrate();
+    return true;
+  }
+
+  function logout() {
+    setStoredAuthToken(null);
+    setToken(null);
+    setUser(null);
+    setProject(null);
+    setSettingsMap({});
+    setAgents([]);
+    setRelationships([]);
+    setMissions([]);
+    setIssues([]);
+    setRuns([]);
+    setSchedules([]);
+    setSelectedRun(null);
+    setSelectedIssueComments([]);
+    setAgentMessages([]);
+    setDocs([]);
+    setDocContent("");
+    setSearchResults({ agents: [], missions: [], issues: [], runs: [], comments: [] });
+    setBootstrap((current) => current ?? { hasAccount: true, hasProject: false, hasAgents: false });
+    setActiveViewRaw("login");
+    replacePath("login");
+  }
+
+  async function saveProfile(input: { displayName: string; avatarEmoji: string }) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("profile:update", () => updateProfile(token, input));
+    if (!result) {
+      return false;
+    }
+    setUser(result.user);
+    return true;
+  }
+
+  async function updatePassword(input: { currentPassword: string; newPassword: string }) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("profile:password", () => changePassword(token, input));
+    return Boolean(result?.ok);
+  }
+
+  async function saveProject(input: { name: string; description: string }) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("project:create", () => createProject(token, input));
+    if (!result) {
+      return false;
+    }
+    setProject(result.project);
+    await hydrate();
+    return true;
+  }
+
+  async function wipeProject(projectName: string) {
+    if (!token || project?.name !== projectName) {
+      setError("Project name does not match.");
+      return false;
+    }
+    const result = await runBusyAction("project:reset", () => resetProject(token));
+    if (!result) {
+      return false;
+    }
+    logout();
+    setBootstrap(result.bootstrap);
+    setActiveViewRaw("setup");
+    replacePath("setup");
+    return true;
+  }
+
+  async function createAgentRecord(input: Record<string, unknown>) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("agent:create", () => createAgent(token, input));
+    if (!result) {
+      return false;
+    }
+    await hydrate();
+    return true;
+  }
+
+  async function editAgentRecord(agentId: string, input: Record<string, unknown>) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`agent:${agentId}:update`, () => updateAgent(token, agentId, input));
+    if (!result) {
+      return false;
+    }
+    await refreshWorkspace();
+    return true;
+  }
+
+  async function removeAgentRecord(agentId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`agent:${agentId}:delete`, () => deleteAgent(token, agentId));
+    if (!result) {
+      return false;
+    }
+    await hydrate();
+    return true;
+  }
+
+  async function verifyAgentConnection(agentId: string) {
+    if (!token) {
+      return null;
+    }
+    return runBusyAction(`agent:${agentId}:test`, () => testAgentConnection(token, agentId));
+  }
+
+  async function createMissionRecord(input: Record<string, unknown>) {
+    if (!token) {
+      return null;
+    }
+    const result = await runBusyAction("mission:create", () => createMission(token, input));
+    if (!result) {
+      return null;
+    }
+    await refreshWorkspace();
+    return result.mission;
+  }
+
+  async function saveMissionRecord(missionId: string, input: Record<string, unknown>) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`mission:${missionId}:update`, () => updateMission(token, missionId, input));
+    if (!result) {
+      return false;
+    }
+    await refreshWorkspace();
+    return true;
+  }
+
+  async function removeMissionRecord(missionId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`mission:${missionId}:delete`, () => deleteMission(token, missionId));
+    if (!result) {
+      return false;
+    }
+    await refreshWorkspace();
+    return true;
+  }
+
+  async function addMissionAgent(missionId: string, agentId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`mission:${missionId}:assign:${agentId}`, () => assignMissionAgent(token, missionId, agentId));
+    if (!result) {
+      return false;
+    }
+    await refreshWorkspace();
+    return true;
+  }
+
+  async function dropMissionAgent(missionId: string, agentId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`mission:${missionId}:remove:${agentId}`, () => removeMissionAgent(token, missionId, agentId));
+    if (!result) {
+      return false;
+    }
+    await refreshWorkspace();
+    return true;
+  }
+
+  async function launchMission(missionId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`mission:${missionId}:start`, () => startMission(token, missionId));
+    if (!result) {
+      return false;
+    }
+    await refreshWorkspace();
+    return true;
+  }
+
+  async function refreshIssues(filters?: Record<string, string | undefined>) {
+    if (!token) {
+      return;
+    }
+    const result = await runBusyAction("issues:refresh", () => fetchIssues(token, filters));
+    if (result) {
+      setIssues(result.issues);
     }
   }
 
-  async function runTask(taskId: string): Promise<void> {
-    const execution = await runBusyAction(`task:${taskId}:run`, () => startMissionTaskRun(taskId));
-    if (execution) {
-      const [nextMission, detail] = await Promise.all([
-        fetchMissionSnapshot(),
-        fetchMissionTaskDetail(taskId),
-      ]);
-      setMissionSnapshot(nextMission);
-      setSelectedTaskDetail(detail);
+  async function createIssueRecord(input: Record<string, unknown>) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("issue:create", () => createIssue(token, input));
+    if (!result) {
+      return false;
+    }
+    await refreshWorkspace();
+    return true;
+  }
+
+  async function saveIssueRecord(issueId: string, input: Record<string, unknown>) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`issue:${issueId}:update`, () => updateIssue(token, issueId, input));
+    if (!result) {
+      return false;
+    }
+    setIssues((current) => current.map((issue) => (issue.id === issueId ? result.issue : issue)));
+    return true;
+  }
+
+  async function removeIssueRecord(issueId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`issue:${issueId}:delete`, () => deleteIssue(token, issueId));
+    if (!result) {
+      return false;
+    }
+    await refreshWorkspace();
+    return true;
+  }
+
+  async function loadIssueComments(issueId: string) {
+    if (!token) {
+      return [];
+    }
+    const result = await runBusyAction(`issue:${issueId}:comments`, () => fetchIssueComments(token, issueId));
+    if (!result) {
+      return [];
+    }
+    setSelectedIssueComments(result.comments);
+    return result.comments;
+  }
+
+  async function addIssueCommentRecord(issueId: string, input: { body: string; parentId?: string }) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`issue:${issueId}:comment:create`, () => createIssueComment(token, issueId, input));
+    if (!result) {
+      return false;
+    }
+    await loadIssueComments(issueId);
+    return true;
+  }
+
+  async function syncLinear() {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("issues:sync-linear", () => syncLinearIssues(token));
+    if (!result) {
+      return false;
+    }
+    setIssues(result.issues);
+    return true;
+  }
+
+  async function refreshRuns(filters?: Record<string, string | undefined>) {
+    if (!token) {
+      return;
+    }
+    const result = await runBusyAction("runs:refresh", () => fetchRuns(token, filters));
+    if (result) {
+      setRuns(result.runs);
     }
   }
 
-  async function saveConnector(connectorId: string, input: ProviderConnectorUpdateRequest): Promise<void> {
-    const connector = await runBusyAction(`connector:${connectorId}:save`, () => updateMissionConnector(connectorId, input));
-    if (connector) {
-      setMissionSnapshot((current) => ({
-        ...current,
-        connectors: current.connectors.map((entry) => (entry.id === connectorId ? connector : entry)),
-      }));
-      const nextMission = await fetchMissionSnapshot();
-      setMissionSnapshot(nextMission);
+  async function refreshSchedules() {
+    if (!token) {
+      return;
+    }
+    const result = await runBusyAction("schedules:refresh", () => fetchSchedules(token));
+    if (result) {
+      setSchedules(result.schedules);
     }
   }
 
-  async function saveHermesSharedDefaults(input: HermesDefaultsUpdateRequest): Promise<void> {
-    await runBusyAction("hermes-defaults:save", async () => {
-      await updateHermesDefaults(input);
-      const nextMission = await fetchMissionSnapshot();
-      setMissionSnapshot(nextMission);
-    });
-  }
-
-  async function syncConnector(connectorId: string): Promise<void> {
-    const connector = await runBusyAction(`connector:${connectorId}:sync`, () => syncMissionConnector(connectorId));
-    if (connector) {
-      const nextMission = await fetchMissionSnapshot();
-      setMissionSnapshot(nextMission);
+  async function createScheduleRecord(input: {
+    name: string;
+    agent_id: string;
+    prompt: string;
+    cron_expression: string;
+    enabled: boolean;
+    max_runs?: number | null;
+  }) {
+    if (!token) {
+      return null;
     }
-  }
-
-  async function testConnectorHealth(connectorId: string): Promise<void> {
-    const connector = await runBusyAction(`connector:${connectorId}:test`, () => testMissionConnector(connectorId));
-    if (connector) {
-      const nextMission = await fetchMissionSnapshot();
-      setMissionSnapshot(nextMission);
+    const result = await runBusyAction("schedule:create", () => createSchedule(token, input));
+    if (!result) {
+      return null;
     }
+    await refreshSchedules();
+    return result.schedule;
   }
 
-  async function addConnector(provider: string, label?: string): Promise<void> {
-    await runBusyAction("connector:create", async () => {
-      await createMissionConnector(provider, label);
-      const nextMission = await fetchMissionSnapshot();
-      setMissionSnapshot(nextMission);
-    });
+  async function saveScheduleRecord(scheduleId: string, input: {
+    name: string;
+    agent_id: string;
+    prompt: string;
+    cron_expression: string;
+    enabled: boolean;
+    max_runs?: number | null;
+  }) {
+    if (!token) {
+      return null;
+    }
+    const result = await runBusyAction(`schedule:${scheduleId}:update`, () => updateSchedule(token, scheduleId, input));
+    if (!result) {
+      return null;
+    }
+    await refreshSchedules();
+    return result.schedule;
   }
 
-  async function removeConnector(connectorId: string): Promise<void> {
-    await runBusyAction(`connector:${connectorId}:delete`, async () => {
-      await deleteMissionConnector(connectorId);
-      const nextMission = await fetchMissionSnapshot();
-      setMissionSnapshot(nextMission);
-    });
+  async function removeScheduleRecord(scheduleId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`schedule:${scheduleId}:delete`, () => deleteSchedule(token, scheduleId));
+    if (!result) {
+      return false;
+    }
+    await refreshSchedules();
+    return true;
   }
 
-  async function bootstrapTeam(input: MissionTeamBootstrapRequest): Promise<void> {
-    await runBusyAction("team:bootstrap", async () => {
-      const result = await bootstrapMissionTeam(input);
-      setAgents(sortAgents(result.agents));
-      setMissionSnapshot(result.snapshot);
-      if (result.snapshot.teamSettings.commandAgentId) {
-        setSelectedAgentId(result.snapshot.teamSettings.commandAgentId);
+  async function runScheduleRecord(scheduleId: string) {
+    if (!token) {
+      return null;
+    }
+    const result = await runBusyAction(`schedule:${scheduleId}:run`, () => runSchedule(token, scheduleId));
+    if (!result) {
+      return null;
+    }
+    setSelectedRun(result.run);
+    await Promise.all([refreshSchedules(), refreshRuns()]);
+    return result.run;
+  }
+
+  async function createRunRecord(input: { agent_id: string; prompt: string; mission_id?: string; issue_id?: string }) {
+    if (!token) {
+      return null;
+    }
+    const result = await runBusyAction("run:create", () => createRun(token, input));
+    if (!result) {
+      return null;
+    }
+    setSelectedRun(result.run);
+    await refreshRuns();
+    return result.run;
+  }
+
+  async function loadRun(runId: string) {
+    if (!token) {
+      return null;
+    }
+    const result = await runBusyAction(`run:${runId}`, () => fetchRun(token, runId));
+    if (!result) {
+      return null;
+    }
+    setSelectedRun(result.run);
+    return result.run;
+  }
+
+  async function streamSelectedRun(runId: string, onUpdate?: (run: RunRecord) => void) {
+    if (!token) {
+      return false;
+    }
+    const base = await loadRun(runId);
+    if (!base) {
+      return false;
+    }
+    if (base.status !== "running") {
+      queueMicrotask(() => onUpdate?.(base));
+      return true;
+    }
+    await streamRun(token, runId, (event) => {
+      let nextRun: RunRecord | null = null;
+      setSelectedRun((current) => {
+        if (!current || current.id !== runId) {
+          return current;
+        }
+        nextRun = {
+          ...current,
+          output: event.output ?? current.output,
+          status:
+            event.type === "complete"
+              ? "complete"
+              : event.type === "error"
+                ? "failed"
+                : current.status,
+        };
+        return nextRun;
+      });
+      if (nextRun) {
+        queueMicrotask(() => onUpdate?.(nextRun as RunRecord));
       }
     });
+    await refreshRuns();
+    return true;
   }
 
-  async function createAgent(input: AgentRegistration): Promise<void> {
-    await runBusyAction("agent:create", async () => {
-      await registerAgent(input);
-      const [nextAgents, nextMission] = await Promise.all([fetchAgents(), fetchMissionSnapshot()]);
-      setAgents(sortAgents(nextAgents));
-      setMissionSnapshot(nextMission);
-    });
-  }
-
-  async function editAgent(agentId: string, input: Partial<AgentRegistration>): Promise<void> {
-    await runBusyAction(`agent:${agentId}:update`, async () => {
-      await updateAgent(agentId, input);
-      const [nextAgents, nextMission] = await Promise.all([fetchAgents(), fetchMissionSnapshot()]);
-      setAgents(sortAgents(nextAgents));
-      setMissionSnapshot(nextMission);
-    });
-  }
-
-  async function removeAgent(agentId: string): Promise<void> {
-    await runBusyAction(`agent:${agentId}:delete`, async () => {
-      await deleteAgent(agentId);
-      const nextAgents = await fetchAgents();
-      setAgents(sortAgents(nextAgents));
-      const nextMission = await fetchMissionSnapshot();
-      setMissionSnapshot(nextMission);
-    });
-  }
-
-  async function refreshMission(): Promise<void> {
-    await runBusyAction("mission:refresh", hydrate);
-  }
-
-  async function sendMessageToAgent(agentId: string, message: string): Promise<void> {
-    // Optimistically add user message
-    const userMsg: AgentMessage = {
-      id: `local-${Date.now()}`,
-      role: "user",
-      content: message,
-      timestamp: Date.now(),
-    };
-    setAgentMessages((current) => [...current, userMsg]);
-
-    const response = await runBusyAction(`agent:${agentId}:message`, () => sendAgentMessage(agentId, message));
-    if (response) {
-      setAgentMessages((current) => [...current, response]);
+  async function refreshOrgMessages(missionId?: string) {
+    if (!token) {
+      return;
+    }
+    const result = await runBusyAction("messages:refresh", () => fetchAgentMessages(token, missionId));
+    if (result) {
+      setAgentMessages(result.messages);
     }
   }
 
-  async function refreshAgentMessages(agentId: string): Promise<void> {
-    setAgentMessagesLoading(true);
-    try {
-      const messages = await fetchAgentMessages(agentId);
-      setAgentMessages(messages);
-    } catch {
-      // keep existing
-    } finally {
-      setAgentMessagesLoading(false);
+  async function sendAgentMessageRecord(fromAgentId: string, toAgentId: string, message: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("message:send", () => createAgentMessage(token, { from_agent_id: fromAgentId, to_agent_id: toAgentId, message }));
+    if (result) {
+      setAgentMessages((current) => [result.agent_message, ...current]);
+      return true;
+    }
+    return false;
+  }
+
+  async function persistPositions(positions: Array<{ agent_id: string; x: number; y: number }>) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("positions:save", () => savePositions(token, positions));
+    if (!result) {
+      return false;
+    }
+    setAgents((current) =>
+      current.map((agent) => {
+        const next = positions.find((item) => item.agent_id === agent.id);
+        return next ? { ...agent, position: { x: next.x, y: next.y } } : agent;
+      }),
+    );
+    return true;
+  }
+
+  async function addRelationshipRecord(parentId: string, childId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`relationship:${parentId}:${childId}:create`, () =>
+      createRelationship(token, { parent_id: parentId, child_id: childId }),
+    );
+    if (!result) {
+      return false;
+    }
+    setRelationships((current) => [...current, result.relationship]);
+    return true;
+  }
+
+  async function removeRelationshipRecord(relationshipId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`relationship:${relationshipId}:delete`, () => deleteRelationship(token, relationshipId));
+    if (!result) {
+      return false;
+    }
+    setRelationships((current) => current.filter((relationship) => relationship.id !== relationshipId));
+    return true;
+  }
+
+  async function updateSettingsMap(input: Record<string, string>) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("settings:update", () =>
+      saveSettings(
+        token,
+        Object.entries(input).map(([key, value]) => ({ key, value })),
+      ),
+    );
+    if (!result) {
+      return false;
+    }
+    setSettingsMap(result.settingsMap);
+    return true;
+  }
+
+  async function verifyLinearConnection() {
+    if (!token) {
+      return null;
+    }
+    return runBusyAction("linear:test", () => testLinearConnection(token));
+  }
+
+  async function verifyGitHubConnection() {
+    if (!token) {
+      return null;
+    }
+    return runBusyAction("github:test", () => testGitHubConnection(token));
+  }
+
+  async function loadGitHubRepos(query?: string) {
+    if (!token) {
+      return [];
+    }
+    const result = await runBusyAction("github:repos", () => fetchGitHubRepos(token, query));
+    return result?.repos ?? [];
+  }
+
+  async function syncGitHub(missionId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("issues:sync-github", () => syncGitHubIssues(token, missionId));
+    if (!result) {
+      return false;
+    }
+    setIssues(result.issues);
+    return true;
+  }
+
+  async function verifyEngineConnection(engineId: string, config: Record<string, unknown>) {
+    if (!token) {
+      return null;
+    }
+    return runBusyAction(`engine:${engineId}:test`, () => testEngineConnection(token, engineId, config));
+  }
+
+  async function openDoc(path: string) {
+    setQueryState((current) => ({ ...current, docPath: path }));
+    setActiveView("docs", { search: `path=${encodeURIComponent(path)}` });
+    if (!token) {
+      return;
+    }
+    const result = await runBusyAction(`doc:${path}`, () => fetchDocContent(token, path));
+    if (result) {
+      setDocContent(result.content);
     }
   }
+
+  async function performSearch(query: string) {
+    setQueryState((current) => ({ ...current, q: query }));
+    setActiveView("search", { search: `q=${encodeURIComponent(query)}` });
+    if (!token || !query) {
+      setSearchResults({ agents: [], missions: [], issues: [], runs: [], comments: [] });
+      return;
+    }
+    const result = await runBusyAction(`search:${query}`, () => searchAll(token, query));
+    if (result) {
+      setSearchResults(result);
+    }
+  }
+
+  async function sendFeedback(input: { type: string; message: string }) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction("feedback:create", () => submitFeedback(token, input));
+    return Boolean(result);
+  }
+
+  const derivedAgents = useMemo(
+    () =>
+      agents.map((agent) => {
+        const recentRun = runs.find((run) => run.agent_id === agent.id);
+        const status = normalizeStatus(recentRun?.status ?? "idle", agent.active);
+        return {
+          ...agent,
+          engineLabel: engineLabel(agent.engine),
+          statusLabel: status,
+          lastRunLabel: recentRun ? recentRun.started_at : null,
+          avatarText: agent.name.charAt(0).toUpperCase(),
+        };
+      }),
+    [agents, runs],
+  );
 
   return {
     activeView,
     setActiveView,
+    bootstrap,
+    token,
+    user,
+    project,
+    engines,
+    settingsMap,
     agents,
-    activityLog,
+    derivedAgents,
+    relationships,
+    missions,
+    issues,
+    runs,
+    schedules,
+    selectedRun,
+    selectedIssueComments,
     agentMessages,
-    agentMessagesLoading,
-    missionSnapshot,
+    docs,
+    docContent,
+    searchQuery,
+    setSearchQuery: (query: string) => setQueryState((current) => ({ ...current, q: query })),
+    searchResults,
+    docPath,
     selectedAgentId,
     setSelectedAgentId,
-    selectedTaskId,
-    setSelectedTaskId,
-    selectedTaskDetail,
+    selectedMissionId,
+    setSelectedMissionId,
     connectionState,
     busyKey,
     error,
     loading,
-    refreshMission,
-    createAgent,
-    editAgent,
-    removeAgent,
-    saveTaskUpdate,
-    addComment,
-    runTask,
-    saveConnector,
-    saveHermesSharedDefaults,
-    syncConnector,
-    testConnectorHealth,
-    addConnector,
-    removeConnector,
-    bootstrapTeam,
-    sendMessageToAgent,
-    refreshAgentMessages,
+    register,
+    login,
+    logout,
+    saveProfile,
+    updatePassword,
+    saveProject,
+    wipeProject,
+    refreshWorkspace,
+    createAgent: createAgentRecord,
+    editAgent: editAgentRecord,
+    removeAgent: removeAgentRecord,
+    testAgentConnection: verifyAgentConnection,
+    createMission: createMissionRecord,
+    updateMission: saveMissionRecord,
+    removeMission: removeMissionRecord,
+    assignMissionAgent: addMissionAgent,
+    removeMissionAgent: dropMissionAgent,
+    startMission: launchMission,
+    refreshIssues,
+    createIssue: createIssueRecord,
+    updateIssue: saveIssueRecord,
+    removeIssue: removeIssueRecord,
+    loadIssueComments,
+    addIssueComment: addIssueCommentRecord,
+    syncLinear,
+    syncGitHub,
+    testGitHubConnection: verifyGitHubConnection,
+    loadGitHubRepos,
+    refreshRuns,
+    refreshSchedules,
+    createSchedule: createScheduleRecord,
+    updateSchedule: saveScheduleRecord,
+    removeSchedule: removeScheduleRecord,
+    runSchedule: runScheduleRecord,
+    createRun: createRunRecord,
+    loadRun,
+    streamSelectedRun,
+    refreshOrgMessages,
+    sendAgentMessage: sendAgentMessageRecord,
+    persistPositions,
+    addRelationship: addRelationshipRecord,
+    removeRelationship: removeRelationshipRecord,
+    updateSettingsMap,
+    testLinearConnection: verifyLinearConnection,
+    testEngineConnection: verifyEngineConnection,
+    openDoc,
+    performSearch,
+    sendFeedback,
   };
 }
 

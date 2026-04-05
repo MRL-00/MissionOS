@@ -1,0 +1,236 @@
+import { Octokit } from "@octokit/rest";
+import { getDb } from "./db.js";
+
+export interface GitHubRepo {
+  id: number;
+  full_name: string;
+  owner: string;
+  name: string;
+  default_branch: string;
+  private: boolean;
+  html_url: string;
+  description: string | null;
+}
+
+export interface GitHubIssue {
+  id: number;
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  labels: string[];
+}
+
+export interface GitHubPR {
+  id: number;
+  number: number;
+  title: string;
+  html_url: string;
+  state: string;
+}
+
+function getGitHubPat(): string {
+  const rows = getDb().prepare("SELECT value FROM settings WHERE key = 'github_pat'").get() as
+    | { value: string }
+    | undefined;
+  return rows?.value?.trim() ?? "";
+}
+
+function createOctokit(): Octokit {
+  const token = getGitHubPat();
+  if (!token) {
+    throw new Error("GitHub Personal Access Token is not configured.");
+  }
+  return new Octokit({ auth: token });
+}
+
+export async function testGitHubConnection(): Promise<{
+  ok: boolean;
+  username: string;
+  message: string;
+}> {
+  const octokit = createOctokit();
+  const { data } = await octokit.users.getAuthenticated();
+  return {
+    ok: true,
+    username: data.login,
+    message: `Authenticated as ${data.login}`,
+  };
+}
+
+export async function listGitHubRepos(query?: string): Promise<GitHubRepo[]> {
+  const octokit = createOctokit();
+
+  if (query) {
+    const { data } = await octokit.search.repos({
+      q: `${query} in:name fork:true`,
+      per_page: 30,
+      sort: "updated",
+    });
+    return data.items.map(toGitHubRepo);
+  }
+
+  const { data } = await octokit.repos.listForAuthenticatedUser({
+    per_page: 30,
+    sort: "updated",
+    affiliation: "owner,collaborator,organization_member",
+  });
+  return data.map(toGitHubRepo);
+}
+
+export async function getGitHubRepo(owner: string, repo: string): Promise<GitHubRepo> {
+  const octokit = createOctokit();
+  const { data } = await octokit.repos.get({ owner, repo });
+  return toGitHubRepo(data);
+}
+
+export async function listGitHubIssues(owner: string, repo: string): Promise<GitHubIssue[]> {
+  const octokit = createOctokit();
+  const { data } = await octokit.issues.listForRepo({
+    owner,
+    repo,
+    state: "open",
+    per_page: 100,
+  });
+  return data
+    .filter((issue) => !issue.pull_request)
+    .map((issue) => ({
+      id: issue.id,
+      number: issue.number,
+      title: issue.title,
+      body: issue.body ?? null,
+      state: issue.state ?? "open",
+      html_url: issue.html_url,
+      created_at: issue.created_at,
+      updated_at: issue.updated_at,
+      labels: issue.labels
+        .map((label) => (typeof label === "string" ? label : label.name ?? ""))
+        .filter(Boolean),
+    }));
+}
+
+export async function createGitHubIssue(
+  owner: string,
+  repo: string,
+  title: string,
+  body?: string,
+): Promise<GitHubIssue> {
+  const octokit = createOctokit();
+  const { data } = await octokit.issues.create({
+    owner,
+    repo,
+    title,
+    body: body ?? undefined,
+  });
+  return {
+    id: data.id,
+    number: data.number,
+    title: data.title,
+    body: data.body ?? null,
+    state: data.state ?? "open",
+    html_url: data.html_url,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+    labels: data.labels
+      .map((label) => (typeof label === "string" ? label : label.name ?? ""))
+      .filter(Boolean),
+  };
+}
+
+export async function createGitHubPR(
+  owner: string,
+  repo: string,
+  head: string,
+  base: string,
+  title: string,
+  body?: string,
+): Promise<GitHubPR> {
+  const octokit = createOctokit();
+  const { data } = await octokit.pulls.create({
+    owner,
+    repo,
+    head,
+    base,
+    title,
+    body: body ?? undefined,
+  });
+  return {
+    id: data.id,
+    number: data.number,
+    title: data.title,
+    html_url: data.html_url,
+    state: data.state,
+  };
+}
+
+export async function syncGitHubIssuesToLocal(
+  owner: string,
+  repo: string,
+  missionId: string,
+): Promise<number> {
+  const issues = await listGitHubIssues(owner, repo);
+  const db = getDb();
+  const { randomUUID } = await import("node:crypto");
+
+  const upsert = db.prepare(`
+    INSERT INTO issues (id, title, description, status, priority, mission_id, source, github_id, github_number, github_repo, labels)
+    VALUES (?, ?, ?, 'backlog', 'medium', ?, 'github', ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      title = excluded.title,
+      description = excluded.description,
+      github_number = excluded.github_number,
+      labels = excluded.labels,
+      updated_at = datetime('now')
+  `);
+
+  const existing = db
+    .prepare("SELECT id, github_id FROM issues WHERE github_repo = ? AND source = 'github'")
+    .all(`${owner}/${repo}`) as Array<{ id: string; github_id: number }>;
+  const existingByGhId = new Map(existing.map((row) => [row.github_id, row.id]));
+
+  let synced = 0;
+  const transaction = db.transaction(() => {
+    for (const issue of issues) {
+      const localId = existingByGhId.get(issue.id) ?? randomUUID();
+      upsert.run(
+        localId,
+        issue.title,
+        issue.body,
+        missionId,
+        issue.id,
+        issue.number,
+        `${owner}/${repo}`,
+        JSON.stringify(issue.labels),
+      );
+      synced++;
+    }
+  });
+  transaction();
+
+  return synced;
+}
+
+function toGitHubRepo(data: {
+  id: number;
+  full_name: string;
+  owner: { login: string } | null;
+  name: string;
+  default_branch?: string;
+  private?: boolean;
+  html_url: string;
+  description?: string | null;
+}): GitHubRepo {
+  return {
+    id: data.id,
+    full_name: data.full_name,
+    owner: data.owner?.login ?? "",
+    name: data.name,
+    default_branch: data.default_branch ?? "main",
+    private: data.private ?? false,
+    html_url: data.html_url,
+    description: data.description ?? null,
+  };
+}

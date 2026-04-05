@@ -1,21 +1,16 @@
-import { useState } from "react";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, FilterIcon, MoreHorizontalIcon } from "lucide-react";
+import { useMemo, useState } from "react";
+import { FilterIcon, MoreHorizontalIcon, PlusIcon, SearchIcon, Trash2Icon, WifiIcon, XIcon } from "lucide-react";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
+import { AgentWizard } from "@/pages/onboarding/AgentWizard";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface AgentRosterProps {
   mission: MissionControlState;
 }
 
-type EngineFilter = "all" | "OpenClaw" | "Claude" | "Codex" | "Hermes";
+type EngineFilter = "all" | "OpenClaw" | "Claude" | "Codex" | "Hermes" | "Cursor" | "Pi";
 type StatusFilter = "all" | "Running" | "Active" | "Idle" | "Offline";
-
-const MOCK_AGENTS = [
-  { id: "1", name: "Pickle", uid: "PKL-001", role: "Orchestrator", engine: "OpenClaw", skills: ["Planning", "Delegation", "Strategy"], status: "Running" as const, lastRun: "2 min ago", avatar: "P" },
-  { id: "2", name: "Zoe", uid: "ZOE-042", role: "QA Engineer", engine: "Codex", skills: ["Testing", "Validation", "Reports"], status: "Idle" as const, lastRun: "1h ago", avatar: "Z" },
-  { id: "3", name: "Nexus", uid: "NXS-017", role: "Researcher", engine: "OpenClaw", skills: ["Analysis", "Web Search", "Synthesis"], status: "Active" as const, lastRun: "5 min ago", avatar: "N" },
-  { id: "4", name: "Spectre", uid: "SPC-099", role: "Infiltration", engine: "Claude", skills: ["Stealth", "Recon", "Evasion"], status: "Offline" as const, lastRun: "3d ago", avatar: "S" },
-];
 
 const STATUS_DOT: Record<string, string> = {
   Running: "bg-emerald-400",
@@ -25,91 +20,132 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 const ENGINE_BADGE: Record<string, string> = {
-  OpenClaw: "border-[#5e4ae3]/30 bg-[#5e4ae3]/10 text-[#c6bfff]",
+  OpenClaw: "border-[#5e4ae3]/30 bg-[#39147e]/10 text-[#c6bfff]",
   Claude: "border-amber-500/30 bg-amber-500/10 text-amber-300",
   Codex: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
   Hermes: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+  Cursor: "border-blue-500/30 bg-blue-500/10 text-blue-300",
+  Pi: "border-pink-500/30 bg-pink-500/10 text-pink-300",
 };
 
 export function AgentRoster({ mission }: AgentRosterProps) {
   const [engineFilter, setEngineFilter] = useState<EngineFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [contextMenuId, setContextMenuId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
 
-  const agents = MOCK_AGENTS.filter((a) => {
-    if (engineFilter !== "all" && a.engine !== engineFilter) return false;
-    if (statusFilter !== "all" && a.status !== statusFilter) return false;
-    if (search && !a.name.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  const agents = useMemo(() => {
+    return mission.derivedAgents.filter((agent) => {
+      if (engineFilter !== "all" && agent.engineLabel !== engineFilter) return false;
+      if (statusFilter !== "all" && agent.statusLabel !== statusFilter) return false;
+      if (search && !agent.name.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+  }, [engineFilter, mission.derivedAgents, search, statusFilter]);
 
   return (
     <div className="flex h-full flex-col p-6">
       {/* Header */}
       <div className="mb-5 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-white">Agent Roster</h1>
-          <p className="mt-1 text-[13px] text-[#918f90]">{agents.length} agents registered</p>
+          <h1 className="text-lg font-semibold text-white">Agent Roster</h1>
+          <p className="mt-0.5 text-[12px] text-[#585658]">{mission.agents.length} agents registered</p>
         </div>
-        <button className="rounded-lg bg-gradient-to-r from-[#c6bfff] to-[#5e4ae3] px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90">
-          + Add Agent
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="flex items-center gap-1.5 rounded-lg bg-[#39147e] px-4 py-2 text-[12px] font-semibold text-white shadow-lg shadow-[#2e1065]/25 transition-all hover:bg-[#7c3aed]"
+        >
+          <PlusIcon className="size-3.5" />
+          Add Agent
         </button>
       </div>
 
       {/* Filters */}
       <div className="mb-4 flex items-center gap-3">
-        <div className="flex h-9 w-64 items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3">
-          <SearchIcon className="size-3.5 text-[#918f90]" />
+        <div className="flex h-8 w-56 items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3">
+          <SearchIcon className="size-3.5 text-[#585658]" />
           <input
             type="text"
             placeholder="Search agents..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 bg-transparent text-[13px] text-white outline-none placeholder:text-[#918f90]"
+            onChange={(event) => setSearch(event.target.value)}
+            className="flex-1 bg-transparent text-[12px] text-white outline-none placeholder:text-[#585658]"
           />
         </div>
-        <FilterDropdown label="Engine" value={engineFilter} options={["all", "OpenClaw", "Claude", "Codex", "Hermes"]} onChange={(v) => setEngineFilter(v as EngineFilter)} />
-        <FilterDropdown label="Status" value={statusFilter} options={["all", "Running", "Active", "Idle", "Offline"]} onChange={(v) => setStatusFilter(v as StatusFilter)} />
+        <FilterDropdown label="Engine" value={engineFilter} options={["all", "OpenClaw", "Claude", "Codex", "Hermes", "Cursor", "Pi"]} onChange={(value) => setEngineFilter(value as EngineFilter)} />
+        <FilterDropdown label="Status" value={statusFilter} options={["all", "Running", "Active", "Idle", "Offline"]} onChange={(value) => setStatusFilter(value as StatusFilter)} />
+        <span className="ml-auto text-[11px] text-[#585658]">
+          {agents.length === mission.agents.length ? `${agents.length} agents` : `${agents.length} of ${mission.agents.length}`}
+        </span>
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-hidden rounded-xl border border-white/[0.06]">
-        <div className="grid grid-cols-[2fr_1fr_1fr_1.5fr_1fr_1fr_auto] gap-4 border-b border-white/[0.06] bg-[#1c1b1c] px-4 py-2.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Agent</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Role</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Engine</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Skills</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Status</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Last Run</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Actions</span>
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-white/[0.06]">
+        <div className="grid grid-cols-[2.5fr_1.5fr_1fr_1fr_1fr_auto] items-center gap-4 border-b border-white/[0.06] bg-[#1c1b1c] px-5 py-2.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Agent</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Role</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Engine</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Status</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Last Run</span>
+          <span className="w-8" />
         </div>
-        <div className="divide-y divide-white/[0.04]">
+        <div className="min-h-0 flex-1 divide-y divide-white/[0.04] overflow-y-auto">
+          {agents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="text-[13px] text-[#585658]">No agents found</div>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="mt-3 text-[12px] font-medium text-[#5e4ae3] transition-colors hover:text-[#8b7bf7]"
+              >
+                Create your first agent
+              </button>
+            </div>
+          ) : null}
           {agents.map((agent) => (
-            <div key={agent.id} className="grid grid-cols-[2fr_1fr_1fr_1.5fr_1fr_1fr_auto] items-center gap-4 px-4 py-3 transition-colors hover:bg-white/[0.02]">
+            <div
+              key={agent.id}
+              className="group relative grid grid-cols-[2.5fr_1.5fr_1fr_1fr_1fr_auto] items-center gap-4 px-5 py-3 transition-colors hover:bg-white/[0.02]"
+            >
               <div className="flex items-center gap-3">
-                <div className="flex size-8 items-center justify-center rounded-full bg-gradient-to-br from-[#c6bfff] to-[#5e4ae3] text-[12px] font-semibold text-white">
-                  {agent.avatar}
+                <div
+                  className="flex size-8 items-center justify-center rounded-lg text-[11px] font-bold text-white"
+                  style={{ background: `linear-gradient(135deg, ${agent.color}cc, ${agent.color})` }}
+                >
+                  {agent.avatarText}
                 </div>
                 <div>
                   <div className="text-[13px] font-medium text-white">{agent.name}</div>
-                  <div className="text-[11px] text-[#918f90]">{agent.uid}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-[#585658]">{agent.id.slice(0, 8).toUpperCase()}</span>
+                    {agent.skills.length > 0 ? (
+                      <span className="text-[10px] text-[#585658]">
+                        &middot; {agent.skills.length} skill{agent.skills.length !== 1 ? "s" : ""}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               </div>
-              <span className="text-[13px] text-[#c8c4d7]">{agent.role}</span>
-              <span className={cn("inline-flex w-fit rounded-full border px-2 py-0.5 text-[11px] font-medium", ENGINE_BADGE[agent.engine])}>
-                {agent.engine}
+              <span className="text-[12px] text-[#918f90]">{agent.role || "Unassigned"}</span>
+              <span className={cn("inline-flex w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium", ENGINE_BADGE[agent.engineLabel] ?? ENGINE_BADGE.OpenClaw)}>
+                {agent.engineLabel}
               </span>
-              <div className="flex flex-wrap gap-1">
-                {agent.skills.map((s) => (
-                  <span key={s} className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-[#918f90]">{s}</span>
-                ))}
-              </div>
               <div className="flex items-center gap-1.5">
-                <span className={cn("size-2 rounded-full", STATUS_DOT[agent.status])} />
-                <span className="text-[13px] text-[#c8c4d7]">{agent.status}</span>
+                <span className={cn("size-1.5 rounded-full", STATUS_DOT[agent.statusLabel])} />
+                <span className="text-[12px] text-[#918f90]">{agent.statusLabel}</span>
               </div>
-              <span className="text-[13px] text-[#918f90]">{agent.lastRun}</span>
-              <button className="rounded-lg p-1.5 text-[#918f90] transition-colors hover:bg-white/[0.06] hover:text-white">
+              <span className="text-[11px] text-[#585658]">
+                {agent.lastRunLabel ? new Date(agent.lastRunLabel).toLocaleDateString() : "Never"}
+              </span>
+              <button
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setMenuPosition({ top: rect.bottom + 4, left: rect.right - 160 });
+                  setContextMenuId(contextMenuId === agent.id ? null : agent.id);
+                }}
+                className="rounded-lg p-1.5 text-[#585658] opacity-0 transition-all group-hover:opacity-100 hover:bg-white/[0.06] hover:text-white"
+              >
                 <MoreHorizontalIcon className="size-4" />
               </button>
             </div>
@@ -117,44 +153,79 @@ export function AgentRoster({ mission }: AgentRosterProps) {
         </div>
       </div>
 
-      {/* Pagination */}
-      <div className="mt-4 flex items-center justify-between">
-        <span className="text-[12px] text-[#918f90]">Showing {agents.length} of {MOCK_AGENTS.length} agents</span>
-        <div className="flex items-center gap-1">
-          <button className="rounded-lg border border-white/[0.06] p-1.5 text-[#918f90] transition-colors hover:bg-white/[0.04]">
-            <ChevronLeftIcon className="size-4" />
-          </button>
-          <button className="rounded-lg bg-[#5e4ae3]/20 px-3 py-1 text-[12px] font-medium text-[#c6bfff]">1</button>
-          <button className="rounded-lg border border-white/[0.06] p-1.5 text-[#918f90] transition-colors hover:bg-white/[0.04]">
-            <ChevronRightIcon className="size-4" />
-          </button>
-        </div>
-      </div>
+      {/* Context Menu (rendered outside table to avoid overflow clipping) */}
+      {contextMenuId ? (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenuId(null)} />
+          <div
+            className="fixed z-50 w-40 overflow-hidden rounded-lg border border-white/[0.08] bg-[#1c1b1c] shadow-xl"
+            style={{ top: menuPosition.top, left: menuPosition.left }}
+          >
+            <button
+              onClick={async () => {
+                const result = await mission.testAgentConnection(contextMenuId);
+                if (result) {
+                  setContextMenuId(null);
+                }
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-[#918f90] transition-colors hover:bg-white/[0.04] hover:text-white"
+            >
+              <WifiIcon className="size-3.5" />
+              Test Connection
+            </button>
+            <button
+              onClick={async () => {
+                await mission.removeAgent(contextMenuId);
+                setContextMenuId(null);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-red-400 transition-colors hover:bg-red-500/10"
+            >
+              <Trash2Icon className="size-3.5" />
+              Delete Agent
+            </button>
+          </div>
+        </>
+      ) : null}
 
-      {/* Bottom Status Bar */}
-      <div className="mt-3 flex items-center gap-6 rounded-lg border border-white/[0.06] bg-[#1c1b1c] px-4 py-2.5 text-[11px] text-[#918f90]">
-        <span>System Latency: <strong className="text-emerald-400">12ms</strong></span>
-        <span>Memory Load: <strong className="text-[#c8c4d7]">62%</strong></span>
-        <span>Encryption: <strong className="text-[#c6bfff]">AES-256</strong></span>
-        <span>Protocol: <strong className="text-[#c8c4d7]">WSS v2</strong></span>
-      </div>
+      {/* Create Agent Modal */}
+      {showCreateModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="flex w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141415] shadow-2xl shadow-black/50">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-3">
+              <h2 className="text-[14px] font-semibold text-white">New Agent</h2>
+              <button onClick={() => setShowCreateModal(false)} className="rounded-lg p-1 text-[#585658] transition-colors hover:bg-white/[0.06] hover:text-white">
+                <XIcon className="size-4" />
+              </button>
+            </div>
+            <AgentWizard
+              mission={mission}
+              onComplete={() => setShowCreateModal(false)}
+              onCancel={() => setShowCreateModal(false)}
+              submitLabel="Create Agent"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function FilterDropdown({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
+function FilterDropdown({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
   return (
-    <div className="flex items-center gap-2">
-      <FilterIcon className="size-3 text-[#918f90]" />
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded-lg border border-white/[0.06] bg-[#1c1b1c] px-2.5 py-1.5 text-[12px] text-[#c8c4d7] outline-none"
-      >
-        {options.map((o) => (
-          <option key={o} value={o}>{o === "all" ? `All ${label}s` : o}</option>
-        ))}
-      </select>
+    <div className="flex items-center gap-1.5">
+      <FilterIcon className="size-3 text-[#585658]" />
+      <Select value={value} onValueChange={(v) => onChange(v ?? "all")}>
+        <SelectTrigger size="sm" className="border-white/[0.06] bg-[#1c1b1c] text-[11px] text-[#918f90]">
+          <SelectValue placeholder={`All ${label}s`} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option} value={option}>
+              {option === "all" ? `All ${label}s` : option}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

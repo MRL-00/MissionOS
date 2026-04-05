@@ -4,7 +4,7 @@
     {
       "name": "dev",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-c", "export PATH=$HOME/.nvm/versions/node/v22.19.0/bin:/opt/homebrew/bin:$PATH && pnpm dev:client"],
+      "runtimeArgs": ["-c", "export PATH=$HOME/.nvm/versions/node/v22.19.0/bin:/opt/homebrew/bin:$PATH && PORT=3001 pnpm dev"],
       "port": 5173
     }
   ]
