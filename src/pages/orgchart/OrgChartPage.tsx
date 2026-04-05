@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { MaximizeIcon, MinusIcon, PlusIcon, TrashIcon, XIcon, ZapIcon, ListChecksIcon, ChevronRightIcon, PencilIcon } from "lucide-react";
+import { MaximizeIcon, MinusIcon, PlusIcon, TrashIcon, XIcon, ZapIcon, PencilIcon } from "lucide-react";
 import ReactFlow, { Background, Handle, MarkerType, MiniMap, Position, ReactFlowProvider, applyNodeChanges, useReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from "reactflow";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
-import type { DelegationRule } from "@/mission/appTypes";
 import { AgentWizard } from "@/pages/onboarding/AgentWizard";
 import { cn } from "@/lib/utils";
 
@@ -125,14 +124,6 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const { fitView, zoomIn, zoomOut } = useReactFlow();
 
-  // Delegation rules state
-  const [addingRule, setAddingRule] = useState(false);
-  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
-  const [ruleTrigger, setRuleTrigger] = useState("");
-  const [ruleTargetId, setRuleTargetId] = useState("");
-  const [ruleInstruction, setRuleInstruction] = useState("");
-  const [ruleOnComplete, setRuleOnComplete] = useState("");
-  const [savingRule, setSavingRule] = useState(false);
 
   // Find active runs per agent
   const activeRunsByAgent = useMemo(() => {
@@ -214,15 +205,6 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
     setNodes((current) => applyNodeChanges(changes, current));
   }, []);
 
-  // Find direct children of selected node (for delegation rule targets)
-  const childAgents = useMemo(() => {
-    if (!selectedNode) return [];
-    const childIds = mission.relationships
-      .filter((r) => r.parent_id === selectedNode.id)
-      .map((r) => r.child_id);
-    return mission.derivedAgents.filter((a) => childIds.includes(a.id));
-  }, [selectedNode, mission.relationships, mission.derivedAgents]);
-
   // Find missions this agent is assigned to
   const agentMissions = useMemo(() => {
     if (!selectedNode) return [];
@@ -236,64 +218,6 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
     },
     [mission],
   );
-
-  const resetRuleForm = () => {
-    setAddingRule(false);
-    setEditingRuleId(null);
-    setRuleTrigger("");
-    setRuleTargetId("");
-    setRuleInstruction("");
-    setRuleOnComplete("");
-  };
-
-  const startEditRule = (rule: DelegationRule) => {
-    setEditingRuleId(rule.id);
-    setAddingRule(true);
-    setRuleTrigger(rule.trigger);
-    setRuleTargetId(rule.target_agent_id);
-    setRuleInstruction(rule.instruction);
-    setRuleOnComplete(rule.on_complete);
-  };
-
-  const saveRule = async () => {
-    if (!selectedNode || !ruleTrigger.trim() || !ruleTargetId || !ruleInstruction.trim()) return;
-    setSavingRule(true);
-
-    const existingRules: DelegationRule[] = selectedNode.delegation_rules ?? [];
-    let updatedRules: DelegationRule[];
-
-    if (editingRuleId) {
-      updatedRules = existingRules.map((r) =>
-        r.id === editingRuleId
-          ? { ...r, trigger: ruleTrigger.trim(), target_agent_id: ruleTargetId, instruction: ruleInstruction.trim(), on_complete: ruleOnComplete.trim() }
-          : r,
-      );
-    } else {
-      const newRule: DelegationRule = {
-        id: crypto.randomUUID(),
-        trigger: ruleTrigger.trim(),
-        target_agent_id: ruleTargetId,
-        instruction: ruleInstruction.trim(),
-        on_complete: ruleOnComplete.trim(),
-      };
-      updatedRules = [...existingRules, newRule];
-    }
-
-    await mission.editAgent(selectedNode.id, { ...selectedNode, delegation_rules: updatedRules });
-    setSavingRule(false);
-    resetRuleForm();
-  };
-
-  const deleteRule = async (ruleId: string) => {
-    if (!selectedNode) return;
-    const existingRules: DelegationRule[] = selectedNode.delegation_rules ?? [];
-    const updatedRules = existingRules.filter((r) => r.id !== ruleId);
-    await mission.editAgent(selectedNode.id, { ...selectedNode, delegation_rules: updatedRules });
-  };
-
-  const getAgentName = (agentId: string) => {
-    return mission.derivedAgents.find((a) => a.id === agentId)?.name ?? "Unknown";
-  };
 
   return (
     <div className="flex h-full">
@@ -486,136 +410,6 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
             </div>
           </div>
 
-          {/* Delegation Rules */}
-          <div className="mt-5 border-t border-white/[0.06] pt-5">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#585658]">
-                <ListChecksIcon className="size-3" />
-                Delegation Rules
-              </div>
-              {!addingRule && childAgents.length > 0 ? (
-                <button
-                  onClick={() => setAddingRule(true)}
-                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-[#918f90] transition-colors hover:bg-white/[0.06] hover:text-white"
-                >
-                  <PlusIcon className="size-3" />
-                  Add
-                </button>
-              ) : null}
-            </div>
-
-            {childAgents.length === 0 ? (
-              <div className="text-[11px] text-[#585658]">
-                No subordinate agents. Connect agents below this one in the org chart to add delegation rules.
-              </div>
-            ) : (
-              <>
-                {/* Existing rules */}
-                <div className="space-y-2">
-                  {(selectedNode.delegation_rules ?? []).map((rule) => (
-                    <div
-                      key={rule.id}
-                      className="group rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5"
-                    >
-                      <div className="mb-1.5 flex items-center gap-1.5">
-                        <span className="rounded bg-[#39147e]/30 px-1.5 py-0.5 text-[10px] font-medium text-[#c6bfff]">
-                          {rule.trigger}
-                        </span>
-                        <ChevronRightIcon className="size-3 text-[#585658]" />
-                        <span className="text-[10px] font-medium text-[#c8c4d7]">
-                          {getAgentName(rule.target_agent_id)}
-                        </span>
-                        <div className="ml-auto flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                          <button
-                            onClick={() => startEditRule(rule)}
-                            className="rounded p-0.5 text-[#585658] hover:bg-white/[0.06] hover:text-white"
-                          >
-                            <PencilIcon className="size-3" />
-                          </button>
-                          <button
-                            onClick={() => void deleteRule(rule.id)}
-                            className="rounded p-0.5 text-[#585658] hover:bg-red-500/20 hover:text-red-400"
-                          >
-                            <TrashIcon className="size-3" />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="text-[10px] leading-relaxed text-[#918f90]">{rule.instruction}</div>
-                      {rule.on_complete ? (
-                        <div className="mt-1 text-[10px] text-[#585658]">
-                          On complete: {rule.on_complete}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Add/Edit rule form */}
-                {addingRule ? (
-                  <div className="mt-2.5 space-y-2.5 rounded-lg border border-[#5e4ae3]/30 bg-[#39147e]/[0.05] p-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#585658]">
-                      {editingRuleId ? "Edit Rule" : "New Rule"}
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[10px] text-[#585658]">When this type of work comes in</label>
-                      <input
-                        value={ruleTrigger}
-                        onChange={(e) => setRuleTrigger(e.target.value)}
-                        placeholder="e.g. coding tasks, bug fixes, PR reviews"
-                        className="w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[10px] text-[#585658]">Delegate to</label>
-                      <select
-                        value={ruleTargetId}
-                        onChange={(e) => setRuleTargetId(e.target.value)}
-                        className="w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none"
-                      >
-                        <option value="">Select subordinate...</option>
-                        {childAgents.map((a) => (
-                          <option key={a.id} value={a.id}>{a.name} ({a.engineLabel})</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[10px] text-[#585658]">Instructions for them</label>
-                      <textarea
-                        value={ruleInstruction}
-                        onChange={(e) => setRuleInstruction(e.target.value)}
-                        placeholder="e.g. Complete the task, create a PR, and let me know when done"
-                        className="h-16 w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[10px] text-[#585658]">When they finish</label>
-                      <textarea
-                        value={ruleOnComplete}
-                        onChange={(e) => setRuleOnComplete(e.target.value)}
-                        placeholder="e.g. Review the PR and merge if it looks good"
-                        className="h-12 w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-2.5 py-1.5 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        disabled={!ruleTrigger.trim() || !ruleTargetId || !ruleInstruction.trim() || savingRule}
-                        onClick={() => void saveRule()}
-                        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#39147e] py-2 text-[12px] font-medium text-white transition-all hover:bg-[#7c3aed] disabled:opacity-40"
-                      >
-                        {savingRule ? "Saving..." : editingRuleId ? "Update Rule" : "Add Rule"}
-                      </button>
-                      <button
-                        onClick={resetRuleForm}
-                        className="rounded-lg border border-white/[0.08] px-3 py-2 text-[12px] text-[#918f90] transition-colors hover:bg-white/[0.04]"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </>
-            )}
-          </div>
         </div>
       ) : null}
 

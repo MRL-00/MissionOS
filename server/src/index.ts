@@ -79,7 +79,6 @@ function serializeAgent(row: Record<string, unknown>) {
     soul_md: row.soul_md,
     agents_md: row.agents_md,
     external_config: asFlag(typeof row.external_config === "number" ? row.external_config : 0),
-    delegation_rules: parseJson<unknown[]>(typeof row.delegation_rules === "string" ? row.delegation_rules : null, []),
     active: asFlag(typeof row.active === "number" ? row.active : 0),
     created_at: row.created_at,
     position: {
@@ -790,8 +789,8 @@ app.post("/api/agents", (req, res) => {
       `
       INSERT INTO agents (
         id, name, role, emoji, color, engine, skills, tools, connection_type, connection_config,
-        soul_md, agents_md, external_config, active, delegation_rules
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        soul_md, agents_md, external_config, active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .run(
@@ -809,7 +808,6 @@ app.post("/api/agents", (req, res) => {
       typeof body.agents_md === "string" ? body.agents_md : "",
       body.external_config ? 1 : 0,
       body.active === false ? 0 : 1,
-      JSON.stringify(Array.isArray(body.delegation_rules) ? body.delegation_rules : []),
     );
 
   getDb().prepare("INSERT OR IGNORE INTO agent_positions (agent_id, x, y) VALUES (?, 0, 0)").run(id);
@@ -837,8 +835,7 @@ app.put("/api/agents/:id", (req, res) => {
         soul_md = ?,
         agents_md = ?,
         external_config = ?,
-        active = ?,
-        delegation_rules = ?
+        active = ?
       WHERE id = ?
       `,
     )
@@ -856,7 +853,6 @@ app.put("/api/agents/:id", (req, res) => {
       typeof body.agents_md === "string" ? body.agents_md : "",
       body.external_config ? 1 : 0,
       body.active === false ? 0 : 1,
-      JSON.stringify(Array.isArray(body.delegation_rules) ? body.delegation_rules : []),
       req.params.id,
     );
 

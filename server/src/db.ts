@@ -174,7 +174,6 @@ function runMigrations(database: Database.Database): void {
     "ALTER TABLE runs ADD COLUMN working_directory TEXT",
     "ALTER TABLE runs ADD COLUMN github_branch TEXT",
     "ALTER TABLE runs ADD COLUMN github_pr_url TEXT",
-    "ALTER TABLE agents ADD COLUMN delegation_rules TEXT DEFAULT '[]'",
   ];
 
   for (const sql of migrations) {
