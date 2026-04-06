@@ -640,6 +640,18 @@ export function useMissionControl() {
     }
   }
 
+  async function silentRefreshIssues(filters?: Record<string, string | undefined>) {
+    if (!token) {
+      return;
+    }
+    try {
+      const result = await fetchIssues(token, filters);
+      setIssues(result.issues);
+    } catch {
+      /* swallow — background poll failure is fine */
+    }
+  }
+
   async function createIssueRecord(input: Record<string, unknown>) {
     if (!token) {
       return false;
@@ -666,14 +678,19 @@ export function useMissionControl() {
 
   async function removeIssueRecord(issueId: string) {
     if (!token) {
-      return false;
+      return { ok: false, error: "You must be logged in to delete an issue." };
     }
-    const result = await runBusyAction(`issue:${issueId}:delete`, () => deleteIssue(token, issueId));
-    if (!result) {
-      return false;
+
+    try {
+      await deleteIssue(token, issueId);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Unable to delete issue.";
+      setError(message);
+      return { ok: false, error: message };
     }
+
     await refreshWorkspace();
-    return true;
+    return { ok: true, error: null };
   }
 
   async function loadIssueComments(issueId: string) {
@@ -1177,6 +1194,7 @@ export function useMissionControl() {
     removeMissionAgent: dropMissionAgent,
     startMission: launchMission,
     refreshIssues,
+    silentRefreshIssues,
     createIssue: createIssueRecord,
     updateIssue: saveIssueRecord,
     removeIssue: removeIssueRecord,

@@ -346,7 +346,7 @@ export async function createRunRecord(input: {
   ).run(runId, input.agentId, missionId, issueId, scheduleId, String(agentRow.engine), input.prompt, workingDirectory, githubBranch, parentRunId, planStepId);
 
   if (issueId) {
-    db.prepare("UPDATE issues SET status = 'in_progress' WHERE id = ? AND status != 'done'")
+    db.prepare("UPDATE issues SET status = 'in_progress' WHERE id = ? AND status NOT IN ('done', 'in_review', 'merged_ready')")
       .run(issueId);
   }
 

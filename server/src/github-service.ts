@@ -1,4 +1,5 @@
 import { Octokit } from "@octokit/rest";
+import { RequestError } from "@octokit/request-error";
 import { getDb } from "./db.js";
 
 export interface GitHubRepo {
@@ -115,21 +116,45 @@ export async function createGitHubPR(
   body?: string,
 ): Promise<GitHubPR> {
   const octokit = createOctokit();
-  const { data } = await octokit.pulls.create({
-    owner,
-    repo,
-    head,
-    base,
-    title,
-    ...(body ? { body } : {}),
-  });
-  return {
-    id: data.id,
-    number: data.number,
-    title: data.title,
-    html_url: data.html_url,
-    state: data.state,
-  };
+  try {
+    const { data } = await octokit.pulls.create({
+      owner,
+      repo,
+      head,
+      base,
+      title,
+      ...(body ? { body } : {}),
+    });
+    return {
+      id: data.id,
+      number: data.number,
+      title: data.title,
+      html_url: data.html_url,
+      state: data.state,
+    };
+  } catch (error) {
+    if (error instanceof RequestError && error.status === 422) {
+      const { data } = await octokit.pulls.list({
+        owner,
+        repo,
+        state: "open",
+        head: `${owner}:${head}`,
+        base,
+        per_page: 10,
+      });
+      const existing = data[0];
+      if (existing) {
+        return {
+          id: existing.id,
+          number: existing.number,
+          title: existing.title,
+          html_url: existing.html_url,
+          state: existing.state,
+        };
+      }
+    }
+    throw error;
+  }
 }
 
 export async function syncGitHubIssuesToLocal(

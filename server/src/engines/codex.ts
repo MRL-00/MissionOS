@@ -33,6 +33,23 @@ type ClaudeParserState = {
   assistantTextByMessageId: Map<string, string>;
 };
 
+export function formatClaudeExitMessage(command: string, code: number | null, signal: NodeJS.Signals | null, stderr: string): string {
+  const trimmedStderr = stderr.trim();
+  if (trimmedStderr) {
+    return trimmedStderr;
+  }
+
+  if (signal === "SIGTERM" || code === 143) {
+    return "Claude run was interrupted before it finished. This usually means the MissionOS server restarted or the Claude process was terminated externally.";
+  }
+
+  if (signal) {
+    return `${command} was terminated by signal ${signal}`;
+  }
+
+  return `${command} exited with code ${code ?? -1}`;
+}
+
 function isToolUseType(value: unknown): boolean {
   return value === "tool_use" || value === "server_tool_use" || value === "mcp_tool_use";
 }
@@ -200,7 +217,7 @@ async function* streamClaudeProcess(
     release();
   });
 
-  child.on("close", (code) => {
+  child.on("close", (code, signal) => {
     untrackChild();
     if (stdoutBuffer.trim()) {
       const parsed = parseClaudeStreamEvent(stdoutBuffer, parserState);
@@ -210,7 +227,7 @@ async function* streamClaudeProcess(
     }
 
     if (code !== 0 && !failure) {
-      failure = new Error(stderr.trim() || `${command} exited with code ${code ?? -1}`);
+      failure = new Error(formatClaudeExitMessage(command, code, signal, stderr));
     }
 
     done = true;

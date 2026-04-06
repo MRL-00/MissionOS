@@ -314,6 +314,7 @@ export function IssueEditModal({
   getInheritedRepo,
   confirmDelete,
   setConfirmDelete,
+  deleteError,
   comments,
   newComment,
   onNewCommentChange,
@@ -338,6 +339,7 @@ export function IssueEditModal({
   getInheritedRepo: (missionId: string | null) => string | null;
   confirmDelete: boolean;
   setConfirmDelete: Dispatch<SetStateAction<boolean>>;
+  deleteError?: string | null;
   comments: IssueCommentRecord[];
   newComment: string;
   onNewCommentChange: (value: string) => void;
@@ -352,6 +354,13 @@ export function IssueEditModal({
   if (!editingIssue) {
     return null;
   }
+
+  const linkedRunCount = mission.runs.filter((run) => run.issue_id === editingIssue.id).length;
+  const linkedCommentCount = comments.length;
+  const cascadeParts = [
+    linkedRunCount > 0 ? `${linkedRunCount} linked run${linkedRunCount === 1 ? "" : "s"}` : null,
+    linkedCommentCount > 0 ? `${linkedCommentCount} comment${linkedCommentCount === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -520,17 +529,25 @@ export function IssueEditModal({
         <div className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3.5">
           <div>
             {confirmDelete ? (
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] text-red-400">Delete this issue?</span>
-                <button
-                  onClick={() => void onDelete()}
-                  className="rounded-lg bg-red-500/20 px-3 py-1 text-[12px] font-medium text-red-400 transition-colors hover:bg-red-500/30"
-                >
-                  Confirm
-                </button>
-                <button onClick={() => setConfirmDelete(false)} className="text-[12px] text-[#918f90] hover:text-white">
-                  Cancel
-                </button>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] text-red-400">Delete this issue?</span>
+                  <button
+                    onClick={() => void onDelete()}
+                    className="rounded-lg bg-red-500/20 px-3 py-1 text-[12px] font-medium text-red-400 transition-colors hover:bg-red-500/30"
+                  >
+                    Confirm
+                  </button>
+                  <button onClick={() => setConfirmDelete(false)} className="text-[12px] text-[#918f90] hover:text-white">
+                    Cancel
+                  </button>
+                </div>
+                {cascadeParts.length > 0 ? (
+                  <div className="text-[12px] text-amber-300">
+                    This will also delete {cascadeParts.join(" and ")} attached to this issue.
+                  </div>
+                ) : null}
+                {deleteError ? <div className="text-[12px] text-red-300">{deleteError}</div> : null}
               </div>
             ) : (
               <button

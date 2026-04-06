@@ -3,4 +3,7 @@ dist/
 .vite/
 .env
 tmp/
+.DS_Store
+workspaces/
+server/src/workspaces/
 server/workspaces/

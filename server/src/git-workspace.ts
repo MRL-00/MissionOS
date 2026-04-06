@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb } from "./db.js";
 
-const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
+const serverSrcRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
+const serverRoot = path.resolve(serverSrcRoot, "..");
+const repoRoot = path.resolve(serverRoot, "..");
 
 export function getWorkspaceRoot(): string {
   const rows = getDb().prepare("SELECT value FROM settings WHERE key = 'github_workspace_dir'").get() as
@@ -14,7 +16,9 @@ export function getWorkspaceRoot(): string {
   if (configured) {
     return path.isAbsolute(configured) ? configured : path.resolve(serverRoot, configured);
   }
-  return path.join(serverRoot, "workspaces");
+  // Keep generated Git workspaces outside the entire `server` tree so
+  // node --watch does not restart MissionOS when agents edit cloned repos.
+  return path.join(repoRoot, "workspaces");
 }
 
 function getGitHubPat(): string {
@@ -26,6 +30,10 @@ function getGitHubPat(): string {
 
 export function repoLocalPath(owner: string, repo: string, issueId: string): string {
   return path.join(getWorkspaceRoot(), owner, repo, issueId);
+}
+
+function sharedRepoPath(owner: string, repo: string): string {
+  return path.join(getWorkspaceRoot(), owner, repo, ".repo");
 }
 
 function runGit(args: string[], cwd: string, timeoutMs = 120_000): Promise<string> {
@@ -42,6 +50,7 @@ function runGit(args: string[], cwd: string, timeoutMs = 120_000): Promise<strin
 
 export async function ensureRepo(owner: string, repo: string, issueId: string): Promise<string> {
   const localPath = repoLocalPath(owner, repo, issueId);
+  const sharedPath = sharedRepoPath(owner, repo);
   const token = getGitHubPat();
   if (!token) {
     throw new Error("GitHub PAT is not configured.");
@@ -54,9 +63,16 @@ export async function ensureRepo(owner: string, repo: string, issueId: string): 
     return localPath;
   }
 
-  mkdirSync(localPath, { recursive: true });
-  const parentDir = path.dirname(localPath);
-  await runGit(["clone", "--depth", "1", cloneUrl, localPath], parentDir, 300_000);
+  mkdirSync(path.dirname(sharedPath), { recursive: true });
+
+  if (existsSync(path.join(sharedPath, ".git"))) {
+    await runGit(["fetch", "origin"], sharedPath, 300_000);
+  } else {
+    await runGit(["clone", "--depth", "1", cloneUrl, sharedPath], path.dirname(sharedPath), 300_000);
+  }
+
+  await runGit(["worktree", "prune"], sharedPath, 120_000);
+  await runGit(["worktree", "add", "--detach", localPath, "HEAD"], sharedPath, 300_000);
   return localPath;
 }
 
@@ -65,20 +81,22 @@ export async function createFeatureBranch(
   branchName: string,
   baseBranch = "main",
 ): Promise<string> {
+  let baseRef = `origin/${baseBranch}`;
+
   // Fetch the latest base branch
   try {
     await runGit(["fetch", "origin", baseBranch], repoPath);
   } catch {
-    // If fetch fails (e.g. shallow clone), continue anyway
+    // If fetch fails (e.g. shallow clone), fall back to FETCH_HEAD.
+    baseRef = "FETCH_HEAD";
   }
 
-  // Reset to the base branch
+  // In a worktree, the base branch may already be checked out elsewhere.
+  // Detach to the fetched base ref instead of trying to claim the branch.
   try {
-    await runGit(["checkout", baseBranch], repoPath);
-    await runGit(["reset", "--hard", `origin/${baseBranch}`], repoPath);
+    await runGit(["checkout", "--detach", baseRef], repoPath);
   } catch {
-    // If base branch doesn't exist locally, create from FETCH_HEAD
-    await runGit(["checkout", "-b", baseBranch, "FETCH_HEAD"], repoPath);
+    await runGit(["checkout", "--detach", "FETCH_HEAD"], repoPath);
   }
 
   // Create and checkout the feature branch

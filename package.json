@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"pnpm dev:client\" \"pnpm dev:server\"",
     "dev:client": "vite --host 0.0.0.0 --port 5173",
-    "dev:server": "cd server && node --watch --import tsx ./src/index.ts",
+    "dev:server": "cd server && node --watch-path=./src --watch-path=./tsconfig.json --watch-path=../package.json --watch-preserve-output --import tsx ./src/index.ts",
     "build": "vite build && tsc -p server/tsconfig.build.json",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "typecheck": "tsc --noEmit && tsc -p server/tsconfig.json --noEmit",

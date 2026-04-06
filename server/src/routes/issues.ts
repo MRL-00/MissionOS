@@ -103,9 +103,70 @@ export function registerIssueRoutes(app: Express) {
     res.json({ issue });
   });
 
-  app.delete("/api/issues/:id", (req, res) => {
-    getDb().prepare("DELETE FROM issues WHERE id = ?").run(req.params.id);
-    res.json({ ok: true });
+  app.delete("/api/issues/:id", (req, res, next) => {
+    const db = getDb();
+
+    try {
+      const activeRunCount = db.prepare(
+        `
+        SELECT COUNT(*) AS count
+        FROM runs
+        WHERE issue_id = ? AND status IN ('running', 'planning')
+        `,
+      ).get(req.params.id) as { count: number };
+
+      if (activeRunCount.count > 0) {
+        res.status(409).json({
+          error: "Cannot delete this issue while active runs exist. Wait for them to finish or delete the runs first.",
+        });
+        return;
+      }
+
+      const deleted = db.transaction((issueId: string) => {
+        const existing = db.prepare("SELECT id FROM issues WHERE id = ?").get(issueId) as { id: string } | undefined;
+        if (!existing) {
+          return false;
+        }
+
+        // Runs reference issues directly, and delegated child runs can also
+        // reference sibling runs via parent_run_id. Clear those links first,
+        // then remove the issue-owned runs before deleting the issue itself.
+        db.prepare(
+          `
+          UPDATE runs
+          SET parent_run_id = NULL
+          WHERE parent_run_id IN (
+            SELECT id FROM runs WHERE issue_id = ?
+          )
+          `,
+        ).run(issueId);
+
+        // Comments can reference each other via parent_id with NO ACTION.
+        // Clear reply links before deleting issue comments to avoid leaking a
+        // raw SQLite foreign-key error to the user.
+        db.prepare("UPDATE issue_comments SET parent_id = NULL WHERE issue_id = ?").run(issueId);
+        db.prepare("DELETE FROM issue_comments WHERE issue_id = ?").run(issueId);
+
+        db.prepare("DELETE FROM runs WHERE issue_id = ?").run(issueId);
+        const result = db.prepare("DELETE FROM issues WHERE id = ?").run(issueId);
+        return result.changes > 0;
+      })(req.params.id);
+
+      if (!deleted) {
+        res.status(404).json({ error: "Issue not found." });
+        return;
+      }
+
+      res.json({ ok: true });
+    } catch (error) {
+      if (error instanceof Error && /FOREIGN KEY constraint failed/i.test(error.message)) {
+        res.status(409).json({
+          error: "Cannot delete this issue because it still has linked activity or discussion records. Remove the linked items first, or wait for active runs to finish.",
+        });
+        return;
+      }
+      next(error);
+    }
   });
 
   app.get("/api/issues/:id/comments", (_req, res) => {

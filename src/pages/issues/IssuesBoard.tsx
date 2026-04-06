@@ -36,6 +36,7 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
   const [editRepoQuery, setEditRepoQuery] = useState("");
   const [editRepoOptions, setEditRepoOptions] = useState<RepoOption[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Create modal state
   const [draft, setDraft] = useState<IssueCreateDraft>({ title: "", description: "", status: "backlog", priority: "medium", assignee_agent_id: "", mission_id: "", github_repo: "" });
@@ -58,11 +59,13 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
     setEditRepoOptions([]);
     setEditFullScreen(false);
     setConfirmDelete(false);
+    setDeleteError(null);
   }, []);
 
   const closeEditModal = useCallback(() => {
     setEditingIssue(null);
     setConfirmDelete(false);
+    setDeleteError(null);
   }, []);
 
   const searchRepos = useCallback(
@@ -107,7 +110,10 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
   useEffect(() => {
     if (!selectedIssue) return;
     const interval = setInterval(() => {
-      void mission.loadIssueRuns(selectedIssue.id);
+      void Promise.all([
+        mission.loadIssueRuns(selectedIssue.id),
+        mission.silentRefreshIssues(),
+      ]);
     }, 5_000);
     return () => clearInterval(interval);
   }, [selectedIssue?.id, mission]);
@@ -172,7 +178,12 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
       return;
     }
 
-    await mission.removeIssue(editingIssue.id);
+    const result = await mission.removeIssue(editingIssue.id);
+    if (!result.ok) {
+      setDeleteError(result.error ?? "Unable to delete issue.");
+      return;
+    }
+
     closeEditModal();
     setSelectedIssueId(null);
   }, [closeEditModal, editingIssue, mission]);
@@ -307,7 +318,11 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
           onSearchRepos={(query) => void searchRepos(query, "edit")}
           getInheritedRepo={getInheritedRepo}
           confirmDelete={confirmDelete}
-          setConfirmDelete={setConfirmDelete}
+          setConfirmDelete={(value) => {
+            setDeleteError(null);
+            setConfirmDelete(value);
+          }}
+          deleteError={deleteError}
           comments={mission.selectedIssueComments}
           newComment={editComment}
           onNewCommentChange={setEditComment}

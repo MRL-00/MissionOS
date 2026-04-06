@@ -22,6 +22,14 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    watch: {
+      ignored: [
+        "**/workspaces/**",
+        "**/server/src/workspaces/**",
+        "**/server/workspaces/**",
+        "**/server/data/**",
+      ],
+    },
     proxy: {
       "/api": "http://localhost:3001",
     },

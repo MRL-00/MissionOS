@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseClaudeStreamEvent } from "./codex.js";
+import { formatClaudeExitMessage, parseClaudeStreamEvent } from "./codex.js";
 
 function createParserState() {
   return {
@@ -67,4 +67,11 @@ test("parseClaudeStreamEvent surfaces Claude result errors", () => {
   });
 
   assert.equal(parseClaudeStreamEvent(line, state), "Not logged in · Please run /login\n");
+});
+
+test("formatClaudeExitMessage explains SIGTERM interruptions", () => {
+  assert.equal(
+    formatClaudeExitMessage("claude", 143, "SIGTERM", ""),
+    "Claude run was interrupted before it finished. This usually means the MissionOS server restarted or the Claude process was terminated externally.",
+  );
 });
