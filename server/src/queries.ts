@@ -130,6 +130,7 @@ export function listRuns(filters: {
   issueId?: string | undefined;
   status?: string | undefined;
   q?: string | undefined;
+  parentRunId?: string | undefined;
 }) {
   const db = getDb();
   const conditions: string[] = [];
@@ -154,6 +155,10 @@ export function listRuns(filters: {
   if (filters.q) {
     conditions.push("(runs.prompt LIKE ? OR runs.output LIKE ?)");
     params.push(`%${filters.q}%`, `%${filters.q}%`);
+  }
+  if (filters.parentRunId) {
+    conditions.push("runs.parent_run_id = ?");
+    params.push(filters.parentRunId);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

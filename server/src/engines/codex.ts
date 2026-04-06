@@ -119,8 +119,8 @@ export const claudeCodeAdapter: EngineAdapter = {
         : undefined;
     yield* streamProcess(
       command,
-      ["--print", "--dangerously-skip-permissions", "--model", model, prompt],
-      cwd ? { cwd } : undefined,
+      ["--print", "--dangerously-skip-permissions", "--model", model, "-"],
+      { ...(cwd ? { cwd } : {}), stdin: prompt },
     );
   },
 };

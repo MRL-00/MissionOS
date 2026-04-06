@@ -178,6 +178,9 @@ function runMigrations(database: Database.Database): void {
     "ALTER TABLE runs ADD COLUMN github_pr_url TEXT",
     "ALTER TABLE missions ADD COLUMN color TEXT",
     "ALTER TABLE issues ADD COLUMN issue_number INTEGER",
+    "ALTER TABLE runs ADD COLUMN parent_run_id TEXT REFERENCES runs(id)",
+    "ALTER TABLE runs ADD COLUMN plan_step_id TEXT",
+    "ALTER TABLE runs ADD COLUMN execution_plan TEXT",
   ];
 
   for (const sql of migrations) {

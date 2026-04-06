@@ -160,6 +160,9 @@ export interface RunRecord {
   working_directory: string | null;
   github_branch: string | null;
   github_pr_url: string | null;
+  parent_run_id: string | null;
+  plan_step_id: string | null;
+  execution_plan: { plan: Array<{ id: string; agent: string; task: string; dependsOn?: string[] }>; summary?: string } | null;
   agent_name?: string | null;
   agent_emoji?: string | null;
   agent_color?: string | null;

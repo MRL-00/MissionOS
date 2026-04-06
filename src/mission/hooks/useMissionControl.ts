@@ -439,14 +439,18 @@ export function useMissionControl() {
       return;
     }
     const missionId = missions.find((mission) => mission.status === "active")?.id ?? selectedMissionId ?? undefined;
-    void fetchAgentMessages(token, missionId)
-      .then((response) => setAgentMessages(response.messages))
-      .catch(() => undefined);
-    const interval = window.setInterval(() => {
+
+    const poll = () => {
       void fetchAgentMessages(token, missionId)
         .then((response) => setAgentMessages(response.messages))
         .catch(() => undefined);
-    }, 2000);
+      void silentRefreshAgents();
+      void silentRefreshRelationships();
+      void silentRefreshRuns();
+    };
+
+    poll(); // initial fetch
+    const interval = window.setInterval(poll, 3_000);
     return () => window.clearInterval(interval);
   }, [activeView, missions, selectedMissionId, token]);
 
@@ -824,6 +828,33 @@ export function useMissionControl() {
     if (result) {
       setRuns(result.runs);
     }
+  }
+
+  /** Silent refresh — does NOT set busyKey so the UI won't flicker */
+  async function silentRefreshRuns() {
+    if (!token) return;
+    try {
+      const result = await fetchRuns(token);
+      setRuns(result.runs);
+    } catch {
+      /* swallow — background poll failure is fine */
+    }
+  }
+
+  async function silentRefreshAgents() {
+    if (!token) return;
+    try {
+      const result = await fetchAgents(token);
+      setAgents(result.agents);
+    } catch { /* swallow */ }
+  }
+
+  async function silentRefreshRelationships() {
+    if (!token) return;
+    try {
+      const result = await fetchRelationships(token);
+      setRelationships(result.relationships);
+    } catch { /* swallow */ }
   }
 
   async function refreshSchedules() {
@@ -1214,6 +1245,9 @@ export function useMissionControl() {
     testGitHubConnection: verifyGitHubConnection,
     loadGitHubRepos,
     refreshRuns,
+    silentRefreshRuns,
+    silentRefreshAgents,
+    silentRefreshRelationships,
     refreshSchedules,
     createSchedule: createScheduleRecord,
     updateSchedule: saveScheduleRecord,

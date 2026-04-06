@@ -13,6 +13,7 @@ export function registerRunRoutes(app: Express) {
         issueId: typeof req.query.issue_id === "string" ? req.query.issue_id : undefined,
         status: typeof req.query.status === "string" ? req.query.status : undefined,
         q: typeof req.query.q === "string" ? req.query.q : undefined,
+        parentRunId: typeof req.query.parent_run_id === "string" ? req.query.parent_run_id : undefined,
       }),
     });
   });
@@ -47,8 +48,13 @@ export function registerRunRoutes(app: Express) {
 
   app.delete("/api/runs/:id", (req, res) => {
     const database = getDb();
-    database.prepare("DELETE FROM agent_messages WHERE run_id = ?").run(req.params.id);
-    const result = database.prepare("DELETE FROM runs WHERE id = ?").run(req.params.id);
+    const runId = req.params.id;
+
+    // Detach child runs so they aren't orphaned with a dangling parent_run_id
+    database.prepare("UPDATE runs SET parent_run_id = NULL WHERE parent_run_id = ?").run(runId);
+
+    database.prepare("DELETE FROM agent_messages WHERE run_id = ?").run(runId);
+    const result = database.prepare("DELETE FROM runs WHERE id = ?").run(runId);
     if (result.changes === 0) {
       res.status(404).json({ error: "Run not found." });
       return;

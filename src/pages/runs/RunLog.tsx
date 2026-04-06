@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CpuIcon, ExternalLinkIcon, FilterIcon, GitBranchIcon, GitPullRequestIcon, Trash2Icon, ZapIcon } from "lucide-react";
+import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CpuIcon, ExternalLinkIcon, FilterIcon, GitBranchIcon, GitPullRequestIcon, LayersIcon, Trash2Icon, ZapIcon } from "lucide-react";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
 import { estimateRunUsage, formatMoneyFromUsd, formatTokenCount } from "@/lib/usageEstimates";
@@ -87,14 +87,11 @@ export function RunLog({ mission }: RunLogProps) {
   }, [mission.agents, runs]);
   const hasActiveRuns = mission.runs.some((run) => run.status === "running" || run.status === "planning");
 
+  // Fast poll (3s) while runs are active, slow poll (8s) otherwise so new runs still appear
   useEffect(() => {
-    if (!hasActiveRuns) {
-      return;
-    }
-
     const interval = window.setInterval(() => {
-      void mission.refreshRuns();
-    }, 3_000);
+      void mission.silentRefreshRuns();
+    }, hasActiveRuns ? 3_000 : 8_000);
 
     return () => window.clearInterval(interval);
   }, [hasActiveRuns]);
@@ -245,6 +242,52 @@ export function RunLog({ mission }: RunLogProps) {
                                 <ExternalLinkIcon className="size-3" />
                               </a>
                             ) : null}
+                          </div>
+                        ) : null}
+                        {run.parent_run_id ? (
+                          <div className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+                            <LayersIcon className="size-3 text-[#918f90]" />
+                            <span className="text-[12px] text-[#918f90]">Child step{run.plan_step_id ? `: ${run.plan_step_id}` : ""}</span>
+                            <button
+                              onClick={() => setExpandedId(run.parent_run_id)}
+                              className="text-[12px] text-[#5e4ae3] hover:text-[#c6bfff]"
+                            >
+                              View parent run
+                            </button>
+                          </div>
+                        ) : null}
+                        {run.execution_plan ? (
+                          <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+                            <div className="mb-2 flex items-center gap-2">
+                              <LayersIcon className="size-3 text-[#5e4ae3]" />
+                              <span className="text-[12px] font-medium text-white">Execution Plan</span>
+                              {run.execution_plan.summary ? <span className="text-[11px] text-[#918f90]">— {run.execution_plan.summary}</span> : null}
+                            </div>
+                            <div className="space-y-1">
+                              {run.execution_plan.plan.map((step) => {
+                                const childRun = mission.runs.find((r) => r.parent_run_id === run.id && r.plan_step_id === step.id);
+                                return (
+                                  <div key={step.id} className="flex items-center gap-3 text-[12px]">
+                                    <code className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[11px] text-[#918f90]">{step.id}</code>
+                                    <span className="text-[#c8c4d7]">{step.agent}</span>
+                                    <span className="flex-1 truncate text-[#918f90]">{step.task}</span>
+                                    {childRun ? (
+                                      <button
+                                        onClick={() => setExpandedId(childRun.id)}
+                                        className={cn(
+                                          "rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize",
+                                          STATUS_BADGE[childRun.status] ?? STATUS_BADGE.planning,
+                                        )}
+                                      >
+                                        {childRun.status}
+                                      </button>
+                                    ) : (
+                                      <span className="rounded-full border border-white/[0.06] px-2 py-0.5 text-[10px] text-[#918f90]">pending</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         ) : null}
                         <div className="flex items-start gap-3">
