@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MissionLink } from "@/components/MissionLink";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -43,24 +44,30 @@ export function HelpPage({ mission }: { mission: MissionControlState }) {
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{FAQ}</ReactMarkdown>
         </div>
         <div className="mt-6 flex gap-2">
-          <button
-            onClick={() => mission.setActiveView("docs", { search: "path=getting-started.md" })}
+          <MissionLink
+            view="docs"
+            search="path=getting-started.md"
+            navigate={mission.setActiveView}
             className="rounded-lg border border-white/[0.08] px-4 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
           >
             Getting Started
-          </button>
-          <button
-            onClick={() => mission.setActiveView("docs", { search: "path=issues.md" })}
+          </MissionLink>
+          <MissionLink
+            view="docs"
+            search="path=issues.md"
+            navigate={mission.setActiveView}
             className="rounded-lg border border-white/[0.08] px-4 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
           >
             Issues Docs
-          </button>
-          <button
-            onClick={() => mission.setActiveView("docs", { search: "path=agent-handoff-testing.md" })}
+          </MissionLink>
+          <MissionLink
+            view="docs"
+            search="path=agent-handoff-testing.md"
+            navigate={mission.setActiveView}
             className="rounded-lg border border-white/[0.08] px-4 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
           >
             Handoff Test
-          </button>
+          </MissionLink>
         </div>
       </div>
 

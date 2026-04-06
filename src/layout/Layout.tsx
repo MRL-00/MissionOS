@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { TopNav } from "./TopNav";
-import type { MissionControlState, MissionView } from "@/mission/hooks/useMissionControl";
+import type { MissionControlState } from "@/mission/hooks/useMissionControl";
+import type { MissionView } from "@/mission/navigation";
 
 interface LayoutProps {
   activeView: MissionView;

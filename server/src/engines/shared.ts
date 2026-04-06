@@ -1,5 +1,45 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { EngineTestResult } from "./types.js";
+
+const trackedChildren = new Set<ChildProcess>();
+let shutdownHandlersRegistered = false;
+
+function terminateTrackedChildren(): void {
+  for (const child of trackedChildren) {
+    if (child.exitCode !== null || child.killed) {
+      trackedChildren.delete(child);
+      continue;
+    }
+
+    child.kill("SIGTERM");
+    setTimeout(() => {
+      if (child.exitCode === null && !child.killed) {
+        child.kill("SIGKILL");
+      }
+    }, 3_000);
+  }
+}
+
+function ensureShutdownHandlers(): void {
+  if (shutdownHandlersRegistered) {
+    return;
+  }
+
+  shutdownHandlersRegistered = true;
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.once(signal, terminateTrackedChildren);
+  }
+  process.once("exit", terminateTrackedChildren);
+}
+
+export function trackChildProcess(child: ChildProcess): () => void {
+  ensureShutdownHandlers();
+  trackedChildren.add(child);
+
+  return () => {
+    trackedChildren.delete(child);
+  };
+}
 
 export async function* streamProcess(
   command: string,
@@ -16,6 +56,8 @@ export async function* streamProcess(
     child.stdin.write(options.stdin);
     child.stdin.end();
   }
+
+  const untrackChild = trackChildProcess(child);
 
   const queue: string[] = [];
   const waiters: Array<() => void> = [];
@@ -40,6 +82,7 @@ export async function* streamProcess(
     release();
   });
   child.on("close", (code) => {
+    untrackChild();
     if (code !== 0 && !failure) {
       failure = new Error(`${command} exited with code ${code ?? -1}`);
     }

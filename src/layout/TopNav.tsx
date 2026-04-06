@@ -1,4 +1,5 @@
 import { SearchIcon } from "lucide-react";
+import { MissionLink } from "@/components/MissionLink";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 
 interface TopNavProps {
@@ -43,12 +44,14 @@ export function TopNav({ connectionState, mission }: TopNavProps) {
           />
           <span className="text-[12px] text-[#918f90] capitalize">{connectionState}</span>
         </div>
-        <button
-          onClick={() => mission.setActiveView("settings")}
+        <MissionLink
+          view="settings"
+          navigate={mission.setActiveView}
+          aria-label="Open settings"
           className="flex size-8 items-center justify-center rounded-full bg-gradient-to-br from-[#39147e] to-[#2e1065] text-[14px] font-semibold text-white"
         >
           {mission.user?.avatarEmoji ?? "•"}
-        </button>
+        </MissionLink>
       </div>
     </header>
   );

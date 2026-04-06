@@ -20,6 +20,21 @@ const docsRoot = path.join(repoRoot, "docs");
 
 loadServerEnv();
 getDb();
+getDb()
+  .prepare(
+    `
+    UPDATE runs
+    SET
+      status = 'failed',
+      finished_at = datetime('now'),
+      output = CASE
+        WHEN output IS NULL OR output = '' THEN '[error] Run interrupted by MissionOS server restart.'
+        ELSE output || '\n\n[error] Run interrupted by MissionOS server restart.'
+      END
+    WHERE status IN ('running', 'planning')
+    `,
+  )
+  .run();
 
 const app = express();
 

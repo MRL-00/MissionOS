@@ -11,8 +11,9 @@ import {
   HelpCircleIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import type { MissionView } from "@/mission/hooks/useMissionControl";
+import { MissionLink } from "@/components/MissionLink";
 import { cn } from "@/lib/utils";
+import type { MissionNavigate, MissionView } from "@/mission/navigation";
 
 type NavItem = {
   id: MissionView;
@@ -56,7 +57,7 @@ const RESOURCE_ITEMS: NavItem[] = [
 
 interface SidebarProps {
   activeView: MissionView;
-  onNavigate: (view: MissionView) => void;
+  onNavigate: MissionNavigate;
   showOnboarding: boolean;
   projectLogo?: string | undefined;
 }
@@ -78,9 +79,11 @@ export function Sidebar({ activeView, onNavigate, showOnboarding, projectLogo }:
     const isActive = activeView === item.id;
 
     return (
-      <button
+      <MissionLink
         key={`${item.id}-${item.label}`}
-        onClick={() => onNavigate(item.id)}
+        view={item.id}
+        navigate={onNavigate}
+        aria-current={isActive ? "page" : undefined}
         className={cn(
           "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors",
           isActive
@@ -90,7 +93,7 @@ export function Sidebar({ activeView, onNavigate, showOnboarding, projectLogo }:
       >
         <Icon className="size-4 shrink-0" />
         {item.label}
-      </button>
+      </MissionLink>
     );
   }
 

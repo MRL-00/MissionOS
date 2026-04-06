@@ -23,23 +23,23 @@ export interface ExecutionPlan {
  */
 export function extractPlan(output: string): ExecutionPlan | null {
   // Strategy 1: ```json:plan fenced block
-  const taggedMatch = output.match(/```json:plan\s*\n([\s\S]*?)```/);
-  if (taggedMatch?.[1]) {
-    const parsed = tryParsePlan(taggedMatch[1]);
+  const taggedMatches = [...output.matchAll(/```json:plan\s*\n([\s\S]*?)```/g)];
+  for (let index = taggedMatches.length - 1; index >= 0; index -= 1) {
+    const parsed = tryParsePlan(taggedMatches[index]?.[1] ?? "");
     if (parsed) return parsed;
   }
 
   // Strategy 2: ```json fenced block with plan array
-  const jsonMatch = output.match(/```json\s*\n([\s\S]*?)```/);
-  if (jsonMatch?.[1]) {
-    const parsed = tryParsePlan(jsonMatch[1]);
+  const jsonMatches = [...output.matchAll(/```json\s*\n([\s\S]*?)```/g)];
+  for (let index = jsonMatches.length - 1; index >= 0; index -= 1) {
+    const parsed = tryParsePlan(jsonMatches[index]?.[1] ?? "");
     if (parsed) return parsed;
   }
 
   // Strategy 3: raw JSON object with plan array
-  const rawMatch = output.match(/\{\s*"plan"\s*:\s*\[[\s\S]*?\]\s*(?:,\s*"summary"\s*:\s*"[^"]*"\s*)?\}/);
-  if (rawMatch) {
-    const parsed = tryParsePlan(rawMatch[0]);
+  const rawMatches = [...output.matchAll(/\{\s*"plan"\s*:\s*\[[\s\S]*?\]\s*(?:,\s*"summary"\s*:\s*"[^"]*"\s*)?\}/g)];
+  for (let index = rawMatches.length - 1; index >= 0; index -= 1) {
+    const parsed = tryParsePlan(rawMatches[index]?.[0] ?? "");
     if (parsed) return parsed;
   }
 

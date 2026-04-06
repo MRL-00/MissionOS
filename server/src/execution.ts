@@ -117,12 +117,66 @@ function hasCodexCollabSignal(text: string): boolean {
   return /\bcollab:\s*SpawnAgent\b/i.test(text);
 }
 
+export function stripPromptEcho(output: string, prompts: Array<string | undefined>): string {
+  for (const prompt of prompts) {
+    const candidate = prompt?.trim();
+    if (!candidate) {
+      continue;
+    }
+
+    const index = output.lastIndexOf(candidate);
+    if (index !== -1) {
+      return output.slice(index + candidate.length).trimStart();
+    }
+  }
+
+  return output;
+}
+
+function findExistingChildRun(input: {
+  parentRunId: string;
+  agentId: string;
+  prompt: string;
+  planStepId?: string | null;
+}): { id: string; status: string } | null {
+  const db = getDb();
+
+  if (input.planStepId) {
+    return (
+      db
+        .prepare(
+          `
+          SELECT id, status
+          FROM runs
+          WHERE parent_run_id = ? AND plan_step_id = ?
+          ORDER BY started_at DESC
+          LIMIT 1
+          `,
+        )
+        .get(input.parentRunId, input.planStepId) as { id: string; status: string } | undefined
+    ) ?? null;
+  }
+
+  return (
+    db
+      .prepare(
+        `
+        SELECT id, status
+        FROM runs
+        WHERE parent_run_id = ? AND agent_id = ? AND prompt = ?
+        ORDER BY started_at DESC
+        LIMIT 1
+        `,
+      )
+      .get(input.parentRunId, input.agentId, input.prompt) as { id: string; status: string } | undefined
+  ) ?? null;
+}
+
 async function processAgentDirectives(
   runId: string,
   fromAgentId: string,
   missionId: string | null,
   output: string,
-  prompt?: string,
   rawPrompt?: string,
 ) {
   const db = getDb();
@@ -134,19 +188,9 @@ async function processAgentDirectives(
   const originRun = db.prepare("SELECT issue_id FROM runs WHERE id = ?").get(runId) as { issue_id: string | null } | undefined;
   const issueId = originRun?.issue_id ?? null;
 
-  // Strip the echoed prompt from the output so that example @agent: directives
-  // inside SOUL.md / AGENTS.md are not treated as real handoff commands.
-  let agentOutput = output;
-  if (prompt) {
-    const promptIndex = agentOutput.indexOf(prompt);
-    if (promptIndex !== -1) {
-      agentOutput = agentOutput.slice(promptIndex + prompt.length);
-    }
-  }
-
   const directivePattern = /@agent:([^:]+):\s*([^\n]+)/gu;
   let delegatedCount = 0;
-  for (const match of agentOutput.matchAll(directivePattern)) {
+  for (const match of output.matchAll(directivePattern)) {
     const agentName = match[1]?.trim();
     const message = match[2]?.trim();
     if (!agentName || !message) {
@@ -160,6 +204,17 @@ async function processAgentDirectives(
       continue;
     }
 
+    const delegatedPrompt = `Mission handoff from ${String(fromAgent.name)}: ${message}`;
+    const existingRun = findExistingChildRun({
+      parentRunId: runId,
+      agentId: String(target.id),
+      prompt: delegatedPrompt,
+    });
+    if (existingRun) {
+      delegatedCount += 1;
+      continue;
+    }
+
     db.prepare(
       `
       INSERT INTO agent_messages (id, from_agent_id, to_agent_id, mission_id, run_id, message)
@@ -170,9 +225,10 @@ async function processAgentDirectives(
     if (missionId) {
       await createRunRecord({
         agentId: String(target.id),
-        prompt: `Mission handoff from ${String(fromAgent.name)}: ${message}`,
+        prompt: delegatedPrompt,
         missionId,
         issueId,
+        parentRunId: runId,
       });
     }
     delegatedCount += 1;
@@ -196,6 +252,17 @@ async function processAgentDirectives(
         missionId,
         rawPrompt,
       });
+      const delegatedPrompt = `Mission handoff from ${String(fromAgent.name)}:\n${fallbackMessage}`;
+      const existingRun = findExistingChildRun({
+        parentRunId: runId,
+        agentId: String(fallbackTarget.id),
+        prompt: delegatedPrompt,
+      });
+      if (existingRun) {
+        delegatedCount += 1;
+        return delegatedCount;
+      }
+
       db.prepare(
         `
         INSERT INTO agent_messages (id, from_agent_id, to_agent_id, mission_id, run_id, message)
@@ -205,9 +272,10 @@ async function processAgentDirectives(
 
       await createRunRecord({
         agentId: String(fallbackTarget.id),
-        prompt: `Mission handoff from ${String(fromAgent.name)}:\n${fallbackMessage}`,
+        prompt: delegatedPrompt,
         missionId,
         issueId,
+        parentRunId: runId,
       });
       delegatedCount += 1;
     }
@@ -315,22 +383,32 @@ async function processPlan(
     const handoffMessage = fromAgent
       ? buildDelegationMessage(fromAgent, step.agent, { issueId, missionId, rawPrompt: step.task })
       : step.task;
+    const delegatedPrompt = `Mission handoff from orchestrator:\n${handoffMessage}`;
+    const existingRun = findExistingChildRun({
+      parentRunId,
+      agentId: String(target.id),
+      prompt: delegatedPrompt,
+      planStepId: step.id,
+    });
+    if (existingRun) {
+      spawnedCount += 1;
+      continue;
+    }
 
+    await createRunRecord({
+      agentId: String(target.id),
+      prompt: delegatedPrompt,
+      missionId,
+      issueId,
+      parentRunId,
+      planStepId: step.id,
+    });
     db.prepare(
       `
       INSERT INTO agent_messages (id, from_agent_id, to_agent_id, mission_id, run_id, message)
       VALUES (?, ?, ?, ?, ?, ?)
       `,
     ).run(randomUUID(), fromAgentId, String(target.id), missionId, parentRunId, step.task);
-
-    await createRunRecord({
-      agentId: String(target.id),
-      prompt: `Mission handoff from orchestrator:\n${handoffMessage}`,
-      missionId,
-      issueId,
-      parentRunId,
-      planStepId: step.id,
-    });
     spawnedCount += 1;
   }
 
@@ -389,22 +467,31 @@ async function checkPlanProgress(parentRunId: string): Promise<void> {
     const handoffMessage = fromAgent
       ? buildDelegationMessage(fromAgent, step.agent, { issueId, missionId, rawPrompt: step.task })
       : step.task;
+    const delegatedPrompt = `Mission handoff from orchestrator:\n${handoffMessage}`;
+    const existingRun = findExistingChildRun({
+      parentRunId,
+      agentId: String(target.id),
+      prompt: delegatedPrompt,
+      planStepId: step.id,
+    });
+    if (existingRun) {
+      continue;
+    }
 
+    await createRunRecord({
+      agentId: String(target.id),
+      prompt: delegatedPrompt,
+      missionId,
+      issueId,
+      parentRunId,
+      planStepId: step.id,
+    });
     db.prepare(
       `
       INSERT INTO agent_messages (id, from_agent_id, to_agent_id, mission_id, run_id, message)
       VALUES (?, ?, ?, ?, ?, ?)
       `,
     ).run(randomUUID(), fromAgentId, String(target.id), missionId, parentRunId, step.task);
-
-    await createRunRecord({
-      agentId: String(target.id),
-      prompt: `Mission handoff from orchestrator:\n${handoffMessage}`,
-      missionId,
-      issueId,
-      parentRunId,
-      planStepId: step.id,
-    });
   }
 
   // Check if all plan steps are terminal
@@ -457,6 +544,7 @@ async function executeRun(runId: string) {
 
   try {
     const fullPrompt = buildRunPrompt(agentRow, String(row.prompt ?? ""));
+    const rawPrompt = String(row.prompt ?? "");
     for await (const chunk of adapter.run({
       prompt: fullPrompt,
       connectionConfig,
@@ -488,8 +576,9 @@ async function executeRun(runId: string) {
     publishRunEvent(runId, { type: "complete", output, duration_ms: Date.now() - startedAt });
 
     // Plan-based delegation for orchestrator agents
+    const parsedOutput = stripPromptEcho(output, [fullPrompt, rawPrompt]);
     if (isDelegationOnlyAgent(agentRow)) {
-      const plan = extractPlan(output);
+      const plan = extractPlan(parsedOutput);
       if (plan) {
         const agentNames = (db.prepare("SELECT name FROM agents WHERE active = 1").all() as Array<{ name: string }>).map((a) => a.name);
         const validation = validatePlan(plan, agentNames);
@@ -513,9 +602,8 @@ async function executeRun(runId: string) {
         runId,
         String(agentRow.id),
         (row.mission_id as string | null) ?? null,
-        output,
-        fullPrompt,
-        String(row.prompt ?? ""),
+        parsedOutput,
+        rawPrompt,
       );
     }
 

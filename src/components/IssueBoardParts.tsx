@@ -53,10 +53,14 @@ export interface RepoOption {
 export const ISSUE_COLUMNS = [
   { id: "backlog", label: "Backlog" },
   { id: "todo", label: "Todo" },
-  { id: "in progress", label: "In Progress" },
-  { id: "in review", label: "In Review" },
+  { id: "in_progress", label: "In Progress" },
+  { id: "in_review", label: "In Review" },
   { id: "done", label: "Done" },
 ];
+
+const STATUS_LABELS: Record<string, string> = Object.fromEntries(
+  ISSUE_COLUMNS.map((column) => [column.id, column.label]),
+);
 
 const PRIORITY_INDICATORS: Record<string, string> = {
   urgent: "border-l-red-500",
@@ -76,13 +80,17 @@ const PRIORITY_BADGE: Record<string, string> = {
 const STATUS_BADGE: Record<string, string> = {
   backlog: "bg-white/[0.06] text-[#918f90] border-white/[0.08]",
   todo: "bg-white/[0.08] text-[#c8c4d7] border-white/[0.1]",
-  "in progress": "bg-blue-500/15 text-blue-400 border-blue-500/20",
-  "in review": "bg-amber-500/15 text-amber-400 border-amber-500/20",
+  in_progress: "bg-blue-500/15 text-blue-400 border-blue-500/20",
+  in_review: "bg-amber-500/15 text-amber-400 border-amber-500/20",
   done: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
 };
 
 function normalizeSelectValue(value: string | null) {
   return value ?? "";
+}
+
+function formatStatusLabel(status: string) {
+  return STATUS_LABELS[status] ?? status.replaceAll("_", " ");
 }
 
 export function IssueFiltersBar({
@@ -124,7 +132,13 @@ export function IssueFiltersBar({
         placeholder="Search issues..."
         className="h-9 w-64 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 text-[13px] text-white outline-none placeholder:text-[#918f90]"
       />
-      <Filter value={statusFilter} onChange={onStatusFilterChange} options={["", ...ISSUE_COLUMNS.map((entry) => entry.id)]} label="Status" />
+      <Filter
+        value={statusFilter}
+        onChange={onStatusFilterChange}
+        options={["", ...ISSUE_COLUMNS.map((entry) => entry.id)]}
+        label="Status"
+        lookup={STATUS_LABELS}
+      />
       <Filter value={priorityFilter} onChange={onPriorityFilterChange} options={["", "urgent", "high", "medium", "low"]} label="Priority" />
       <Filter
         value={assigneeFilter}
@@ -217,7 +231,13 @@ export function IssueCreateModal({
         <div className="space-y-4 px-5 py-5">
           <Field label="Title" value={draft.title} onChange={(value) => setDraft({ ...draft, title: value })} />
           <div className="grid grid-cols-2 gap-3">
-            <FormSelect label="Status" value={draft.status} onChange={(value) => setDraft({ ...draft, status: value })} options={ISSUE_COLUMNS.map((entry) => entry.id)} />
+            <FormSelect
+              label="Status"
+              value={draft.status}
+              onChange={(value) => setDraft({ ...draft, status: value })}
+              options={ISSUE_COLUMNS.map((entry) => entry.id)}
+              lookup={STATUS_LABELS}
+            />
             <FormSelect label="Priority" value={draft.priority} onChange={(value) => setDraft({ ...draft, priority: value })} options={["urgent", "high", "medium", "low"]} />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -382,7 +402,13 @@ export function IssueEditModal({
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <FormSelect label="Status" value={editDraft.status} onChange={(value) => setEditDraft({ ...editDraft, status: value })} options={ISSUE_COLUMNS.map((entry) => entry.id)} />
+              <FormSelect
+                label="Status"
+                value={editDraft.status}
+                onChange={(value) => setEditDraft({ ...editDraft, status: value })}
+                options={ISSUE_COLUMNS.map((entry) => entry.id)}
+                lookup={STATUS_LABELS}
+              />
               <FormSelect label="Priority" value={editDraft.priority} onChange={(value) => setEditDraft({ ...editDraft, priority: value })} options={["urgent", "high", "medium", "low"]} />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -1094,7 +1120,7 @@ function PriorityBadge({ priority }: { priority: string }) {
 function StatusBadge({ status }: { status: string }) {
   return (
     <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize", STATUS_BADGE[status] ?? STATUS_BADGE.backlog)}>
-      {status}
+      {formatStatusLabel(status)}
     </span>
   );
 }

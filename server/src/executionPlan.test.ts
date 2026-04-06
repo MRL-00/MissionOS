@@ -15,6 +15,25 @@ test("extracts plan from ```json:plan fenced block", () => {
   assert.equal(plan!.summary, "Quick fix");
 });
 
+test("extracts the last valid json:plan block when an earlier example block is present", () => {
+  const output = [
+    "Prompt example:",
+    "```json:plan",
+    '{"plan":[{"id":"step-1","agent":"AgentName","task":"Example task"}],"summary":"Example"}',
+    "```",
+    "",
+    "Actual answer:",
+    "```json:plan",
+    '{"plan":[{"id":"impl","agent":"Claudy","task":"Real task"}],"summary":"Real"}',
+    "```",
+  ].join("\n");
+
+  const plan = extractPlan(output);
+  assert.ok(plan);
+  assert.equal(plan!.plan[0]!.agent, "Claudy");
+  assert.equal(plan!.summary, "Real");
+});
+
 test("extracts plan from generic ```json fenced block", () => {
   const output = `\`\`\`json\n{"plan":[{"id":"a","agent":"Claudy","task":"Do stuff"}]}\n\`\`\``;
   const plan = extractPlan(output);

@@ -77,64 +77,9 @@ import {
   updateSchedule,
   updateProfile,
 } from "../api";
-
-export type MissionView =
-  | "setup"
-  | "login"
-  | "project-setup"
-  | "missions"
-  | "agents"
-  | "orgchart"
-  | "issues"
-  | "runs"
-  | "schedules"
-  | "onboarding"
-  | "settings"
-  | "docs"
-  | "help"
-  | "search";
+import { MAIN_VIEWS, PATH_VIEWS, VIEW_PATHS, isMissionView, type MissionView } from "../navigation";
 
 type ConnectionState = "connecting" | "connected" | "offline";
-
-const VIEW_PATHS: Record<MissionView, string> = {
-  setup: "/setup",
-  login: "/login",
-  "project-setup": "/setup/project",
-  missions: "/",
-  agents: "/agents",
-  orgchart: "/org-chart",
-  issues: "/issues",
-  runs: "/runs",
-  schedules: "/schedules",
-  onboarding: "/onboarding",
-  settings: "/settings",
-  docs: "/docs",
-  help: "/help",
-  search: "/search",
-};
-
-const PATH_VIEWS = new Map<string, MissionView>(Object.entries(VIEW_PATHS).map(([view, path]) => [path, view as MissionView]));
-
-const MAIN_VIEWS: MissionView[] = ["missions", "agents", "orgchart", "issues", "runs", "schedules", "settings", "docs", "help", "search"];
-
-function isMissionView(value: string): value is MissionView {
-  return [
-    "setup",
-    "login",
-    "project-setup",
-    "missions",
-    "agents",
-    "orgchart",
-    "issues",
-    "runs",
-    "schedules",
-    "onboarding",
-    "settings",
-    "docs",
-    "help",
-    "search",
-  ].includes(value);
-}
 
 function initialView(): MissionView {
   if (typeof window === "undefined") {
