@@ -225,6 +225,39 @@
   animation: agent-glow 3s ease-in-out infinite;
 }
 
+/* ── Org-chart connection lines (ConnectionLines.tsx) ── */
+.org-line {
+  fill: none;
+  stroke: #2a3040;
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke 300ms ease, opacity 300ms ease;
+}
+
+.org-line--active {
+  stroke: #5ce0b8;
+  stroke-dasharray: 8 4;
+  animation: edge-flow 0.7s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(25, 230, 167, 0.6));
+}
+
+.org-line--meeting {
+  stroke: #72a8ff;
+  filter: drop-shadow(0 0 4px rgba(114, 168, 255, 0.35));
+  animation: org-line-pulse 2s ease-in-out infinite;
+}
+
+.org-line--disconnected {
+  stroke: #2a3040;
+  stroke-dasharray: 4 6;
+  opacity: 0.35;
+}
+
+@keyframes org-line-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
 .org-edge-flow {
   fill: none;
   stroke-linecap: round;
