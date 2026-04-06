@@ -13,6 +13,7 @@ import {
   PlayIcon,
   PlusIcon,
   RefreshCwIcon,
+  ReplyIcon,
   ShareIcon,
   Trash2Icon,
   XIcon,
@@ -293,6 +294,13 @@ export function IssueEditModal({
   getInheritedRepo,
   confirmDelete,
   setConfirmDelete,
+  comments,
+  newComment,
+  onNewCommentChange,
+  onPostComment,
+  onDeleteComment,
+  onReplyComment,
+  timeZone,
   onClose,
   onDelete,
   onSave,
@@ -310,6 +318,13 @@ export function IssueEditModal({
   getInheritedRepo: (missionId: string | null) => string | null;
   confirmDelete: boolean;
   setConfirmDelete: Dispatch<SetStateAction<boolean>>;
+  comments: IssueCommentRecord[];
+  newComment: string;
+  onNewCommentChange: (value: string) => void;
+  onPostComment: () => Promise<void>;
+  onDeleteComment: (commentId: string) => Promise<void>;
+  onReplyComment: (comment: IssueCommentRecord) => void;
+  timeZone?: string | undefined;
   onClose: () => void;
   onDelete: () => Promise<void>;
   onSave: () => Promise<void>;
@@ -422,6 +437,56 @@ export function IssueEditModal({
                     <ExternalLinkIcon className="size-3" />
                   </a>
                 ) : null}
+              </div>
+            ) : null}
+
+            {editFullScreen ? (
+              <div className="mt-6 border-t border-white/[0.06] pt-5">
+                <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">
+                  Comments {comments.length > 0 ? `(${comments.length})` : ""}
+                </div>
+                <div className="space-y-2">
+                  {comments.map((comment) => (
+                    <div key={comment.id} className="group rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] text-[#918f90]">
+                          {comment.author_emoji} {comment.author_name || "Unknown"} • {formatDateTime(comment.created_at, timeZone)}
+                        </div>
+                        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                          <button
+                            onClick={() => onReplyComment(comment)}
+                            className="rounded p-1 text-[#918f90] hover:bg-white/[0.06] hover:text-white"
+                            title="Reply"
+                          >
+                            <ReplyIcon className="size-3" />
+                          </button>
+                          <button
+                            onClick={() => void onDeleteComment(comment.id)}
+                            className="rounded p-1 text-[#918f90] hover:bg-red-500/10 hover:text-red-400"
+                            title="Delete comment"
+                          >
+                            <Trash2Icon className="size-3" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-1 whitespace-pre-wrap text-[12px] text-[#c8c4d7]">{comment.body}</div>
+                    </div>
+                  ))}
+                </div>
+                <textarea
+                  value={newComment}
+                  onChange={(event) => onNewCommentChange(event.target.value)}
+                  placeholder="Add a comment..."
+                  className="mt-3 h-20 w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[13px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
+                />
+                <button
+                  onClick={() => void onPostComment()}
+                  disabled={!newComment.trim()}
+                  className="mt-2 flex items-center gap-2 rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-4 py-2 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  <MessageSquareIcon className="size-3.5" />
+                  Post Comment
+                </button>
               </div>
             ) : null}
           </div>
@@ -641,6 +706,8 @@ export function IssueDetailsPanel({
   onEditIssue,
   onClose,
   onPostComment,
+  onDeleteComment,
+  onReplyComment,
   onToggleStatus,
   issuePrefix,
   agents,
@@ -656,6 +723,8 @@ export function IssueDetailsPanel({
   onEditIssue: (issue: IssueRecord) => void;
   onClose: () => void;
   onPostComment: () => Promise<void>;
+  onDeleteComment: (commentId: string) => Promise<void>;
+  onReplyComment: (comment: IssueCommentRecord) => void;
   onToggleStatus: () => void;
   issuePrefix?: string | undefined;
   agents?: AgentRecord[];
@@ -759,9 +828,27 @@ export function IssueDetailsPanel({
         <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Comments</div>
         <div className="space-y-2">
           {comments.map((comment) => (
-            <div key={comment.id} className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
-              <div className="text-[11px] text-[#918f90]">
-                {comment.author_emoji} {comment.author_name || "Unknown"} • {formatDateTime(comment.created_at, timeZone)}
+            <div key={comment.id} className="group rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] text-[#918f90]">
+                  {comment.author_emoji} {comment.author_name || "Unknown"} • {formatDateTime(comment.created_at, timeZone)}
+                </div>
+                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button
+                    onClick={() => onReplyComment(comment)}
+                    className="rounded p-0.5 text-[#918f90] hover:bg-white/[0.06] hover:text-white"
+                    title="Reply"
+                  >
+                    <ReplyIcon className="size-3" />
+                  </button>
+                  <button
+                    onClick={() => void onDeleteComment(comment.id)}
+                    className="rounded p-0.5 text-[#918f90] hover:bg-red-500/10 hover:text-red-400"
+                    title="Delete comment"
+                  >
+                    <Trash2Icon className="size-3" />
+                  </button>
+                </div>
               </div>
               <div className="mt-1 whitespace-pre-wrap text-[12px] text-[#c8c4d7]">{comment.body}</div>
             </div>
@@ -814,6 +901,7 @@ function IssueRunButton({
       <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Actions</div>
       {assignedAgent ? (
         <button
+          type="button"
           disabled={isRunning}
           onClick={() => onRun(assignedAgent.id)}
           className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
@@ -834,6 +922,7 @@ function IssueRunButton({
             ))}
           </select>
           <button
+            type="button"
             disabled={isRunning || !pickedAgentId}
             onClick={() => pickedAgentId && onRun(pickedAgentId)}
             className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
@@ -866,6 +955,7 @@ function IssueRunsSection({ runs }: { runs: RunRecord[] }) {
         return (
           <div key={run.id} className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
             <button
+              type="button"
               onClick={() => setExpandedId(isExpanded ? null : run.id)}
               className="flex w-full items-center justify-between text-left"
             >

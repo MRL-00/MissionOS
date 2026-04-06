@@ -81,12 +81,6 @@ export async function listGitHubRepos(query?: string): Promise<GitHubRepo[]> {
   return data.map(toGitHubRepo);
 }
 
-export async function getGitHubRepo(owner: string, repo: string): Promise<GitHubRepo> {
-  const octokit = createOctokit();
-  const { data } = await octokit.repos.get({ owner, repo });
-  return toGitHubRepo(data);
-}
-
 export async function listGitHubIssues(owner: string, repo: string): Promise<GitHubIssue[]> {
   const octokit = createOctokit();
   const { data } = await octokit.issues.listForRepo({
@@ -110,34 +104,6 @@ export async function listGitHubIssues(owner: string, repo: string): Promise<Git
         .map((label) => (typeof label === "string" ? label : label.name ?? ""))
         .filter(Boolean),
     }));
-}
-
-export async function createGitHubIssue(
-  owner: string,
-  repo: string,
-  title: string,
-  body?: string,
-): Promise<GitHubIssue> {
-  const octokit = createOctokit();
-  const { data } = await octokit.issues.create({
-    owner,
-    repo,
-    title,
-    ...(body ? { body } : {}),
-  });
-  return {
-    id: data.id,
-    number: data.number,
-    title: data.title,
-    body: data.body ?? null,
-    state: data.state ?? "open",
-    html_url: data.html_url,
-    created_at: data.created_at,
-    updated_at: data.updated_at,
-    labels: data.labels
-      .map((label) => (typeof label === "string" ? label : label.name ?? ""))
-      .filter(Boolean),
-  };
 }
 
 export async function createGitHubPR(

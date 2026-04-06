@@ -125,7 +125,8 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
             await mission.streamSelectedRun(run.id, (updatedRun) => {
               if (updatedRun.status !== "running") {
                 setRunningIssueRunId(null);
-                void mission.refreshWorkspace();
+                void mission.refreshIssues();
+                void mission.refreshRuns();
                 void mission.loadIssueComments(selectedIssue.id);
                 void mission.loadIssueRuns(selectedIssue.id);
               }
@@ -198,6 +199,15 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
     }
   }, [closeEditModal, editDraft, editingIssue, mission]);
 
+  // Also load comments when editing an issue
+  useEffect(() => {
+    if (editingIssue) {
+      void mission.loadIssueComments(editingIssue.id);
+    }
+  }, [editingIssue?.id]);
+
+  const [editComment, setEditComment] = useState("");
+
   const handlePostComment = useCallback(async () => {
     if (!selectedIssue || !newComment.trim()) {
       return;
@@ -208,6 +218,34 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
       setNewComment("");
     }
   }, [mission, newComment, selectedIssue]);
+
+  const handlePostEditComment = useCallback(async () => {
+    if (!editingIssue || !editComment.trim()) {
+      return;
+    }
+
+    const ok = await mission.addIssueComment(editingIssue.id, { body: editComment });
+    if (ok) {
+      setEditComment("");
+    }
+  }, [mission, editComment, editingIssue]);
+
+  const handleDeleteComment = useCallback(async (commentId: string) => {
+    const issueId = selectedIssue?.id ?? editingIssue?.id;
+    if (!issueId) {
+      return;
+    }
+    await mission.removeIssueComment(issueId, commentId);
+  }, [mission, selectedIssue, editingIssue]);
+
+  const handleReplyComment = useCallback((comment: import("@/mission/appTypes").IssueCommentRecord) => {
+    const prefix = `@${comment.author_name || "Unknown"} `;
+    if (editingIssue) {
+      setEditComment(prefix);
+    } else {
+      setNewComment(prefix);
+    }
+  }, [editingIssue]);
 
   const handleToggleIssueStatus = useCallback(() => {
     if (!selectedIssue) {
@@ -270,6 +308,13 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
           getInheritedRepo={getInheritedRepo}
           confirmDelete={confirmDelete}
           setConfirmDelete={setConfirmDelete}
+          comments={mission.selectedIssueComments}
+          newComment={editComment}
+          onNewCommentChange={setEditComment}
+          onPostComment={handlePostEditComment}
+          onDeleteComment={handleDeleteComment}
+          onReplyComment={handleReplyComment}
+          timeZone={mission.settingsMap.user_timezone}
           onClose={closeEditModal}
           onDelete={handleDeleteIssue}
           onSave={handleSaveEditIssue}
@@ -302,6 +347,8 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
         onEditIssue={openEditModal}
         onClose={() => setSelectedIssueId(null)}
         onPostComment={handlePostComment}
+        onDeleteComment={handleDeleteComment}
+        onReplyComment={handleReplyComment}
         onToggleStatus={handleToggleIssueStatus}
         issuePrefix={mission.settingsMap.issue_prefix}
         agents={mission.agents}

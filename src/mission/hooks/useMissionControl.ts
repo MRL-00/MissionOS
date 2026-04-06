@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type {
   AgentMessageRecord,
   AgentRecord,
@@ -32,6 +32,7 @@ import {
   deleteSchedule,
   deleteAgent,
   deleteIssue,
+  deleteIssueComment,
   deleteMission,
   deleteRelationship,
   fetchAgentMessages,
@@ -245,6 +246,23 @@ export function useMissionControl() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const hydratingRef = useRef(false);
+
+  function mergeRunIntoCollection(collection: RunRecord[], nextRun: RunRecord) {
+    const index = collection.findIndex((run) => run.id === nextRun.id);
+    if (index === -1) {
+      return collection;
+    }
+    const next = [...collection];
+    next[index] = { ...next[index], ...nextRun };
+    return next;
+  }
+
+  function syncRunState(nextRun: RunRecord) {
+    setRuns((current) => mergeRunIntoCollection(current, nextRun));
+    setIssueRuns((current) => mergeRunIntoCollection(current, nextRun));
+    setSelectedRun((current) => (current?.id === nextRun.id ? { ...current, ...nextRun } : current));
+  }
 
   const setActiveView = (view: MissionView, options?: { search?: string }) => {
     setActiveViewRaw(view);
@@ -330,6 +348,7 @@ export function useMissionControl() {
   });
 
   const hydrate = useEffectEvent(async () => {
+    hydratingRef.current = true;
     setLoading(true);
     setConnectionState("connecting");
     try {
@@ -363,6 +382,7 @@ export function useMissionControl() {
       setError(reason instanceof Error ? reason.message : "Failed to load MissionOS.");
       setConnectionState("offline");
     } finally {
+      hydratingRef.current = false;
       setLoading(false);
     }
   });
@@ -384,7 +404,13 @@ export function useMissionControl() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  // Skip reactive guard while hydrate() is in-flight — hydrate calls applyGuard
+  // explicitly after all data is loaded.  Without this check the effect races with
+  // hydrate's async fetches (e.g. bootstrap arrives before user → premature redirect).
   useEffect(() => {
+    if (hydratingRef.current) {
+      return;
+    }
     applyGuard(bootstrap, token, user);
   }, [activeView, applyGuard, bootstrap, token, user]);
 
@@ -725,6 +751,18 @@ export function useMissionControl() {
     return true;
   }
 
+  async function removeIssueCommentRecord(issueId: string, commentId: string) {
+    if (!token) {
+      return false;
+    }
+    const result = await runBusyAction(`issue:${issueId}:comment:delete`, () => deleteIssueComment(token, issueId, commentId));
+    if (!result) {
+      return false;
+    }
+    await loadIssueComments(issueId);
+    return true;
+  }
+
   async function loadIssueRuns(issueId: string) {
     if (!token) {
       return [];
@@ -895,6 +933,7 @@ export function useMissionControl() {
       return null;
     }
     setSelectedRun(result.run);
+    syncRunState(result.run);
     return result.run;
   }
 
@@ -929,6 +968,7 @@ export function useMissionControl() {
         return nextRun;
       });
       if (nextRun) {
+        syncRunState(nextRun);
         queueMicrotask(() => onUpdate?.(nextRun as RunRecord));
       }
     });
@@ -1166,6 +1206,7 @@ export function useMissionControl() {
     removeIssue: removeIssueRecord,
     loadIssueComments,
     addIssueComment: addIssueCommentRecord,
+    removeIssueComment: removeIssueCommentRecord,
     loadIssueRuns,
     runIssue,
     syncLinear,

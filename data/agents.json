@@ -1,0 +1,225 @@
+{
+  "agents": [
+    {
+      "id": "Atlas",
+      "name": "Atlas",
+      "role": "Full stack developer",
+      "emoji": "🌍",
+      "type": "resident",
+      "appearance": {
+        "height": 1.08,
+        "headShape": "square",
+        "skinColor": "#d297d8",
+        "hairStyle": "buzz",
+        "hairColor": "#4b2654",
+        "bodyColor": "#653bba",
+        "pantsColor": "#376237",
+        "accessories": [
+          "beard"
+        ]
+      },
+      "backendLink": {
+        "provider": "hermes",
+        "connectorId": "atlas",
+        "connected": true,
+        "agentId": "atlas",
+        "connectedAt": 1775034820680
+      },
+      "parentAgentId": "Scout",
+      "deskIndex": 2
+    },
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "role": "Senior engineer",
+      "emoji": "🛠",
+      "type": "resident",
+      "appearance": {
+        "height": 1.01,
+        "headShape": "round",
+        "skinColor": "#9799d8",
+        "hairStyle": "long",
+        "hairColor": "#262c54",
+        "bodyColor": "#3b87ba",
+        "pantsColor": "#5f6237",
+        "accessories": [
+          "beard"
+        ]
+      },
+      "backendLink": {
+        "provider": "hermes",
+        "connectorId": "hermes",
+        "connected": true,
+        "agentId": "atlas",
+        "connectedAt": 1775337957443
+      },
+      "parentAgentId": "scout",
+      "deskIndex": 4
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "role": "Writing specialist",
+      "emoji": "✍️",
+      "type": "resident",
+      "appearance": {
+        "height": 1.07,
+        "headShape": "square",
+        "skinColor": "#9ad897",
+        "hairStyle": "mohawk",
+        "hairColor": "#2d5426",
+        "bodyColor": "#89ba3b",
+        "pantsColor": "#623760",
+        "accessories": [
+          "glasses"
+        ]
+      },
+      "backendLink": {
+        "provider": "claude",
+        "connectorId": "claude-code",
+        "connected": true,
+        "agentId": "claude-code",
+        "connectedAt": 1775337957449
+      },
+      "parentAgentId": "Hermes",
+      "deskIndex": 7
+    },
+    {
+      "id": "Hermes",
+      "name": "Hermes",
+      "role": "Orchestrator",
+      "emoji": "🥃",
+      "type": "resident",
+      "appearance": {
+        "height": 0.98,
+        "headShape": "round",
+        "skinColor": "#bcd897",
+        "hairStyle": "slicked",
+        "hairColor": "#465426",
+        "bodyColor": "#baa73b",
+        "pantsColor": "#4d3762",
+        "accessories": [
+          "glasses"
+        ]
+      },
+      "backendLink": {
+        "provider": "hermes",
+        "connectorId": "hermes",
+        "connected": true,
+        "agentId": "hermes",
+        "connectedAt": 1775337957446
+      },
+      "deskIndex": 1
+    },
+    {
+      "id": "Orbit",
+      "name": "Orbit",
+      "role": "iOS Developer",
+      "emoji": "🌍",
+      "type": "resident",
+      "appearance": {
+        "height": 0.96,
+        "headShape": "square",
+        "skinColor": "#97c0d8",
+        "hairStyle": "buzz",
+        "hairColor": "#264954",
+        "bodyColor": "#3bba9e",
+        "pantsColor": "#624a37",
+        "accessories": [
+          "beard"
+        ]
+      },
+      "backendLink": {
+        "provider": "hermes",
+        "connectorId": "orbit",
+        "connected": true,
+        "agentId": "orbit",
+        "connectedAt": 1775034806638
+      },
+      "parentAgentId": "Scout",
+      "deskIndex": 3
+    },
+    {
+      "id": "orbit",
+      "name": "Orbit",
+      "role": "Specialist engineer",
+      "emoji": "📱",
+      "type": "resident",
+      "appearance": {
+        "height": 0.99,
+        "headShape": "square",
+        "skinColor": "#d697d8",
+        "hairStyle": "long",
+        "hairColor": "#4d2654",
+        "bodyColor": "#6c3bba",
+        "pantsColor": "#376239",
+        "accessories": [
+          "hat"
+        ]
+      },
+      "backendLink": {
+        "provider": "hermes",
+        "connectorId": "hermes",
+        "connected": true,
+        "agentId": "orbit",
+        "connectedAt": 1775337957447
+      },
+      "parentAgentId": "scout",
+      "deskIndex": 5
+    },
+    {
+      "id": "Scout",
+      "name": "Scout",
+      "role": "Lead Engineer",
+      "emoji": "👨🏼‍💻",
+      "type": "resident",
+      "appearance": {
+        "height": 1,
+        "headShape": "round",
+        "skinColor": "#97a9d8",
+        "hairStyle": "slicked",
+        "hairColor": "#263854",
+        "bodyColor": "#3ba7ba",
+        "pantsColor": "#625a37",
+        "accessories": [
+          "tie"
+        ]
+      },
+      "backendLink": {
+        "provider": "hermes",
+        "connectorId": "scout",
+        "connected": true,
+        "agentId": "scout",
+        "connectedAt": 1775034809761
+      },
+      "parentAgentId": "Hermes",
+      "deskIndex": 0
+    },
+    {
+      "id": "scout",
+      "name": "Scout",
+      "role": "Lead engineer",
+      "emoji": "🧭",
+      "type": "resident",
+      "appearance": {
+        "height": 0.98,
+        "headShape": "square",
+        "skinColor": "#a0d897",
+        "hairStyle": "short",
+        "hairColor": "#325426",
+        "bodyColor": "#96ba3b",
+        "pantsColor": "#603762",
+        "accessories": []
+      },
+      "backendLink": {
+        "provider": "hermes",
+        "connectorId": "hermes",
+        "connected": true,
+        "agentId": "scout",
+        "connectedAt": 1775337957448
+      },
+      "parentAgentId": "Hermes",
+      "deskIndex": 6
+    }
+  ]
+}

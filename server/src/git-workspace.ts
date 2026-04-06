@@ -102,10 +102,6 @@ export async function pushBranch(repoPath: string, branchName: string): Promise<
   await runGit(["push", "-u", "origin", branchName], repoPath, 120_000);
 }
 
-export async function getCurrentBranch(repoPath: string): Promise<string> {
-  return runGit(["rev-parse", "--abbrev-ref", "HEAD"], repoPath);
-}
-
 export function slugify(text: string): string {
   return text
     .toLowerCase()

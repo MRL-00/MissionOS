@@ -4,13 +4,18 @@ import type { EngineTestResult } from "./types.js";
 export async function* streamProcess(
   command: string,
   args: string[],
-  options?: { env?: NodeJS.ProcessEnv; cwd?: string },
+  options?: { env?: NodeJS.ProcessEnv; cwd?: string; stdin?: string },
 ): AsyncGenerator<string> {
   const child = spawn(command, args, {
     env: options?.env,
     cwd: options?.cwd,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [options?.stdin !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
   });
+
+  if (options?.stdin !== undefined && child.stdin) {
+    child.stdin.write(options.stdin);
+    child.stdin.end();
+  }
 
   const queue: string[] = [];
   const waiters: Array<() => void> = [];

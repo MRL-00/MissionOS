@@ -270,6 +270,12 @@ export function createIssueComment(token: string, issueId: string, input: { body
   }, token);
 }
 
+export function deleteIssueComment(token: string, issueId: string, commentId: string) {
+  return requestJson<{ ok: boolean }>(`/api/issues/${encodeURIComponent(issueId)}/comments/${encodeURIComponent(commentId)}`, {
+    method: "DELETE",
+  }, token);
+}
+
 export function syncLinearIssues(token: string) {
   return requestJson<{ ok: boolean; issues: IssueRecord[] }>("/api/issues/sync-linear", { method: "POST" }, token);
 }

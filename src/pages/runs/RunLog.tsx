@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CpuIcon, ExternalLinkIcon, FilterIcon, GitBranchIcon, GitPullRequestIcon, Trash2Icon, ZapIcon } from "lucide-react";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
@@ -85,6 +85,19 @@ export function RunLog({ mission }: RunLogProps) {
       unpricedEngines: Array.from(unpricedEngines.values()),
     };
   }, [mission.agents, runs]);
+  const hasActiveRuns = mission.runs.some((run) => run.status === "running" || run.status === "planning");
+
+  useEffect(() => {
+    if (!hasActiveRuns) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void mission.refreshRuns();
+    }, 3_000);
+
+    return () => window.clearInterval(interval);
+  }, [hasActiveRuns]);
 
   return (
     <div className="flex h-full">
@@ -194,7 +207,10 @@ export function RunLog({ mission }: RunLogProps) {
                 >
                   <span className="font-mono text-[12px] text-[#918f90]">{formatDateTime(run.started_at, mission.settingsMap.user_timezone)}</span>
                   <div className="flex items-center gap-2.5">
-                    <div className="flex size-6 items-center justify-center rounded-full bg-gradient-to-br from-[#39147e] to-[#2e1065] text-[10px] font-semibold text-white">
+                    <div
+                      className="flex size-6 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      style={{ background: run.agent_color ? `linear-gradient(135deg, ${run.agent_color}cc, ${run.agent_color})` : "linear-gradient(135deg, #39147e, #2e1065)" }}
+                    >
                       {run.agent_emoji ?? "A"}
                     </div>
                     <span className="text-[13px] font-medium text-white">{run.agent_name ?? run.engine}</span>

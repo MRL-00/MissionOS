@@ -162,6 +162,7 @@ export interface RunRecord {
   github_pr_url: string | null;
   agent_name?: string | null;
   agent_emoji?: string | null;
+  agent_color?: string | null;
   mission_title?: string | null;
   issue_title?: string | null;
 }

@@ -47,6 +47,7 @@ export const codexAdapter: EngineAdapter = {
         ...process.env,
         ...(apiKey ? { OPENAI_API_KEY: apiKey } : {}),
       },
+      stdin: "",
     });
   },
 };
@@ -116,6 +117,10 @@ export const claudeCodeAdapter: EngineAdapter = {
       typeof connectionConfig.workingDirectory === "string" && connectionConfig.workingDirectory
         ? connectionConfig.workingDirectory
         : undefined;
-    yield* streamProcess(command, ["--model", model, prompt], cwd ? { cwd } : undefined);
+    yield* streamProcess(
+      command,
+      ["--print", "--dangerously-skip-permissions", "--model", model, prompt],
+      cwd ? { cwd } : undefined,
+    );
   },
 };

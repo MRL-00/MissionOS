@@ -14,18 +14,44 @@ import {
 import type { MissionView } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS: Array<{
+type NavItem = {
   id: MissionView;
   label: string;
   icon: typeof LayoutDashboardIcon;
-}> = [
-  { id: "missions", label: "Missions", icon: LayoutDashboardIcon },
-  { id: "agents", label: "Agents", icon: UsersIcon },
-  { id: "orgchart", label: "Org Chart", icon: NetworkIcon },
-  { id: "issues", label: "Issues", icon: KanbanIcon },
-  { id: "runs", label: "Runs", icon: ActivityIcon },
-  { id: "schedules", label: "Schedules", icon: CalendarClockIcon },
-  { id: "settings", label: "Settings", icon: SettingsIcon },
+};
+
+type NavSection = {
+  title: string;
+  items: NavItem[];
+};
+
+const PRIMARY_SECTIONS: NavSection[] = [
+  {
+    title: "Workspace",
+    items: [
+      { id: "missions", label: "Missions", icon: LayoutDashboardIcon },
+      { id: "agents", label: "Agents", icon: UsersIcon },
+      { id: "orgchart", label: "Org Chart", icon: NetworkIcon },
+    ],
+  },
+  {
+    title: "Delivery",
+    items: [
+      { id: "issues", label: "Issues", icon: KanbanIcon },
+      { id: "runs", label: "Runs", icon: ActivityIcon },
+      { id: "schedules", label: "Schedules", icon: CalendarClockIcon },
+    ],
+  },
+  {
+    title: "Admin",
+    items: [{ id: "settings", label: "Settings", icon: SettingsIcon }],
+  },
+];
+
+const RESOURCE_ITEMS: NavItem[] = [
+  { id: "docs", label: "Docs", icon: BookOpenIcon },
+  { id: "help", label: "Help", icon: HelpCircleIcon },
+  { id: "help", label: "Feedback", icon: MessageSquareIcon },
 ];
 
 interface SidebarProps {
@@ -36,9 +62,37 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeView, onNavigate, showOnboarding, projectLogo }: SidebarProps) {
-  const items = showOnboarding
-    ? [...NAV_ITEMS.slice(0, 5), { id: "onboarding" as MissionView, label: "Onboarding", icon: WandSparklesIcon }, ...NAV_ITEMS.slice(5)]
-    : NAV_ITEMS;
+  const sections: NavSection[] = showOnboarding
+    ? PRIMARY_SECTIONS.map<NavSection>((section) =>
+        section.title === "Delivery"
+          ? {
+              ...section,
+              items: [...section.items, { id: "onboarding", label: "Onboarding", icon: WandSparklesIcon }],
+            }
+          : section,
+      )
+    : PRIMARY_SECTIONS;
+
+  function renderNavButton(item: NavItem) {
+    const Icon = item.icon;
+    const isActive = activeView === item.id;
+
+    return (
+      <button
+        key={`${item.id}-${item.label}`}
+        onClick={() => onNavigate(item.id)}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors",
+          isActive
+            ? "bg-white/[0.08] text-white"
+            : "text-[#918f90] hover:bg-white/[0.04] hover:text-[#c8c4d7]",
+        )}
+      >
+        <Icon className="size-4 shrink-0" />
+        {item.label}
+      </button>
+    );
+  }
 
   return (
     <aside className="hidden w-[220px] shrink-0 flex-col border-r border-white/[0.06] bg-[#131314] md:flex">
@@ -53,56 +107,20 @@ export function Sidebar({ activeView, onNavigate, showOnboarding, projectLogo }:
         <span className="text-[15px] font-semibold tracking-tight text-white">MissionOS</span>
       </div>
 
-      <nav className="mt-1 flex flex-1 flex-col gap-0.5 px-3">
-        {items.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeView === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => onNavigate(item.id)}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors",
-                isActive
-                  ? "bg-white/[0.08] text-white"
-                  : "text-[#918f90] hover:bg-white/[0.04] hover:text-[#c8c4d7]",
-              )}
-            >
-              <Icon className="size-4 shrink-0" />
-              {item.label}
-            </button>
-          );
-        })}
+      <nav className="mt-1 flex flex-1 flex-col gap-4 px-3">
+        {sections.map((section) => (
+          <div key={section.title} className="space-y-1">
+            <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6f6b74]">
+              {section.title}
+            </p>
+            <div className="flex flex-col gap-0.5">{section.items.map(renderNavButton)}</div>
+          </div>
+        ))}
       </nav>
 
-      <div className="mt-auto flex flex-col gap-0.5 border-t border-white/[0.06] px-3 pt-3 pb-4">
-        <button
-          onClick={() => onNavigate("docs")}
-          className={cn(
-            "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors",
-            activeView === "docs" ? "bg-white/[0.08] text-white" : "text-[#918f90] hover:bg-white/[0.04] hover:text-[#c8c4d7]",
-          )}
-        >
-          <BookOpenIcon className="size-4 shrink-0" />
-          Docs
-        </button>
-        <button
-          onClick={() => onNavigate("help")}
-          className={cn(
-            "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors",
-            activeView === "help" ? "bg-white/[0.08] text-white" : "text-[#918f90] hover:bg-white/[0.04] hover:text-[#c8c4d7]",
-          )}
-        >
-          <HelpCircleIcon className="size-4 shrink-0" />
-          Help
-        </button>
-        <button
-          onClick={() => onNavigate("help")}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-[#918f90] transition-colors hover:bg-white/[0.04] hover:text-[#c8c4d7]"
-        >
-          <MessageSquareIcon className="size-4 shrink-0" />
-          Feedback
-        </button>
+      <div className="mt-auto border-t border-white/[0.06] px-3 pt-3 pb-4">
+        <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6f6b74]">Resources</p>
+        <div className="flex flex-col gap-0.5">{RESOURCE_ITEMS.map(renderNavButton)}</div>
       </div>
     </aside>
   );
