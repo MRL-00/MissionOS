@@ -16,6 +16,7 @@ import {
   ReplyIcon,
   ShareIcon,
   Trash2Icon,
+  UserIcon,
   XIcon,
 } from "lucide-react";
 import type { AgentRecord, IssueCommentRecord, IssueRecord, RunRecord } from "@/mission/appTypes";
@@ -23,6 +24,7 @@ import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
 import { formatDate, formatDateTime } from "@/lib/dateFormat";
 import { Select as UISelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 function formatTicketId(issue: IssueRecord, prefix?: string) {
   if (issue.issue_number != null) {
@@ -39,6 +41,7 @@ export interface IssueCreateDraft {
   assignee_agent_id: string;
   mission_id: string;
   github_repo: string;
+  estimation: string;
 }
 
 export interface IssueEditDraft extends IssueCreateDraft {
@@ -91,6 +94,139 @@ function normalizeSelectValue(value: string | null) {
 
 function formatStatusLabel(status: string) {
   return STATUS_LABELS[status] ?? status.replaceAll("_", " ");
+}
+
+const ESTIMATION_OPTIONS = ["1", "2", "3", "5", "8", "13", "21"];
+
+const PRIORITY_OPTIONS = [
+  { value: "urgent", label: "Urgent", dot: "bg-red-500" },
+  { value: "high", label: "High", dot: "bg-orange-500" },
+  { value: "medium", label: "Medium", dot: "bg-yellow-500" },
+  { value: "low", label: "Low", dot: "bg-blue-400" },
+];
+
+function InlineAssigneePopover({
+  issue,
+  agents,
+  onUpdate,
+}: {
+  issue: IssueRecord;
+  agents: AgentRecord[];
+  onUpdate: (agentId: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className="flex size-5 items-center justify-center rounded-full bg-gradient-to-br from-[#39147e] to-[#2e1065] text-[9px] font-semibold text-white transition-all hover:ring-1 hover:ring-[#5e4ae3]/50"
+          title={issue.assignee_name ?? "Unassigned"}
+        >
+          {issue.assignee_emoji || <UserIcon className="size-2.5 text-[#918f90]" />}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-48 p-1" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+        <div className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Assignee</div>
+        <button
+          onClick={() => { onUpdate(null); setOpen(false); }}
+          className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/[0.06]", !issue.assignee_agent_id && "text-white" )}
+        >
+          <span className="flex size-5 items-center justify-center rounded-full bg-white/[0.06] text-[9px] text-[#918f90]">
+            <UserIcon className="size-2.5" />
+          </span>
+          <span className="text-[#918f90]">Unassigned</span>
+        </button>
+        {agents.map((agent) => (
+          <button
+            key={agent.id}
+            onClick={() => { onUpdate(agent.id); setOpen(false); }}
+            className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/[0.06]", issue.assignee_agent_id === agent.id && "bg-white/[0.04] text-white")}
+          >
+            <span className="flex size-5 items-center justify-center rounded-full bg-gradient-to-br from-[#39147e] to-[#2e1065] text-[9px]">
+              {agent.emoji}
+            </span>
+            <span className="text-[#c8c4d7]">{agent.name}</span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function InlinePriorityPopover({
+  issue,
+  onUpdate,
+}: {
+  issue: IssueRecord;
+  onUpdate: (priority: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+          <PriorityBadge priority={issue.priority} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-36 p-1" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+        <div className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Priority</div>
+        {PRIORITY_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => { onUpdate(opt.value); setOpen(false); }}
+            className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-white/[0.06]", issue.priority === opt.value && "bg-white/[0.04] text-white")}
+          >
+            <span className={cn("size-2 rounded-full", opt.dot)} />
+            <span className="text-[#c8c4d7]">{opt.label}</span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function InlineEstimationPopover({
+  issue,
+  onUpdate,
+}: {
+  issue: IssueRecord;
+  onUpdate: (estimation: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-[#918f90] transition-colors hover:bg-white/[0.1] hover:text-white"
+          title="Estimation"
+        >
+          {issue.estimation ?? "—"}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-36 p-1" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+        <div className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Estimate</div>
+        <button
+          onClick={() => { onUpdate(null); setOpen(false); }}
+          className={cn("flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12px] text-[#918f90] transition-colors hover:bg-white/[0.06]", !issue.estimation && "bg-white/[0.04] text-white")}
+        >
+          None
+        </button>
+        {ESTIMATION_OPTIONS.map((pt) => (
+          <button
+            key={pt}
+            onClick={() => { onUpdate(pt); setOpen(false); }}
+            className={cn("flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12px] text-[#c8c4d7] transition-colors hover:bg-white/[0.06]", issue.estimation === pt && "bg-white/[0.04] text-white")}
+          >
+            {pt} pts
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function IssueFiltersBar({
@@ -275,6 +411,26 @@ export function IssueCreateModal({
             }}
           />
           <div>
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Estimation</label>
+            <div className="flex flex-wrap gap-1.5">
+              {ESTIMATION_OPTIONS.map((pt) => (
+                <button
+                  key={pt}
+                  type="button"
+                  onClick={() => setDraft({ ...draft, estimation: draft.estimation === pt ? "" : pt })}
+                  className={cn(
+                    "rounded-md border px-3 py-1.5 text-[12px] font-medium transition-colors",
+                    draft.estimation === pt
+                      ? "border-[#5e4ae3]/50 bg-[#5e4ae3]/15 text-white"
+                      : "border-white/[0.08] bg-[#0f0f10] text-[#918f90] hover:border-white/[0.15] hover:text-white",
+                  )}
+                >
+                  {pt}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Description</label>
             <textarea
               value={draft.description}
@@ -437,6 +593,26 @@ export function IssueEditModal({
               />
             </div>
             <Field label="Labels" value={editDraft.labels} onChange={(value) => setEditDraft({ ...editDraft, labels: value })} placeholder="bug, frontend, urgent (comma-separated)" />
+            <div>
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Estimation</label>
+              <div className="flex flex-wrap gap-1.5">
+                {ESTIMATION_OPTIONS.map((pt) => (
+                  <button
+                    key={pt}
+                    type="button"
+                    onClick={() => setEditDraft({ ...editDraft, estimation: editDraft.estimation === pt ? "" : pt })}
+                    className={cn(
+                      "rounded-md border px-3 py-1.5 text-[12px] font-medium transition-colors",
+                      editDraft.estimation === pt
+                        ? "border-[#5e4ae3]/50 bg-[#5e4ae3]/15 text-white"
+                        : "border-white/[0.08] bg-[#0f0f10] text-[#918f90] hover:border-white/[0.15] hover:text-white",
+                    )}
+                  >
+                    {pt}
+                  </button>
+                ))}
+              </div>
+            </div>
             <RepoSearchField
               label="GitHub Repository"
               value={editDraft.github_repo}
@@ -635,14 +811,16 @@ export function IssueBoardView({
             </div>
             <div className="flex flex-1 flex-col gap-2">
               {issues.map((issue) => (
-                <button
+                <div
                   key={issue.id}
+                  role="button"
+                  tabIndex={0}
                   draggable
                   onDragStart={(event) => event.dataTransfer.setData("text/plain", issue.id)}
                   onClick={() => onSelectIssue(issue.id)}
                   onDoubleClick={() => onEditIssue(issue)}
                   className={cn(
-                    "rounded-lg border border-white/[0.06] border-l-2 bg-[#1c1b1c] p-3 text-left transition-all",
+                    "cursor-pointer rounded-lg border border-white/[0.06] border-l-2 bg-[#1c1b1c] p-3 text-left transition-all",
                     !issue.mission_color && (PRIORITY_INDICATORS[issue.priority] ?? PRIORITY_INDICATORS.none),
                     selectedIssueId === issue.id && "ring-1 ring-[#5e4ae3]/50",
                   )}
@@ -661,28 +839,32 @@ export function IssueBoardView({
                   </div>
                   <div className="text-[13px] font-medium leading-snug text-white">{issue.title}</div>
                   <div className="mt-2 flex flex-wrap items-center gap-1">
-                    <PriorityBadge priority={issue.priority} />
+                    <InlinePriorityPopover
+                      issue={issue}
+                      onUpdate={(priority) => void mission.updateIssue(issue.id, { ...issue, priority, labels: issue.labels })}
+                    />
                     <StatusBadge status={issue.status} />
                     {issue.labels.map((label) => (
                       <span key={label} className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-[#918f90]">
                         {label}
                       </span>
                     ))}
+                    <InlineEstimationPopover
+                      issue={issue}
+                      onUpdate={(estimation) => void mission.updateIssue(issue.id, { ...issue, estimation, labels: issue.labels })}
+                    />
                   </div>
                   <div className="mt-2 flex items-center justify-between">
                     {issue.mission_title ? (
                       <span className="truncate text-[11px] text-[#918f90]">{issue.mission_title}</span>
                     ) : <span />}
-                    {issue.assignee_emoji ? (
-                      <div
-                        className="flex size-5 items-center justify-center rounded-full bg-gradient-to-br from-[#39147e] to-[#2e1065] text-[9px] font-semibold text-white"
-                        title={issue.assignee_name ?? undefined}
-                      >
-                        {issue.assignee_emoji}
-                      </div>
-                    ) : null}
+                    <InlineAssigneePopover
+                      issue={issue}
+                      agents={mission.agents}
+                      onUpdate={(agentId) => void mission.updateIssue(issue.id, { ...issue, assignee_agent_id: agentId, labels: issue.labels })}
+                    />
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           </div>
@@ -820,6 +1002,7 @@ export function IssueDetailsPanel({
           <PriorityBadge priority={selectedIssue.priority} />
         </div>
         <PropertyRow label="Labels" value={selectedIssue.labels.join(", ") || "None"} />
+        <PropertyRow label="Estimate" value={selectedIssue.estimation ? `${selectedIssue.estimation} pts` : "None"} />
       </div>
 
       {onRunIssue && agents && agents.length > 0 ? (

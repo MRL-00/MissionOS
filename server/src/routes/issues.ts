@@ -33,8 +33,8 @@ export function registerIssueRoutes(app: Express) {
     db.prepare(
       `
       INSERT INTO issues (
-        id, issue_number, title, description, status, priority, assignee_agent_id, mission_id, labels, source, linear_id, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        id, issue_number, title, description, status, priority, assignee_agent_id, mission_id, labels, source, linear_id, estimation, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `,
     ).run(
       id,
@@ -48,6 +48,7 @@ export function registerIssueRoutes(app: Express) {
       JSON.stringify(Array.isArray(body.labels) ? body.labels : []),
       typeof body.source === "string" ? body.source : "native",
       typeof body.linear_id === "string" ? body.linear_id : null,
+      typeof body.estimation === "string" ? body.estimation : null,
     );
 
     if (typeof body.linear_id === "string" && body.linear_id) {
@@ -76,6 +77,7 @@ export function registerIssueRoutes(app: Express) {
         labels = ?,
         source = ?,
         linear_id = ?,
+        estimation = ?,
         updated_at = datetime('now')
       WHERE id = ?
       `,
@@ -89,6 +91,7 @@ export function registerIssueRoutes(app: Express) {
       JSON.stringify(Array.isArray(body.labels) ? body.labels : []),
       typeof body.source === "string" ? body.source : "native",
       typeof body.linear_id === "string" ? body.linear_id : null,
+      typeof body.estimation === "string" ? body.estimation : null,
       req.params.id,
     );
 

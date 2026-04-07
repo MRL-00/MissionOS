@@ -94,6 +94,7 @@ export function serializeIssue(row: Record<string, unknown>) {
     github_branch: row.github_branch ?? null,
     github_pr_number: row.github_pr_number ?? null,
     github_pr_url: row.github_pr_url ?? null,
+    estimation: row.estimation ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     assignee_name: row.assignee_name,

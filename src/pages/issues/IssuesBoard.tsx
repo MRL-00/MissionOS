@@ -32,14 +32,14 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
   // Edit modal state
   const [editingIssue, setEditingIssue] = useState<IssueRecord | null>(null);
   const [editFullScreen, setEditFullScreen] = useState(false);
-  const [editDraft, setEditDraft] = useState<IssueEditDraft>({ title: "", description: "", status: "backlog", priority: "medium", assignee_agent_id: "", mission_id: "", labels: "", github_repo: "" });
+  const [editDraft, setEditDraft] = useState<IssueEditDraft>({ title: "", description: "", status: "backlog", priority: "medium", assignee_agent_id: "", mission_id: "", labels: "", github_repo: "", estimation: "" });
   const [editRepoQuery, setEditRepoQuery] = useState("");
   const [editRepoOptions, setEditRepoOptions] = useState<RepoOption[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Create modal state
-  const [draft, setDraft] = useState<IssueCreateDraft>({ title: "", description: "", status: "backlog", priority: "medium", assignee_agent_id: "", mission_id: "", github_repo: "" });
+  const [draft, setDraft] = useState<IssueCreateDraft>({ title: "", description: "", status: "backlog", priority: "medium", assignee_agent_id: "", mission_id: "", github_repo: "", estimation: "" });
   const [createRepoQuery, setCreateRepoQuery] = useState("");
   const [createRepoOptions, setCreateRepoOptions] = useState<RepoOption[]>([]);
 
@@ -54,6 +54,7 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
       mission_id: issue.mission_id || "",
       labels: issue.labels.join(", "),
       github_repo: issue.github_repo || "",
+      estimation: issue.estimation || "",
     });
     setEditRepoQuery(issue.github_repo || "");
     setEditRepoOptions([]);
@@ -163,10 +164,11 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
       mission_id: draft.mission_id || null,
       github_repo: draft.github_repo || null,
       labels: [],
+      estimation: draft.estimation || null,
     });
 
     if (ok) {
-      setDraft({ title: "", description: "", status: "backlog", priority: "medium", assignee_agent_id: "", mission_id: "", github_repo: "" });
+      setDraft({ title: "", description: "", status: "backlog", priority: "medium", assignee_agent_id: "", mission_id: "", github_repo: "", estimation: "" });
       setCreateRepoQuery("");
       setCreateRepoOptions([]);
       setDraftOpen(false);
@@ -203,6 +205,7 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
       mission_id: editDraft.mission_id || null,
       github_repo: editDraft.github_repo || null,
       labels,
+      estimation: editDraft.estimation || null,
     });
 
     if (ok) {

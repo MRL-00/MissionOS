@@ -123,6 +123,7 @@ export interface IssueRecord {
   github_branch: string | null;
   github_pr_number: number | null;
   github_pr_url: string | null;
+  estimation: string | null;
   created_at: string;
   updated_at: string;
   assignee_name?: string | null;
