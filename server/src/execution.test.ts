@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildDelegationMessage,
+  buildPullRequestTitle,
   isDelegationOnlyAgent,
   isImplementationAgent,
   stripPromptEcho,
@@ -93,4 +94,18 @@ test("stripPromptEcho removes echoed orchestrator prompt before delegation parsi
   assert.doesNotMatch(stripped, /@agent:Claudy: Implement EPIC-002/i);
   assert.match(stripped, /```json:plan/);
   assert.match(stripped, /WASSSSSUP/);
+});
+
+test("buildPullRequestTitle includes agent name and issue key when available", () => {
+  assert.equal(
+    buildPullRequestTitle("Claudy", "Update image source", "EPIC-001", "claudy/EPIC-001/update-image-source"),
+    "[Claudy] EPIC-001: Update image source",
+  );
+});
+
+test("buildPullRequestTitle falls back cleanly when issue context is missing", () => {
+  assert.equal(
+    buildPullRequestTitle("Claudy", null, null, "claudy/EPIC-001/update-image-source"),
+    "[Claudy] claudy/EPIC-001/update-image-source",
+  );
 });

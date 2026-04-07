@@ -1,0 +1,8 @@
+pnpm-lock.yaml
+server/data/*.db
+server/data/*.db-shm
+server/data/*.db-wal
+node_modules/
+dist/
+.claude/plans/
+docs/2026-*

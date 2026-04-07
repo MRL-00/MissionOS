@@ -14,6 +14,7 @@ import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "@/lib/dateFormat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface SchedulesPageProps {
   mission: MissionControlState;
@@ -75,6 +76,11 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
   const [draft, setDraft] = useState(emptyDraft);
   const [formError, setFormError] = useState("");
   const [status, setStatus] = useState("");
+  const [deleteScheduleId, setDeleteScheduleId] = useState<string | null>(null);
+
+  const scheduleToDelete = deleteScheduleId
+    ? mission.schedules.find((s) => s.id === deleteScheduleId)
+    : null;
 
   const activeSchedules = mission.schedules.filter((schedule) => schedule.enabled).length;
   const pausedSchedules = mission.schedules.length - activeSchedules;
@@ -394,13 +400,7 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
                     <button
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (window.confirm(`Delete schedule "${schedule.name}"?`)) {
-                          void mission.removeSchedule(schedule.id).then((ok) => {
-                            if (ok && editingId === schedule.id) {
-                              resetForm();
-                            }
-                          });
-                        }
+                        setDeleteScheduleId(schedule.id);
                       }}
                       className="rounded-lg border border-red-500/20 p-2 text-red-300 transition-colors hover:bg-red-500/10"
                       aria-label="Delete schedule"
@@ -469,6 +469,22 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
           </div>
         </div>
       </aside>
+
+      <ConfirmDialog
+        open={deleteScheduleId !== null}
+        onOpenChange={(open) => { if (!open) setDeleteScheduleId(null); }}
+        title="Delete schedule"
+        description={scheduleToDelete ? `"${scheduleToDelete.name}" will be permanently removed.` : "This schedule will be permanently removed."}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={async () => {
+          if (!deleteScheduleId) return;
+          const ok = await mission.removeSchedule(deleteScheduleId);
+          if (ok && editingId === deleteScheduleId) {
+            resetForm();
+          }
+        }}
+      />
     </div>
   );
 }

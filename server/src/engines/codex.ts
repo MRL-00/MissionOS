@@ -343,7 +343,7 @@ export const claudeCodeAdapter: EngineAdapter = {
   connectionType: "cli",
   fields: [
     { key: "claudePath", label: "Claude Path", type: "text", defaultValue: "claude", required: true },
-    { key: "model", label: "Model", type: "text", defaultValue: "claude-opus-4-5" },
+    { key: "model", label: "Model", type: "text", defaultValue: "claude-sonnet-4-6" },
   ],
   async test(config) {
     const command = typeof config.claudePath === "string" && config.claudePath ? config.claudePath : "claude";
@@ -361,7 +361,7 @@ export const claudeCodeAdapter: EngineAdapter = {
     const model =
       typeof connectionConfig.model === "string" && connectionConfig.model
         ? connectionConfig.model
-        : "claude-opus-4-5";
+        : "claude-sonnet-4-6";
     const cwd =
       typeof connectionConfig.workingDirectory === "string" && connectionConfig.workingDirectory
         ? connectionConfig.workingDirectory

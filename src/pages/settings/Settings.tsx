@@ -1,5 +1,6 @@
 import { useRef, useMemo, useState } from "react";
 import { AlertTriangleIcon, CheckCircleIcon, ClockIcon, GitBranchIcon, HashIcon, ImageIcon, KeyIcon, LinkIcon, PaletteIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type { EngineConnectionResult } from "@/mission/appTypes";
 import { describeEngineVersion, seedEngineConfig } from "@/lib/engineConfig";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
@@ -510,11 +511,12 @@ function SectionHeader({ icon, title, subtitle, danger }: { icon: React.ReactNod
 
 function LogoUpload({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [sizeError, setSizeError] = useState(false);
 
   function handleFile(file: File) {
     if (!file.type.startsWith("image/")) return;
     if (file.size > 5 * 1024 * 1024) {
-      alert("Image must be under 5MB");
+      setSizeError(true);
       return;
     }
     const reader = new FileReader();
@@ -566,6 +568,16 @@ function LogoUpload({ value, onChange }: { value: string; onChange: (value: stri
         <span className="text-[11px] text-[#585658]">PNG, JPG, or SVG. Max 5MB.</span>
       </div>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
+
+      <ConfirmDialog
+        open={sizeError}
+        onOpenChange={setSizeError}
+        title="Image too large"
+        description="The selected image exceeds the 5 MB limit. Please choose a smaller file."
+        confirmLabel="OK"
+        variant="warning"
+        onConfirm={() => {}}
+      />
     </div>
   );
 }

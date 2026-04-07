@@ -9,6 +9,12 @@ import { EmojiPicker } from "@/components/EmojiPicker";
 
 const STEPS = ["Identification", "Core Engine", "Capabilities", "Persona"];
 const AGENT_COLORS = ["#5e4ae3", "#10b981", "#f59e0b", "#ef4444", "#3b82f6", "#ec4899", "#8b5cf6", "#06b6d4"];
+const CLAUDE_MODEL_OPTIONS = [
+  { value: "", label: "Default (Sonnet)" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+];
 
 interface AgentWizardProps {
   mission: MissionControlState;
@@ -317,6 +323,43 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
                 </button>
               ))}
             </div>
+
+            {selectedEngine === "claude-code" ? (
+              <div>
+                <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Model</label>
+                <select
+                  value={(() => {
+                    try {
+                      const cfg = JSON.parse(selectedConnectionConfigText) as Record<string, unknown>;
+                      return typeof cfg.model === "string" ? cfg.model : "";
+                    } catch { return ""; }
+                  })()}
+                  onChange={(event) => {
+                    if (!selectedEngineDefinition) return;
+                    try {
+                      const cfg = JSON.parse(selectedConnectionConfigText) as Record<string, unknown>;
+                      if (event.target.value) {
+                        cfg.model = event.target.value;
+                      } else {
+                        delete cfg.model;
+                      }
+                      setConnectionConfigByEngine((current) => ({
+                        ...current,
+                        [selectedEngineDefinition.id]: JSON.stringify(cfg, null, 2),
+                      }));
+                    } catch { /* invalid JSON, ignore */ }
+                  }}
+                  className="w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[13px] text-white outline-none transition-colors focus:border-[#5e4ae3]/50"
+                >
+                  {CLAUDE_MODEL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <div className="mt-1 text-[10px] text-[#585658]">
+                  Leave as default for cost-efficient Sonnet. Use Opus for complex multi-file tasks.
+                </div>
+              </div>
+            ) : null}
 
             <div>
               <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Connection Config (JSON)</label>

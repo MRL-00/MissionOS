@@ -10,6 +10,7 @@ import {
   ensureRepo,
   createFeatureBranch,
   pushBranch,
+  formatIssueKey,
   makeBranchName,
 } from "./git-workspace.js";
 import { buildRunPrompt } from "./runPrompt.js";
@@ -47,6 +48,27 @@ export function insertAgentComment(issueId: string, agentId: string, body: strin
 
 // Re-export classification functions for backward compatibility
 export { isDelegationOnlyAgent, isImplementationAgent, isIosSpecificTask } from "./agentClassification.js";
+
+export function buildPullRequestTitle(
+  agentName: string,
+  issueTitle: string | null | undefined,
+  issueKey: string | null | undefined,
+  fallbackBranch: string,
+): string {
+  const normalizedAgentName = String(agentName).trim() || "Agent";
+  const normalizedIssueTitle = issueTitle?.trim();
+  const normalizedIssueKey = issueKey?.trim();
+
+  if (normalizedIssueTitle && normalizedIssueKey) {
+    return `[${normalizedAgentName}] ${normalizedIssueKey}: ${normalizedIssueTitle}`;
+  }
+
+  if (normalizedIssueTitle) {
+    return `[${normalizedAgentName}] ${normalizedIssueTitle}`;
+  }
+
+  return `[${normalizedAgentName}] ${fallbackBranch}`;
+}
 
 type DelegationContext = {
   issueId: string | null;
@@ -284,6 +306,21 @@ async function processAgentDirectives(
   return delegatedCount;
 }
 
+// ── Complexity gating ──────────────────────────────────────────────────
+
+const SIMPLE_TASK_PATTERNS = [
+  /\b(swap|replace|change|update)\b.*\b(image|icon|logo|favicon|asset)\b/i,
+  /\b(change|update|fix)\b.*\b(text|copy|label|title|heading|placeholder)\b/i,
+  /\b(change|update|fix)\b.*\b(color|colour|background|border)\b/i,
+  /\bsingle[- ]file\b/i,
+  /\b(typo|spelling|wording)\b/i,
+  /\b(show|hide|toggle)\b.*\b(element|button|link|section)\b/i,
+];
+
+export function isSimpleTask(prompt: string): boolean {
+  return SIMPLE_TASK_PATTERNS.some((pattern) => pattern.test(prompt));
+}
+
 // ── Run lifecycle ───────────────────────────────────────────────────────
 
 export async function createRunRecord(input: {
@@ -325,8 +362,14 @@ export async function createRunRecord(input: {
       const [owner, repo] = mission.github_repo.split("/");
       if (owner && repo) {
         try {
-          const issue = db.prepare("SELECT title FROM issues WHERE id = ?").get(issueId) as { title: string } | undefined;
-          const branchName = makeBranchName(issueId, issue?.title ?? "work");
+          const issue = db.prepare("SELECT title, issue_number FROM issues WHERE id = ?").get(issueId) as
+            | { title: string; issue_number: number | null }
+            | undefined;
+          const issuePrefixRow = db.prepare("SELECT value FROM settings WHERE key = 'issue_prefix'").get() as
+            | { value: string }
+            | undefined;
+          const issueKey = formatIssueKey(issue?.issue_number, issuePrefixRow?.value, issueId);
+          const branchName = makeBranchName(String(agentRow.name), issueKey, issue?.title ?? "work");
           workingDirectory = await ensureRepo(owner, repo, issueId);
           await createFeatureBranch(workingDirectory, branchName, mission.github_default_branch ?? "main");
           githubBranch = branchName;
@@ -540,7 +583,14 @@ async function executeRun(runId: string) {
 
   const baseConfig = parseJson<Record<string, unknown>>(String(agentRow.connection_config ?? "{}"), {});
   const workingDir = typeof row.working_directory === "string" ? row.working_directory : null;
-  const connectionConfig = workingDir ? { ...baseConfig, workingDirectory: workingDir } : baseConfig;
+  const connectionConfig = workingDir ? { ...baseConfig, workingDirectory: workingDir } : { ...baseConfig };
+
+  // Complexity gating: use sonnet for simple tasks on Claude Code engine
+  if (String(agentRow.engine) === "claude-code" && isSimpleTask(String(row.prompt ?? ""))) {
+    if (!connectionConfig.model || connectionConfig.model === "claude-opus-4-6") {
+      connectionConfig.model = "claude-sonnet-4-6";
+    }
+  }
 
   try {
     const fullPrompt = buildRunPrompt(agentRow, String(row.prompt ?? ""));
@@ -621,10 +671,16 @@ async function executeRun(runId: string) {
           if (owner && repo) {
             await pushBranch(workingDir, ghBranch);
             const issue = row.issue_id
-              ? (db.prepare("SELECT title, github_number FROM issues WHERE id = ?").get(String(row.issue_id)) as { title: string; github_number: number | null } | undefined)
+              ? (db.prepare("SELECT title, github_number, issue_number FROM issues WHERE id = ?").get(String(row.issue_id)) as
+                  | { title: string; github_number: number | null; issue_number: number | null }
+                  | undefined)
               : undefined;
+            const issuePrefixRow = db.prepare("SELECT value FROM settings WHERE key = 'issue_prefix'").get() as
+              | { value: string }
+              | undefined;
+            const issueKey = row.issue_id ? formatIssueKey(issue?.issue_number, issuePrefixRow?.value, String(row.issue_id)) : null;
 
-            const prTitle = issue?.title ? `[Agent] ${issue.title}` : `[Agent] ${ghBranch}`;
+            const prTitle = buildPullRequestTitle(String(agentRow.name), issue?.title, issueKey, ghBranch);
             const ghIssueRef = issue?.github_number ? `\n\nCloses #${issue.github_number}` : "";
             const prBody = `Automated changes by agent **${String(agentRow.name)}**.${ghIssueRef}`;
             const baseBranch = mission.github_default_branch ?? "main";

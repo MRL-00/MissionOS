@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb } from "./db.js";
@@ -73,6 +73,19 @@ export async function ensureRepo(owner: string, repo: string, issueId: string): 
 
   await runGit(["worktree", "prune"], sharedPath, 120_000);
   await runGit(["worktree", "add", "--detach", localPath, "HEAD"], sharedPath, 300_000);
+
+  // Symlink node_modules from the shared repo so agents don't waste
+  // tool calls trying to install dependencies in the worktree.
+  const sharedNodeModules = path.join(sharedPath, "node_modules");
+  const localNodeModules = path.join(localPath, "node_modules");
+  if (existsSync(sharedNodeModules) && !existsSync(localNodeModules)) {
+    try {
+      symlinkSync(sharedNodeModules, localNodeModules, "junction");
+    } catch {
+      // Non-fatal — agent will skip verification if node_modules is missing
+    }
+  }
+
   return localPath;
 }
 
@@ -128,6 +141,25 @@ export function slugify(text: string): string {
     .slice(0, 50);
 }
 
-export function makeBranchName(issueId: string, title: string): string {
-  return `issue/${issueId.slice(0, 8)}/${slugify(title)}`;
+function sanitizeBranchSegment(text: string, options?: { lowercase?: boolean }): string {
+  const normalized = (options?.lowercase ? text.toLowerCase() : text)
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return normalized || "work";
+}
+
+export function formatIssueKey(issueNumber: number | null | undefined, prefix: string | null | undefined, issueId: string): string {
+  if (typeof issueNumber === "number" && Number.isFinite(issueNumber)) {
+    const normalizedPrefix = (prefix?.trim() || "EPIC").replace(/[^A-Za-z0-9]+/g, "").toUpperCase() || "EPIC";
+    return `${normalizedPrefix}-${String(issueNumber).padStart(3, "0")}`;
+  }
+
+  return issueId.slice(0, 8).toUpperCase();
+}
+
+export function makeBranchName(agentName: string, issueKey: string, title: string): string {
+  const agentSegment = sanitizeBranchSegment(agentName, { lowercase: true });
+  const issueSegment = sanitizeBranchSegment(issueKey);
+  const titleSegment = slugify(title) || "work";
+  return `${agentSegment}/${issueSegment}/${titleSegment}`;
 }

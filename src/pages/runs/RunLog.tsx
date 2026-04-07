@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { ActivityIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CpuIcon, ExternalLinkIcon, FilterIcon, GitBranchIcon, GitPullRequestIcon, LayersIcon, Trash2Icon, ZapIcon } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 import { cn } from "@/lib/utils";
 import { estimateRunUsage, formatMoneyFromUsd, formatTokenCount } from "@/lib/usageEstimates";
@@ -34,6 +35,13 @@ export function RunLog({ mission }: RunLogProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState("");
   const [runFormError, setRunFormError] = useState("");
+  const [deleteRunId, setDeleteRunId] = useState<string | null>(null);
+
+  const handleDeleteRun = useCallback(async () => {
+    if (!deleteRunId) return;
+    const ok = await mission.removeRun(deleteRunId);
+    if (ok) setExpandedId(null);
+  }, [deleteRunId, mission]);
 
   const trimmedPrompt = prompt.trim();
   const canTriggerRun = Boolean(agentId && trimmedPrompt) && mission.busyKey !== "run:create";
@@ -304,14 +312,7 @@ export function RunLog({ mission }: RunLogProps) {
                     </div>
                     <div className="flex justify-end border-t border-white/[0.04] px-6 py-2">
                       <button
-                        onClick={async () => {
-                          const confirmed = window.confirm("Delete this run? This action cannot be undone.");
-                          if (!confirmed) return;
-                          const ok = await mission.removeRun(run.id);
-                          if (ok) {
-                            setExpandedId(null);
-                          }
-                        }}
+                        onClick={() => setDeleteRunId(run.id)}
                         className="flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[12px] font-medium text-red-400 transition-colors hover:border-red-500/40 hover:bg-red-500/20"
                       >
                         <Trash2Icon className="size-3.5" />
@@ -380,6 +381,16 @@ export function RunLog({ mission }: RunLogProps) {
           ) : null}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={deleteRunId !== null}
+        onOpenChange={(open) => { if (!open) setDeleteRunId(null); }}
+        title="Delete run"
+        description="This action cannot be undone. The run and its output will be permanently removed."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={handleDeleteRun}
+      />
     </div>
   );
 }

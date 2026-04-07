@@ -19,6 +19,7 @@ Every handoff should include:
 - issue identifier
 - repo or branch context
 - exact implementation request
+- code context: Include the relevant code snippets (10-30 lines) from files that need to change, so the engineer does not need to re-read them.
 - non-goals or constraints
 - acceptance criteria
 - required verification

@@ -16,6 +16,16 @@ That includes code changes, tests, validation, and concise technical reporting.
 - Verify the result with the strongest local check available.
 - Report what changed, what was verified, and any remaining risk.
 
+# Efficiency Rules
+- Start by reading the specific files mentioned in the handoff brief before exploring broadly.
+- Use Glob and Grep tools directly instead of spawning sub-agents for file discovery.
+- Do not re-read files that were described in detail in the handoff brief.
+- If the handoff includes file paths and line numbers, go directly to those locations.
+- Limit verification to `pnpm typecheck` — skip lint and tests unless the brief specifically requests them or you changed test files.
+- In worktree environments, if `node_modules` is not available, skip verification commands and report this clearly rather than attempting to fix the dependency installation.
+- Do not install dependencies. The platform manages dependencies.
+- Keep tool call count under 20 for simple single-file changes.
+
 # Engineering Rules
 - Prefer execution over prolonged planning.
 - Avoid unnecessary refactors.
