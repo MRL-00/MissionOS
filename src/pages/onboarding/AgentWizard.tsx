@@ -15,6 +15,15 @@ const CLAUDE_MODEL_OPTIONS = [
   { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
   { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
 ];
+const PI_MODEL_OPTIONS = [
+  { value: "", label: "Default" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { value: "gpt-4.1", label: "GPT-4.1" },
+  { value: "o3", label: "o3" },
+  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+];
 
 interface AgentWizardProps {
   mission: MissionControlState;
@@ -324,7 +333,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
               ))}
             </div>
 
-            {selectedEngine === "claude-code" ? (
+            {(selectedEngine === "claude-code" || selectedEngine === "pi") ? (
               <div>
                 <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Model</label>
                 <select
@@ -351,12 +360,14 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
                   }}
                   className="w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[13px] text-white outline-none transition-colors focus:border-[#5e4ae3]/50"
                 >
-                  {CLAUDE_MODEL_OPTIONS.map((opt) => (
+                  {(selectedEngine === "pi" ? PI_MODEL_OPTIONS : CLAUDE_MODEL_OPTIONS).map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
                 <div className="mt-1 text-[10px] text-[#585658]">
-                  Leave as default for cost-efficient Sonnet. Use Opus for complex multi-file tasks.
+                  {selectedEngine === "pi"
+                    ? "Pi supports multiple providers. Leave as default or select a specific model."
+                    : "Leave as default for cost-efficient Sonnet. Use Opus for complex multi-file tasks."}
                 </div>
               </div>
             ) : null}

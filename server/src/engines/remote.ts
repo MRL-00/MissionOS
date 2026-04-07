@@ -1,4 +1,4 @@
-import { httpHealthcheck, httpRun } from "./shared.js";
+import { httpHealthcheck, httpRun, streamProcess, testCliCommand } from "./shared.js";
 import type { EngineAdapter } from "./types.js";
 
 export const openclawAdapter: EngineAdapter = {
@@ -54,47 +54,37 @@ export const openclawAdapter: EngineAdapter = {
 export const piAdapter: EngineAdapter = {
   id: "pi",
   label: "Pi",
-  description: "Calls a configurable HTTP agent endpoint.",
-  connectionType: "http",
+  description: "Runs the Pi coding agent CLI locally.",
+  connectionType: "cli",
   fields: [
-    { key: "apiUrl", label: "API URL", type: "url", required: true },
-    { key: "apiKey", label: "API Key", type: "password" },
+    { key: "piPath", label: "Pi Path", type: "text", defaultValue: "pi", required: true },
+    { key: "model", label: "Model", type: "text" },
   ],
   async test(config) {
-    const apiUrl = typeof config.apiUrl === "string" ? config.apiUrl : "";
-    if (!apiUrl) {
-      return { ok: false, message: "API URL is required." };
-    }
-
-    const base = apiUrl.replace(/\/+$/u, "");
-    const headers =
-      typeof config.apiKey === "string" && config.apiKey
-        ? {
-            Authorization: `Bearer ${config.apiKey}`,
-          }
-        : null;
-    const health = await httpHealthcheck(`${base}/health`, headers ? { headers } : undefined);
-    if (health.ok) {
-      return health;
-    }
-    return httpHealthcheck(`${base}/status`, headers ? { headers } : undefined);
-  },
-  async *run({ prompt, connectionConfig, context }) {
-    const apiUrl = typeof connectionConfig.apiUrl === "string" ? connectionConfig.apiUrl : "";
-    if (!apiUrl) {
-      throw new Error("API URL is required.");
-    }
-
-    yield* httpRun(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(typeof connectionConfig.apiKey === "string" && connectionConfig.apiKey
-          ? { Authorization: `Bearer ${connectionConfig.apiKey}` }
-          : {}),
-      },
-      body: JSON.stringify({ prompt, context }),
+    const command = typeof config.piPath === "string" && config.piPath ? config.piPath : "pi";
+    return testCliCommand(command, ["--version"], {
+      label: "Pi CLI",
+      latestPackageName: "@mariozechner/pi-coding-agent",
+      upgradeCommand: "npm install -g @mariozechner/pi-coding-agent",
     });
+  },
+  async *run({ prompt, connectionConfig }) {
+    const command =
+      typeof connectionConfig.piPath === "string" && connectionConfig.piPath
+        ? connectionConfig.piPath
+        : "pi";
+    const model =
+      typeof connectionConfig.model === "string" && connectionConfig.model
+        ? connectionConfig.model
+        : undefined;
+
+    const args = ["-p"];
+    if (model) {
+      args.push("--model", model);
+    }
+    args.push(prompt);
+
+    yield* streamProcess(command, args);
   },
 };
 

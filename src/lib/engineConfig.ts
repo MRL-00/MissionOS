@@ -44,8 +44,8 @@ export function engineConnectionGuide(engine: EngineDefinition): { title: string
       };
     case "pi":
       return {
-        title: "LAN support",
-        body: "Set `apiUrl` to the full remote address, for example `http://192.168.1.42:9000`. Health checks try `/health` and then `/status`.",
+        title: "Runs locally",
+        body: "Pi runs on the same machine as the office server. Install with `npm install -g @mariozechner/pi-coding-agent` and run `pi` to verify it works. Remote LAN execution needs a bridge or HTTP service on the other machine.",
       };
     case "codex":
       return {
