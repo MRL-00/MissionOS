@@ -1,0 +1,21 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <!-- Rocket body -->
+  <path d="M16 2C16 2 10 8 10 16C10 20 11 23 12.5 25L16 28L19.5 25C21 23 22 20 22 16C22 8 16 2 16 2Z" fill="white" stroke="#e0e0e0" stroke-width="0.5"/>
+  <!-- Window -->
+  <circle cx="16" cy="13" r="3" fill="none" stroke="#e0e0e0" stroke-width="1.5"/>
+  <circle cx="16" cy="13" r="1.5" fill="#e0e0e0"/>
+  <!-- Left fin -->
+  <path d="M10 20L6 24L10 25Z" fill="white" stroke="#e0e0e0" stroke-width="0.5"/>
+  <!-- Right fin -->
+  <path d="M22 20L26 24L22 25Z" fill="white" stroke="#e0e0e0" stroke-width="0.5"/>
+  <!-- Exhaust flames -->
+  <rect x="12" y="26" width="2.2" height="5" rx="1.1" fill="url(#flame)" transform="rotate(-10 13.1 26)"/>
+  <rect x="14.9" y="26" width="2.2" height="5.5" rx="1.1" fill="url(#flame)"/>
+  <rect x="17.8" y="26" width="2.2" height="5" rx="1.1" fill="url(#flame)" transform="rotate(10 18.9 26)"/>
+</svg>
