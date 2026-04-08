@@ -26,4 +26,4 @@ COPY --from=build /app/tsconfig.json ./tsconfig.json
 
 EXPOSE 3001 5173
 
-CMD ["npx", "concurrently", "npx vite preview --host 0.0.0.0 --port 5173", "npx tsx server/server.ts"]
+CMD ["npx", "concurrently", "npx vite preview --host 0.0.0.0 --port 5173", "node server/dist/index.js"]

@@ -53,7 +53,7 @@ Primary UI-facing areas:
 ## Integration boundary
 When UI needs realtime data, it should consume:
 - websocket messages and snapshots from `src/network/websocket.ts`
-- API endpoints exposed from `server/server.ts`
+- API endpoints exposed from `server/src/index.ts`
 - shared types from `src/types.ts`
 
 If those contracts need to move, Zoe owns the contract update; Harry owns consuming it in the redesigned UI.

@@ -1,4 +1,5 @@
-import { claudeCodeAdapter, codexAdapter, cursorAdapter } from "./codex.js";
+import { claudeCodeAdapter } from "./claude.js";
+import { codexAdapter, cursorAdapter } from "./codex.js";
 import { hermesAdapter, openclawAdapter, piAdapter } from "./remote.js";
 import type { EngineAdapter } from "./types.js";
 

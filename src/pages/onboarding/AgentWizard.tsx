@@ -58,7 +58,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
   const [role, setRole] = useState(initialAgent?.role ?? "");
   const [emoji, setEmoji] = useState(initialAgent?.emoji ?? "");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [selectedEngine, setSelectedEngine] = useState<string | null>(initialAgent?.engine ?? mission.engines[0]?.id ?? null);
+  const [selectedEngine, setSelectedEngine] = useState<string | null>(initialAgent?.engine ?? mission.engines.find((e) => !e.comingSoon)?.id ?? null);
   const [selectedSkills, setSelectedSkills] = useState<string[]>(dedupeSkills(initialAgent?.skills ?? []));
   const [customSkills, setCustomSkills] = useState<string[]>(initialCustomSkills);
   const [customSkillInput, setCustomSkillInput] = useState("");
@@ -96,8 +96,9 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
   );
 
   useEffect(() => {
-    if (!selectedEngine && mission.engines[0]?.id) {
-      setSelectedEngine(mission.engines[0].id);
+    if (!selectedEngine) {
+      const available = mission.engines.find((e) => !e.comingSoon);
+      if (available) setSelectedEngine(available.id);
     }
   }, [mission.engines, selectedEngine]);
 
@@ -308,23 +309,32 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
               {engineCards.map((engine) => (
                 <button
                   key={engine.id}
-                  onClick={() => setSelectedEngine(engine.id)}
+                  onClick={() => { if (!engine.comingSoon) setSelectedEngine(engine.id); }}
+                  disabled={engine.comingSoon}
                   className={cn(
                     "rounded-xl border bg-gradient-to-br p-3.5 text-left transition-all",
                     engine.color,
-                    selectedEngine === engine.id ? "ring-2 ring-[#5e4ae3] ring-offset-2 ring-offset-[#141415]" : "opacity-60 hover:opacity-100",
+                    engine.comingSoon
+                      ? "cursor-not-allowed opacity-60"
+                      : selectedEngine === engine.id
+                        ? "ring-2 ring-[#5e4ae3] ring-offset-2 ring-offset-[#141415]"
+                        : "opacity-60 hover:opacity-100",
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="text-[13px] font-semibold text-white">{engine.label}</div>
-                    {testResultsByEngine[engine.id]?.currentVersion ? (
+                    {engine.comingSoon ? (
+                      <span className="rounded-full border border-white/[0.12] bg-white/[0.08] px-2 py-0.5 text-[10px] font-medium text-[#918f90]">
+                        Coming Soon
+                      </span>
+                    ) : testResultsByEngine[engine.id]?.currentVersion ? (
                       <span className="rounded-full border border-white/[0.08] bg-black/20 px-2 py-0.5 text-[10px] font-medium text-[#c8c4d7]">
                         v{testResultsByEngine[engine.id]?.currentVersion}
                       </span>
                     ) : null}
                   </div>
                   <div className="mt-0.5 text-[11px] leading-snug text-[#918f90]">{engine.description}</div>
-                  {testResultsByEngine[engine.id] ? (
+                  {!engine.comingSoon && testResultsByEngine[engine.id] ? (
                     <div className={cn("mt-2 text-[10px]", testResultsByEngine[engine.id]?.ok ? "text-emerald-300" : "text-amber-200")}>
                       {describeEngineVersion(testResultsByEngine[engine.id]) ?? testResultsByEngine[engine.id]?.message}
                     </div>

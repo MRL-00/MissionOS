@@ -6,6 +6,7 @@ export const openclawAdapter: EngineAdapter = {
   label: "OpenClaw",
   description: "Calls an OpenClaw-compatible webhook.",
   connectionType: "http",
+  comingSoon: true,
   fields: [
     { key: "webhookUrl", label: "Webhook URL", type: "url", required: true },
     { key: "apiKey", label: "API Key", type: "password" },
@@ -93,6 +94,7 @@ export const hermesAdapter: EngineAdapter = {
   label: "Hermes",
   description: "Hermes is scaffolded but expects externally managed SOUL.md and profile files.",
   connectionType: "local",
+  comingSoon: true,
   fields: [
     { key: "profilePath", label: "Profile Path", type: "text", placeholder: "/path/to/hermes/profile" },
   ],

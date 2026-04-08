@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatClaudeExitMessage, parseClaudeStreamEvent } from "./codex.js";
+import { formatClaudeExitMessage, parseClaudeStreamEvent } from "./claude.js";
 
 function createParserState() {
   return {

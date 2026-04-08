@@ -27,6 +27,7 @@ export interface EngineDefinition {
   description: string;
   connectionType: "cli" | "http" | "local";
   fields: EngineField[];
+  comingSoon?: boolean;
 }
 
 export interface EngineConnectionResult {

@@ -583,7 +583,9 @@ async function executeRun(runId: string) {
 
   const baseConfig = parseJson<Record<string, unknown>>(String(agentRow.connection_config ?? "{}"), {});
   const workingDir = typeof row.working_directory === "string" ? row.working_directory : null;
-  const connectionConfig = workingDir ? { ...baseConfig, workingDirectory: workingDir } : { ...baseConfig };
+  const connectionConfig: Record<string, unknown> & { workingDirectory?: string; model?: string } = workingDir
+    ? { ...baseConfig, workingDirectory: workingDir }
+    : { ...baseConfig };
 
   // Complexity gating: use sonnet for simple tasks on Claude Code engine
   if (String(agentRow.engine) === "claude-code" && isSimpleTask(String(row.prompt ?? ""))) {

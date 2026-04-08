@@ -13,6 +13,7 @@ export interface EngineDefinition {
   description: string;
   connectionType: "cli" | "http" | "local";
   fields: ConnectionField[];
+  comingSoon?: boolean;
 }
 
 export interface EngineTestResult {
