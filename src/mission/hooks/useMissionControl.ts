@@ -77,7 +77,7 @@ import {
   updateSchedule,
   updateProfile,
 } from "../api";
-import { MAIN_VIEWS, PATH_VIEWS, VIEW_PATHS, isMissionView, type MissionView } from "../navigation";
+import { MAIN_VIEWS, PATH_VIEWS, PRE_AUTH_VIEWS, VIEW_PATHS, isMissionView, type MissionView } from "../navigation";
 
 type ConnectionState = "connecting" | "connected" | "offline";
 
@@ -236,14 +236,22 @@ export function useMissionControl() {
     let nextView: MissionView | null = null;
 
     if (!nextBootstrap.hasAccount) {
-      nextView = "setup";
+      if (activeView !== "landing" && activeView !== "setup") {
+        nextView = "landing";
+      }
     } else if (!nextToken || !nextUser) {
-      nextView = "login";
+      if (activeView !== "landing" && activeView !== "login") {
+        nextView = "landing";
+      }
     } else if (!nextBootstrap.hasProject) {
-      nextView = "project-setup";
+      if (activeView !== "project-setup") {
+        nextView = "project-setup";
+      }
     } else if (!nextBootstrap.hasAgents) {
-      nextView = "onboarding";
-    } else if (!MAIN_VIEWS.includes(activeView)) {
+      if (activeView !== "onboarding") {
+        nextView = "onboarding";
+      }
+    } else if (PRE_AUTH_VIEWS.includes(activeView)) {
       nextView = "missions";
     }
 
@@ -462,8 +470,8 @@ export function useMissionControl() {
     setDocContent("");
     setSearchResults({ agents: [], missions: [], issues: [], runs: [], comments: [] });
     setBootstrap((current) => current ?? { hasAccount: true, hasProject: false, hasAgents: false });
-    setActiveViewRaw("login");
-    replacePath("login");
+    setActiveViewRaw("landing");
+    replacePath("landing");
   }
 
   async function saveProfile(input: { displayName: string; avatarEmoji: string }) {
@@ -510,8 +518,8 @@ export function useMissionControl() {
     }
     logout();
     setBootstrap(result.bootstrap);
-    setActiveViewRaw("setup");
-    replacePath("setup");
+    setActiveViewRaw("landing");
+    replacePath("landing");
     return true;
   }
 

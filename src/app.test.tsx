@@ -23,8 +23,8 @@ describe("App", () => {
     );
   });
 
-  it("renders first run account setup when no account exists", async () => {
+  it("renders the landing page when no account exists", async () => {
     render(<App />);
-    expect(await screen.findByText("Create your local account")).toBeInTheDocument();
+    expect(await screen.findByText("Your AI agents,"));
   });
 });

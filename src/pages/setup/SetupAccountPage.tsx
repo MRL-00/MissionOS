@@ -37,13 +37,22 @@ export function SetupAccountPage({ mission }: { mission: MissionControlState }) 
           {mission.error ? <div className="text-[12px] text-red-400">{mission.error}</div> : null}
 
           <div className="flex items-center justify-between pt-2">
-            <MissionLink
-              view="login"
-              navigate={mission.setActiveView}
-              className="rounded-lg border border-white/[0.08] px-4 py-2 text-[13px] font-medium text-[#918f90] transition-colors hover:bg-white/[0.04] hover:text-white"
-            >
-              Existing account
-            </MissionLink>
+            <div className="flex items-center gap-3">
+              <MissionLink
+                view="landing"
+                navigate={mission.setActiveView}
+                className="rounded-lg border border-white/[0.08] px-4 py-2 text-[13px] font-medium text-[#918f90] transition-colors hover:bg-white/[0.04] hover:text-white"
+              >
+                Back
+              </MissionLink>
+              <MissionLink
+                view="login"
+                navigate={mission.setActiveView}
+                className="rounded-lg px-4 py-2 text-[13px] font-medium text-[#918f90] transition-colors hover:text-[#a78bfa]"
+              >
+                Existing account
+              </MissionLink>
+            </div>
             <button
               type="submit"
               disabled={mission.busyKey === "auth:register"}

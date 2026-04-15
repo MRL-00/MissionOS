@@ -1,5 +1,6 @@
 import { useMissionControl } from "./mission/hooks/useMissionControl";
 import { Layout } from "./layout/Layout";
+import { LandingPage } from "./pages/landing/LandingPage";
 import { MissionsDashboard } from "./pages/missions/MissionsDashboard";
 import { AgentRoster } from "./pages/agents/AgentRoster";
 import { OrgChartPage } from "./pages/orgchart/OrgChartPage";
@@ -26,6 +27,10 @@ export function App() {
         </div>
       </div>
     );
+  }
+
+  if (mission.activeView === "landing") {
+    return <LandingPage mission={mission} />;
   }
 
   if (mission.activeView === "setup") {

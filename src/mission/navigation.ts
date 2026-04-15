@@ -1,4 +1,5 @@
 export type MissionView =
+  | "landing"
   | "setup"
   | "login"
   | "project-setup"
@@ -17,10 +18,11 @@ export type MissionView =
 export type MissionNavigate = (view: MissionView, options?: { search?: string }) => void;
 
 export const VIEW_PATHS: Record<MissionView, string> = {
+  landing: "/",
   setup: "/setup",
   login: "/login",
   "project-setup": "/setup/project",
-  missions: "/",
+  missions: "/missions",
   agents: "/agents",
   orgchart: "/org-chart",
   issues: "/issues",
@@ -48,6 +50,12 @@ export const MAIN_VIEWS: MissionView[] = [
   "docs",
   "help",
   "search",
+];
+
+export const PRE_AUTH_VIEWS: MissionView[] = [
+  "landing",
+  "setup",
+  "login",
 ];
 
 export function isMissionView(value: string): value is MissionView {
