@@ -10,7 +10,7 @@ This build turns the office into a local-first mission-control surface with:
 
 ## Runtime configuration
 
-Set these on the office server or Docker/Dokploy deployment:
+Set these on the MissionOS server or Docker/Dokploy deployment:
 
 - `OPENCLAW_URL`
 - `OPENCLAW_TOKEN`
@@ -61,13 +61,13 @@ Polling is the required sync path so local Docker, Dokploy, and Tailscale-hosted
 
 For LAN or Tailscale deployments:
 
-- use `http://<ip>:3001` or a Tailscale HTTPS URL for the office API
+- use `http://<ip>:3001` or a Tailscale HTTPS URL for the MissionOS API
 - set connector base URLs to the OpenClaw/Hermes machine addresses
 - set runtime bridge URLs to the machine that should launch the provider locally
 
 If the frontend is served over `https://`, plain `http://` connector calls may be blocked by the browser as mixed content. In that case:
 
-- expose the office API and connector endpoints through HTTPS, or
+- expose the MissionOS API and connector endpoints through HTTPS, or
 - access them through Tailscale HTTPS / a reverse proxy
 
 ## Runtime bridge
@@ -85,4 +85,4 @@ Run it with:
 pnpm dev:bridge
 ```
 
-The office server can forward provider-linked launches to the bridge using the configured runtime bridge URL.
+The MissionOS server can forward provider-linked launches to the bridge using the configured runtime bridge URL.

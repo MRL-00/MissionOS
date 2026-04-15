@@ -69,7 +69,7 @@ export function getApiBaseLabel(): string {
 export function setApiBaseOverride(rawValue: string): string {
   const normalized = normalizeBaseUrl(rawValue, DEFAULT_API_PORT);
   if (!normalized) {
-    throw new Error("Enter a valid office API URL or host");
+    throw new Error("Enter a valid MissionOS API URL or host");
   }
 
   window.localStorage.setItem(API_BASE_STORAGE_KEY, normalized);

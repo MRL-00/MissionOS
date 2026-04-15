@@ -45,17 +45,17 @@ export function engineConnectionGuide(engine: EngineDefinition): { title: string
     case "pi":
       return {
         title: "Runs locally",
-        body: "Pi runs on the same machine as the office server. Install with `npm install -g @mariozechner/pi-coding-agent` and run `pi` to verify it works. Remote LAN execution needs a bridge or HTTP service on the other machine.",
+        body: "Pi runs on the same machine as the MissionOS server. Install with `npm install -g @mariozechner/pi-coding-agent` and run `pi` to verify it works. Remote LAN execution needs a bridge or HTTP service on the other machine.",
       };
     case "codex":
       return {
         title: "Runs locally",
-        body: "Codex is executed on the same machine as the office server. If you need another computer on the LAN, put a bridge or HTTP wrapper on that machine and point this flow at that endpoint instead.",
+        body: "Codex is executed on the same machine as the MissionOS server. If you need another computer on the LAN, put a bridge or HTTP wrapper on that machine and point this flow at that endpoint instead.",
       };
     case "claude-code":
       return {
         title: "Runs locally",
-        body: "Claude Code runs on the same machine as the office server. Remote LAN execution needs a bridge or HTTP service on the other machine; this onboarding flow does not launch the CLI over the network directly.",
+        body: "Claude Code runs on the same machine as the MissionOS server. Remote LAN execution needs a bridge or HTTP service on the other machine; this onboarding flow does not launch the CLI over the network directly.",
       };
     case "hermes":
       return {

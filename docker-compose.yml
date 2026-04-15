@@ -1,10 +1,10 @@
 services:
-  the-office:
+  missionos:
     build:
       context: .
       args:
         VITE_DEPLOY_VERSION: ${VITE_DEPLOY_VERSION:-vlocal}
-    container_name: the-office
+    container_name: missionos
     restart: unless-stopped
     ports:
       - "5173:5173"

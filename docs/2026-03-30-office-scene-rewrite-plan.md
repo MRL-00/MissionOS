@@ -4,7 +4,7 @@
 
 Goal: Replace the current mission office game/view with a cleaner, Linear-inspired command scene that supports robust pathing, proper occlusion, semantic overlays, and a polished HUD for the five core Hermes agents plus ephemeral subagents.
 
-Architecture: Keep the-office as the control-plane app, but rewrite the office scene as a distinct feature slice with clear boundaries: scene shell UI in React, deterministic office simulation/runtime in Phaser, authored office metadata from map assets, and normalized mission state from the existing mission-control backend. Remove debug-first rendering assumptions and rebuild around production semantics.
+Architecture: Keep MissionOS as the control-plane app, but rewrite the office scene as a distinct feature slice with clear boundaries: scene shell UI in React, deterministic office simulation/runtime in Phaser, authored office metadata from map assets, and normalized mission state from the existing mission-control backend. Remove debug-first rendering assumptions and rebuild around production semantics.
 
 Tech stack: React 19, Vite, TypeScript, Phaser 3, existing mission-control websocket/backend, existing Tiled-authored office assets.
 

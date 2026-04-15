@@ -1,5 +1,5 @@
 #!/bin/bash
-# Auto-deploy the-office from master
+# Auto-deploy MissionOS from master
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

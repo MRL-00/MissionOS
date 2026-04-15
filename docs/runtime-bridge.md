@@ -1,10 +1,10 @@
 # Desktop Runtime Bridge
 
-This setup lets a hosted office UI still drive local tooling on a specific PC per character.
+This setup lets a hosted MissionOS UI still drive local tooling on a specific PC per character.
 
 ## What changed
 
-- The browser can now override the office API target at runtime instead of always assuming `current-host:3001`.
+- The browser can now override the MissionOS API target at runtime instead of always assuming `current-host:3001`.
 - Each character backend link can now store:
   - a `runtimeTarget.baseUrl`
   - an optional `runtimeTarget.launchProfile`
@@ -14,7 +14,7 @@ This setup lets a hosted office UI still drive local tooling on a specific PC pe
 
 ## Office API target
 
-If the UI is hosted on Vercel / Cloudflare, use the new `Server` button in the top bar and point it at the desktop office server, for example:
+If the UI is hosted on Vercel / Cloudflare, use the new `Server` button in the top bar and point it at the desktop MissionOS server, for example:
 
 - `http://192.168.1.20:3001`
 - `https://office-box.example.com`
@@ -36,7 +36,7 @@ Example:
 - PC Bridge URL: `http://192.168.1.42:3012`
 - Launch Profile: `zoe-codex`
 
-When that character is spawned through `/api/agent/spawn`, the office server will call:
+When that character is spawned through `/api/agent/spawn`, the MissionOS server will call:
 
 - `POST <PC Bridge URL>/api/office/spawn`
 
@@ -81,4 +81,4 @@ pnpm dev:bridge
 
 ## Important deployment note
 
-If the UI is served over `https://`, browsers may block plain `http://` calls to a LAN IP as mixed content. In that case, expose the office API / bridge over HTTPS or use a secure tunnel such as Tailscale, Caddy, or another reverse proxy that gives the desktop machine a trusted HTTPS endpoint.
+If the UI is served over `https://`, browsers may block plain `http://` calls to a LAN IP as mixed content. In that case, expose the MissionOS API / bridge over HTTPS or use a secure tunnel such as Tailscale, Caddy, or another reverse proxy that gives the desktop machine a trusted HTTPS endpoint.
