@@ -121,7 +121,7 @@ export function Sidebar({ activeView, onNavigate, showOnboarding, projectLogo }:
         ))}
       </nav>
 
-      <div className="mt-auto border-t border-white/[0.06] px-3 pt-3 pb-4">
+      <div className="mt-auto border-t border-white/[0.06] bg-black px-3 pt-3 pb-4">
         <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6f6b74]">Resources</p>
         <div className="flex flex-col gap-0.5">{RESOURCE_ITEMS.map(renderNavButton)}</div>
       </div>
