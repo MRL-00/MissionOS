@@ -8,9 +8,13 @@ export function SetupAccountPage({ mission }: { mission: MissionControlState }) 
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
 
-  async function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const ok = await mission.register({ username, password, displayName });
+    const formData = new FormData(event.currentTarget);
+    const nextUsername = String(formData.get("username") ?? "");
+    const nextDisplayName = String(formData.get("displayName") ?? "");
+    const nextPassword = String(formData.get("password") ?? "");
+    const ok = await mission.register({ username: nextUsername, password: nextPassword, displayName: nextDisplayName });
     if (ok) {
       setUsername("");
       setDisplayName("");
@@ -30,9 +34,9 @@ export function SetupAccountPage({ mission }: { mission: MissionControlState }) 
         </div>
 
         <form className="space-y-4" onSubmit={handleSubmit}>
-          <Field label="Username" value={username} onChange={setUsername} placeholder="operator" />
-          <Field label="Display Name" value={displayName} onChange={setDisplayName} placeholder="Mission Control" />
-          <Field label="Password" value={password} onChange={setPassword} placeholder="••••••••" type="password" />
+          <Field label="Username" name="username" value={username} onChange={setUsername} placeholder="operator" autoComplete="username" />
+          <Field label="Display Name" name="displayName" value={displayName} onChange={setDisplayName} placeholder="Mission Control" autoComplete="name" />
+          <Field label="Password" name="password" value={password} onChange={setPassword} placeholder="••••••••" type="password" autoComplete="new-password" />
 
           {mission.error ? <div className="text-[12px] text-red-400">{mission.error}</div> : null}
 
@@ -69,22 +73,30 @@ export function SetupAccountPage({ mission }: { mission: MissionControlState }) 
 
 function Field({
   label,
+  name,
   value,
   onChange,
   placeholder,
   type = "text",
+  autoComplete,
 }: {
   label: string;
+  name: string;
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   type?: string;
+  autoComplete?: string;
 }) {
+  const id = `setup-${name}`;
   return (
     <div>
-      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">{label}</label>
+      <label htmlFor={id} className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">{label}</label>
       <input
+        id={id}
+        name={name}
         type={type}
+        autoComplete={autoComplete}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}

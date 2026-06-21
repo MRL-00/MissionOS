@@ -3,7 +3,7 @@ import type { Response } from "express";
 import { isDelegationOnlyAgent, isImplementationAgent, isIosSpecificTask } from "./agentClassification.js";
 import { getDb, parseJson } from "./db.js";
 import { engineMap } from "./engines/index.js";
-import { extractPlan, getReadySteps, validatePlan } from "./executionPlan.js";
+import { extractPlan, getPlanProgressStatus, getReadySteps, validatePlan } from "./executionPlan.js";
 import type { ExecutionPlan } from "./executionPlan.js";
 import { createGitHubPR } from "./github-service.js";
 import {
@@ -12,6 +12,7 @@ import {
   pushBranch,
   formatIssueKey,
   makeBranchName,
+  parseGitHubRepoFullName,
 } from "./git-workspace.js";
 import { buildRunPrompt } from "./runPrompt.js";
 
@@ -30,8 +31,21 @@ export function publishRunEvent(runId: string, payload: Record<string, unknown>)
   }
 
   const data = `data: ${JSON.stringify(payload)}\n\n`;
+  const terminalEvent = payload.type === "complete" || payload.type === "error";
   for (const subscriber of subscribers) {
-    subscriber.write(data);
+    try {
+      subscriber.write(data);
+      if (terminalEvent) {
+        subscriber.end();
+        subscribers.delete(subscriber);
+      }
+    } catch {
+      subscribers.delete(subscriber);
+    }
+  }
+
+  if (subscribers.size === 0) {
+    runSubscribers.delete(runId);
   }
 }
 
@@ -44,6 +58,29 @@ export function insertAgentComment(issueId: string, agentId: string, body: strin
        VALUES (?, ?, NULL, 'agent', ?, ?)`,
     )
     .run(randomUUID(), issueId, agentId, body);
+}
+
+export function formatRunFailureOutput(output: string, message: string): string {
+  return `${output}${output ? "\n\n" : ""}[error] ${message}`;
+}
+
+export function recordRunFailure(runId: string, message: string, startedAt: number, output = ""): string {
+  const failedOutput = formatRunFailureOutput(output, message);
+  getDb()
+    .prepare(
+      `
+      UPDATE runs
+      SET status = 'failed', output = ?, finished_at = datetime('now'), duration_ms = ?
+      WHERE id = ?
+      `,
+    )
+    .run(failedOutput, Math.max(0, Date.now() - startedAt), runId);
+  publishRunEvent(runId, { type: "error", message, output: failedOutput });
+  return failedOutput;
+}
+
+export function isAgentRowActive(agent: Record<string, unknown> | undefined): boolean {
+  return agent?.active === 1;
 }
 
 // Re-export classification functions for backward compatibility
@@ -80,6 +117,53 @@ type DelegationContext = {
   githubRepo?: string;
   baseBranch?: string;
 };
+
+type GitHubRunContext = {
+  owner: string;
+  repo: string;
+  fullName: string;
+  baseBranch: string;
+};
+
+export function resolveGitHubRunContext(issueId: string, missionId: string | null): GitHubRunContext | null {
+  const row = getDb()
+    .prepare(
+      `
+      SELECT
+        issues.github_repo AS issue_github_repo,
+        issues.mission_id AS issue_mission_id,
+        missions.github_repo AS mission_github_repo,
+        missions.github_default_branch AS mission_github_default_branch
+      FROM issues
+      LEFT JOIN missions ON missions.id = COALESCE(?, issues.mission_id)
+      WHERE issues.id = ?
+      `,
+    )
+    .get(missionId, issueId) as
+    | {
+        issue_github_repo: string | null;
+        issue_mission_id: string | null;
+        mission_github_repo: string | null;
+        mission_github_default_branch: string | null;
+      }
+    | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  const fullName = row.issue_github_repo?.trim() || row.mission_github_repo?.trim();
+  const parsed = parseGitHubRepoFullName(fullName);
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    ...parsed,
+    fullName: `${parsed.owner}/${parsed.repo}`,
+    baseBranch: row.mission_github_default_branch?.trim() || "main",
+  };
+}
 
 export function buildDelegationMessage(
   fromAgent: Record<string, unknown>,
@@ -155,6 +239,53 @@ export function stripPromptEcho(output: string, prompts: Array<string | undefine
   return output;
 }
 
+export function resolveActiveAgentByName(
+  database: ReturnType<typeof getDb>,
+  agentName: string,
+  missionId: string | null,
+): Record<string, unknown> | undefined {
+  if (missionId) {
+    return database
+      .prepare(
+        `
+        SELECT agents.*
+        FROM agents
+        JOIN mission_agents ON mission_agents.agent_id = agents.id
+        WHERE mission_agents.mission_id = ? AND lower(agents.name) = lower(?) AND agents.active = 1
+        ORDER BY agents.created_at ASC
+        LIMIT 1
+        `,
+      )
+      .get(missionId, agentName) as Record<string, unknown> | undefined;
+  }
+
+  return database
+    .prepare("SELECT * FROM agents WHERE lower(name) = lower(?) AND active = 1 ORDER BY created_at ASC LIMIT 1")
+    .get(agentName) as Record<string, unknown> | undefined;
+}
+
+export function listActiveAgentNamesForMission(database: ReturnType<typeof getDb>, missionId: string | null): string[] {
+  if (missionId) {
+    return (
+      database
+        .prepare(
+          `
+          SELECT agents.name
+          FROM mission_agents
+          JOIN agents ON agents.id = mission_agents.agent_id
+          WHERE mission_agents.mission_id = ? AND agents.active = 1
+          ORDER BY agents.name COLLATE NOCASE
+          `,
+        )
+        .all(missionId) as Array<{ name: string }>
+    ).map((agent) => agent.name);
+  }
+
+  return (database.prepare("SELECT name FROM agents WHERE active = 1 ORDER BY name COLLATE NOCASE").all() as Array<{ name: string }>).map(
+    (agent) => agent.name,
+  );
+}
+
 function findExistingChildRun(input: {
   parentRunId: string;
   agentId: string;
@@ -219,9 +350,7 @@ async function processAgentDirectives(
       continue;
     }
 
-    const target = db
-      .prepare("SELECT * FROM agents WHERE lower(name) = lower(?) LIMIT 1")
-      .get(agentName) as Record<string, unknown> | undefined;
+    const target = resolveActiveAgentByName(db, agentName, missionId);
     if (!target || String(target.id) === fromAgentId) {
       continue;
     }
@@ -264,9 +393,7 @@ async function processAgentDirectives(
 
   if (delegatedCount === 0 && (orchestrationOnly || hasCollabSignal) && missionId && rawPrompt) {
     const fallbackTargetName = isIosSpecificTask(rawPrompt) ? "Cody" : "Claudy";
-    const fallbackTarget = db
-      .prepare("SELECT * FROM agents WHERE lower(name) = lower(?) LIMIT 1")
-      .get(fallbackTargetName) as Record<string, unknown> | undefined;
+    const fallbackTarget = resolveActiveAgentByName(db, fallbackTargetName, missionId);
 
     if (fallbackTarget && String(fallbackTarget.id) !== fromAgentId) {
       const fallbackMessage = buildDelegationMessage(fromAgent, fallbackTargetName, {
@@ -337,6 +464,9 @@ export async function createRunRecord(input: {
   if (!agentRow) {
     throw new Error("Agent not found.");
   }
+  if (!isAgentRowActive(agentRow)) {
+    throw new Error("Agent is inactive.");
+  }
 
   const adapter = engineMap.get(String(agentRow.engine));
   if (!adapter) {
@@ -352,15 +482,9 @@ export async function createRunRecord(input: {
   const parentRunId = input.parentRunId ?? null;
   const planStepId = input.planStepId ?? null;
 
-  if (issueId && missionId && isImplementationAgent(agentRow)) {
-    const mission = db.prepare("SELECT github_repo, github_default_branch FROM missions WHERE id = ?").get(missionId) as {
-      github_repo: string | null;
-      github_default_branch: string | null;
-    } | undefined;
-
-    if (mission?.github_repo) {
-      const [owner, repo] = mission.github_repo.split("/");
-      if (owner && repo) {
+  if (issueId && isImplementationAgent(agentRow)) {
+    const githubRepo = resolveGitHubRunContext(issueId, missionId);
+    if (githubRepo) {
         try {
           const issue = db.prepare("SELECT title, issue_number FROM issues WHERE id = ?").get(issueId) as
             | { title: string; issue_number: number | null }
@@ -370,13 +494,12 @@ export async function createRunRecord(input: {
             | undefined;
           const issueKey = formatIssueKey(issue?.issue_number, issuePrefixRow?.value, issueId);
           const branchName = makeBranchName(String(agentRow.name), issueKey, issue?.title ?? "work");
-          workingDirectory = await ensureRepo(owner, repo, issueId);
-          await createFeatureBranch(workingDirectory, branchName, mission.github_default_branch ?? "main");
+          workingDirectory = await ensureRepo(githubRepo.owner, githubRepo.repo, issueId);
+          await createFeatureBranch(workingDirectory, branchName, githubRepo.baseBranch);
           githubBranch = branchName;
         } catch (error) {
           console.error("[github] Failed to prepare workspace:", error);
         }
-      }
     }
   }
 
@@ -393,7 +516,10 @@ export async function createRunRecord(input: {
       .run(issueId);
   }
 
-  void executeRun(runId);
+  void executeRun(runId).catch((error) => {
+    const message = error instanceof Error ? error.message : "Run failed.";
+    recordRunFailure(runId, message, Date.now());
+  });
   return runId;
 }
 
@@ -415,9 +541,7 @@ async function processPlan(
   let spawnedCount = 0;
 
   for (const step of readySteps) {
-    const target = db
-      .prepare("SELECT * FROM agents WHERE lower(name) = lower(?) LIMIT 1")
-      .get(step.agent) as Record<string, unknown> | undefined;
+    const target = resolveActiveAgentByName(db, step.agent, missionId);
     if (!target || String(target.id) === fromAgentId) {
       continue;
     }
@@ -478,16 +602,14 @@ async function checkPlanProgress(parentRunId: string): Promise<void> {
 
   const completedStepIds = new Set<string>();
   const startedStepIds = new Set<string>();
-  let allTerminal = true;
+  const stepStatuses = new Map<string, string>();
 
   for (const child of childRows) {
     if (child.plan_step_id) {
       startedStepIds.add(child.plan_step_id);
+      stepStatuses.set(child.plan_step_id, child.status);
       if (child.status === "complete") {
         completedStepIds.add(child.plan_step_id);
-      }
-      if (child.status !== "complete" && child.status !== "failed") {
-        allTerminal = false;
       }
     }
   }
@@ -499,9 +621,7 @@ async function checkPlanProgress(parentRunId: string): Promise<void> {
   const fromAgentId = String(parentRow.agent_id);
 
   for (const step of readySteps) {
-    const target = db
-      .prepare("SELECT * FROM agents WHERE lower(name) = lower(?) LIMIT 1")
-      .get(step.agent) as Record<string, unknown> | undefined;
+    const target = resolveActiveAgentByName(db, step.agent, missionId);
     if (!target || String(target.id) === fromAgentId) {
       continue;
     }
@@ -537,17 +657,19 @@ async function checkPlanProgress(parentRunId: string): Promise<void> {
     ).run(randomUUID(), fromAgentId, String(target.id), missionId, parentRunId, step.task);
   }
 
-  // Check if all plan steps are terminal
-  if (allTerminal && readySteps.length === 0 && startedStepIds.size >= plan.plan.length) {
-    const hasFailures = childRows.some((c) => c.status === "failed");
-    const finalStatus = hasFailures ? "failed" : "complete";
+  const planStatus = getPlanProgressStatus(plan, stepStatuses);
+  if (planStatus !== "running") {
     db.prepare(
       `
       UPDATE runs
       SET status = ?, finished_at = datetime('now')
-      WHERE id = ? AND status = 'complete'
+      WHERE id = ? AND status = 'running'
       `,
-    ).run(finalStatus, parentRunId);
+    ).run(planStatus, parentRunId);
+    publishRunEvent(parentRunId, {
+      type: planStatus === "complete" ? "complete" : "error",
+      status: planStatus,
+    });
   }
 }
 
@@ -560,21 +682,19 @@ async function executeRun(runId: string) {
     return;
   }
 
+  const startedAt = Date.now();
   const agentRow = db.prepare("SELECT * FROM agents WHERE id = ?").get(String(row.agent_id)) as Record<string, unknown> | undefined;
   if (!agentRow) {
-    db.prepare("UPDATE runs SET status = 'failed', output = ? WHERE id = ?").run("Agent not found.", runId);
-    publishRunEvent(runId, { type: "error", message: "Agent not found." });
+    recordRunFailure(runId, "Agent not found.", startedAt);
     return;
   }
 
   const adapter = engineMap.get(String(agentRow.engine));
   if (!adapter) {
-    db.prepare("UPDATE runs SET status = 'failed', output = ? WHERE id = ?").run("Engine not supported.", runId);
-    publishRunEvent(runId, { type: "error", message: "Engine not supported." });
+    recordRunFailure(runId, "Engine not supported.", startedAt);
     return;
   }
 
-  const startedAt = Date.now();
   let output = "";
 
   if (row.issue_id) {
@@ -617,6 +737,7 @@ async function executeRun(runId: string) {
     }
 
     let delegatedCount = 0;
+    let planDelegated = false;
 
     db.prepare(
       `
@@ -625,14 +746,13 @@ async function executeRun(runId: string) {
       WHERE id = ?
       `,
     ).run(output, Date.now() - startedAt, runId);
-    publishRunEvent(runId, { type: "complete", output, duration_ms: Date.now() - startedAt });
 
     // Plan-based delegation for orchestrator agents
     const parsedOutput = stripPromptEcho(output, [fullPrompt, rawPrompt]);
     if (isDelegationOnlyAgent(agentRow)) {
       const plan = extractPlan(parsedOutput);
       if (plan) {
-        const agentNames = (db.prepare("SELECT name FROM agents WHERE active = 1").all() as Array<{ name: string }>).map((a) => a.name);
+        const agentNames = listActiveAgentNamesForMission(db, (row.mission_id as string | null) ?? null);
         const validation = validatePlan(plan, agentNames);
         if (validation.valid) {
           delegatedCount = await processPlan(
@@ -642,6 +762,7 @@ async function executeRun(runId: string) {
             (row.issue_id as string | null) ?? null,
             String(agentRow.id),
           );
+          planDelegated = delegatedCount > 0;
         } else {
           console.warn(`[plan] Invalid plan from ${String(agentRow.name)}: ${validation.error}`);
         }
@@ -659,18 +780,17 @@ async function executeRun(runId: string) {
       );
     }
 
+    if (planDelegated) {
+      db.prepare("UPDATE runs SET status = 'running', finished_at = NULL WHERE id = ?").run(runId);
+      publishRunEvent(runId, { type: "delegated", status: "running", output, delegated_count: delegatedCount });
+    }
+
     // After successful run, push branch and create PR if GitHub-linked
     const ghBranch = typeof row.github_branch === "string" ? row.github_branch : null;
-    if (workingDir && ghBranch && row.mission_id) {
+    if (workingDir && ghBranch && row.issue_id) {
       try {
-        const mission = db.prepare("SELECT github_repo, github_default_branch FROM missions WHERE id = ?").get(String(row.mission_id)) as {
-          github_repo: string | null;
-          github_default_branch: string | null;
-        } | undefined;
-
-        if (mission?.github_repo) {
-          const [owner, repo] = mission.github_repo.split("/");
-          if (owner && repo) {
+        const githubRepo = resolveGitHubRunContext(String(row.issue_id), (row.mission_id as string | null) ?? null);
+        if (githubRepo) {
             await pushBranch(workingDir, ghBranch);
             const issue = row.issue_id
               ? (db.prepare("SELECT title, github_number, issue_number FROM issues WHERE id = ?").get(String(row.issue_id)) as
@@ -685,9 +805,8 @@ async function executeRun(runId: string) {
             const prTitle = buildPullRequestTitle(String(agentRow.name), issue?.title, issueKey, ghBranch);
             const ghIssueRef = issue?.github_number ? `\n\nCloses #${issue.github_number}` : "";
             const prBody = `Automated changes by agent **${String(agentRow.name)}**.${ghIssueRef}`;
-            const baseBranch = mission.github_default_branch ?? "main";
 
-            const pr = await createGitHubPR(owner, repo, ghBranch, baseBranch, prTitle, prBody);
+            const pr = await createGitHubPR(githubRepo.owner, githubRepo.repo, ghBranch, githubRepo.baseBranch, prTitle, prBody);
             db.prepare("UPDATE runs SET github_pr_url = ? WHERE id = ?").run(pr.html_url, runId);
 
             if (row.issue_id) {
@@ -696,7 +815,6 @@ async function executeRun(runId: string) {
             }
 
             publishRunEvent(runId, { type: "pr_created", pr_url: pr.html_url, pr_number: pr.number });
-          }
         }
       } catch (prError) {
         console.error("[github] Failed to push/create PR:", prError);
@@ -721,6 +839,10 @@ async function executeRun(runId: string) {
       );
     }
 
+    if (!planDelegated) {
+      publishRunEvent(runId, { type: "complete", output, duration_ms: Date.now() - startedAt });
+    }
+
     // Advance parent plan if this run is a child step
     const parentRunId = row.parent_run_id as string | null;
     if (parentRunId) {
@@ -728,15 +850,7 @@ async function executeRun(runId: string) {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Run failed.";
-    const failedOutput = `${output}${output ? "\n\n" : ""}[error] ${message}`;
-    db.prepare(
-      `
-      UPDATE runs
-      SET status = 'failed', output = ?, finished_at = datetime('now'), duration_ms = ?
-      WHERE id = ?
-      `,
-    ).run(failedOutput, Date.now() - startedAt, runId);
-    publishRunEvent(runId, { type: "error", message, output: failedOutput });
+    recordRunFailure(runId, message, startedAt, output);
 
     if (row.issue_id) {
       insertAgentComment(

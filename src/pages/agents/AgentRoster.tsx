@@ -10,7 +10,6 @@ interface AgentRosterProps {
   mission: MissionControlState;
 }
 
-type EngineFilter = "all" | "OpenClaw" | "Claude" | "Codex" | "Hermes" | "Cursor" | "Pi";
 type StatusFilter = "all" | "Running" | "Active" | "Idle" | "Offline";
 
 const STATUS_DOT: Record<string, string> = {
@@ -30,13 +29,14 @@ const ENGINE_BADGE: Record<string, string> = {
 };
 
 export function AgentRoster({ mission }: AgentRosterProps) {
-  const [engineFilter, setEngineFilter] = useState<EngineFilter>("all");
+  const [engineFilter, setEngineFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editAgentId, setEditAgentId] = useState<string | null>(null);
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const contextAgent = contextMenuId ? mission.agents.find((agent) => agent.id === contextMenuId) : null;
 
   const agents = useMemo(() => {
     return mission.derivedAgents.filter((agent) => {
@@ -46,6 +46,35 @@ export function AgentRoster({ mission }: AgentRosterProps) {
       return true;
     });
   }, [engineFilter, mission.derivedAgents, search, statusFilter]);
+  const engineOptions = useMemo(
+    () => ["all", ...Array.from(new Set(mission.derivedAgents.map((agent) => agent.engineLabel))).sort((left, right) => left.localeCompare(right))],
+    [mission.derivedAgents],
+  );
+
+  const agentDeleteBlocker = useMemo(() => {
+    if (!contextMenuId) {
+      return null;
+    }
+    const assignedMission = mission.missions.some((missionRecord) =>
+      missionRecord.lead_agent_id === contextMenuId || missionRecord.assigned_agents.some((agent) => agent.id === contextMenuId),
+    );
+    if (assignedMission) {
+      return "Reassign this agent from missions before deleting it.";
+    }
+    if (mission.issues.some((issue) => issue.assignee_agent_id === contextMenuId)) {
+      return "Reassign this agent's issues before deleting it.";
+    }
+    if (mission.runs.some((run) => run.agent_id === contextMenuId)) {
+      return "Remove this agent's runs before deleting it.";
+    }
+    if (mission.agentMessages.some((message) => message.from_agent_id === contextMenuId || message.to_agent_id === contextMenuId)) {
+      return "Remove this agent's messages before deleting it.";
+    }
+    if (mission.schedules.some((schedule) => schedule.agent_id === contextMenuId)) {
+      return "Remove this agent's schedules before deleting it.";
+    }
+    return null;
+  }, [contextMenuId, mission.agentMessages, mission.issues, mission.missions, mission.runs, mission.schedules]);
 
   return (
     <div className="flex h-full flex-col p-6">
@@ -76,7 +105,7 @@ export function AgentRoster({ mission }: AgentRosterProps) {
             className="flex-1 bg-transparent text-[12px] text-white outline-none placeholder:text-[#585658]"
           />
         </div>
-        <FilterDropdown label="Engine" value={engineFilter} options={["all", "OpenClaw", "Claude", "Codex", "Hermes", "Cursor", "Pi"]} onChange={(value) => setEngineFilter(value as EngineFilter)} />
+        <FilterDropdown label="Engine" value={engineFilter} options={engineOptions} onChange={setEngineFilter} />
         <FilterDropdown label="Status" value={statusFilter} options={["all", "Running", "Active", "Idle", "Offline"]} onChange={(value) => setStatusFilter(value as StatusFilter)} />
         <span className="ml-auto text-[11px] text-[#585658]">
           {agents.length === mission.agents.length ? `${agents.length} agents` : `${agents.length} of ${mission.agents.length}`}
@@ -146,6 +175,7 @@ export function AgentRoster({ mission }: AgentRosterProps) {
                   setMenuPosition({ top: rect.bottom + 4, left: rect.right - 160 });
                   setContextMenuId(contextMenuId === agent.id ? null : agent.id);
                 }}
+                aria-label={`Open ${agent.name} actions`}
                 className="rounded-lg p-1.5 text-[#585658] opacity-0 transition-all group-hover:opacity-100 hover:bg-white/[0.06] hover:text-white"
               >
                 <MoreHorizontalIcon className="size-4" />
@@ -187,14 +217,30 @@ export function AgentRoster({ mission }: AgentRosterProps) {
             </button>
             <button
               onClick={async () => {
+                if (agentDeleteBlocker) {
+                  return;
+                }
                 await mission.removeAgent(contextMenuId);
                 setContextMenuId(null);
               }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-red-400 transition-colors hover:bg-red-500/10"
+              disabled={Boolean(agentDeleteBlocker)}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-red-400 transition-colors hover:bg-red-500/10",
+                agentDeleteBlocker && "cursor-not-allowed opacity-45",
+              )}
             >
               <Trash2Icon className="size-3.5" />
               Delete Agent
             </button>
+            {agentDeleteBlocker ? (
+              <div className="border-t border-white/[0.06] px-3 py-2 text-[11px] leading-snug text-[#918f90]">
+                {agentDeleteBlocker}
+              </div>
+            ) : contextAgent ? (
+              <div className="border-t border-white/[0.06] px-3 py-2 text-[11px] leading-snug text-[#918f90]">
+                Deletes {contextAgent.name} permanently.
+              </div>
+            ) : null}
           </div>
         </>
       ) : null}
@@ -253,7 +299,7 @@ function FilterDropdown({ label, value, options, onChange }: { label: string; va
       <FilterIcon className="size-3 text-[#585658]" />
       <Select value={value} onValueChange={(v) => onChange(v ?? "all")}>
         <SelectTrigger size="sm" className="border-white/[0.06] bg-[#1c1b1c] text-[11px] text-[#918f90]">
-          <SelectValue placeholder={`All ${label}s`} />
+          <SelectValue placeholder={`All ${label}s`}>{value === "all" ? `All ${label}s` : value}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {options.map((option) => (

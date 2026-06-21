@@ -7,9 +7,12 @@ export function LoginPage({ mission }: { mission: MissionControlState }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
-  async function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const ok = await mission.login({ username, password });
+    const formData = new FormData(event.currentTarget);
+    const nextUsername = String(formData.get("username") ?? "");
+    const nextPassword = String(formData.get("password") ?? "");
+    const ok = await mission.login({ username: nextUsername, password: nextPassword });
     if (ok) {
       setUsername("");
       setPassword("");
@@ -26,8 +29,8 @@ export function LoginPage({ mission }: { mission: MissionControlState }) {
         </div>
 
         <form className="space-y-4" onSubmit={handleSubmit}>
-          <Field label="Username" value={username} onChange={setUsername} placeholder="operator" />
-          <Field label="Password" value={password} onChange={setPassword} placeholder="••••••••" type="password" />
+          <Field label="Username" name="username" value={username} onChange={setUsername} placeholder="operator" autoComplete="username" />
+          <Field label="Password" name="password" value={password} onChange={setPassword} placeholder="••••••••" type="password" autoComplete="current-password" />
 
           {mission.error ? <div className="text-[12px] text-red-400">{mission.error}</div> : null}
 
@@ -40,13 +43,15 @@ export function LoginPage({ mission }: { mission: MissionControlState }) {
               >
                 Back
               </MissionLink>
-              <MissionLink
-                view="setup"
-                navigate={mission.setActiveView}
-                className="rounded-lg px-4 py-2 text-[13px] font-medium text-[#918f90] transition-colors hover:text-[#a78bfa]"
-              >
-                Create account
-              </MissionLink>
+              {!mission.bootstrap?.hasAccount ? (
+                <MissionLink
+                  view="setup"
+                  navigate={mission.setActiveView}
+                  className="rounded-lg px-4 py-2 text-[13px] font-medium text-[#918f90] transition-colors hover:text-[#a78bfa]"
+                >
+                  Create account
+                </MissionLink>
+              ) : null}
             </div>
             <button
               type="submit"
@@ -64,22 +69,30 @@ export function LoginPage({ mission }: { mission: MissionControlState }) {
 
 function Field({
   label,
+  name,
   value,
   onChange,
   placeholder,
   type = "text",
+  autoComplete,
 }: {
   label: string;
+  name: string;
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   type?: string;
+  autoComplete?: string;
 }) {
+  const id = `login-${name}`;
   return (
     <div>
-      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">{label}</label>
+      <label htmlFor={id} className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">{label}</label>
       <input
+        id={id}
+        name={name}
         type={type}
+        autoComplete={autoComplete}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}

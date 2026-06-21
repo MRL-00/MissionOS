@@ -18,6 +18,48 @@ import type {
 } from "./appTypes";
 
 export const AUTH_TOKEN_STORAGE_KEY = "missionos.jwt";
+export const WORKSPACE_AGENT_LIMIT = "5000";
+export const WORKSPACE_RELATIONSHIP_LIMIT = "10000";
+export const WORKSPACE_MISSION_LIMIT = "2000";
+export const WORKSPACE_ISSUE_LIMIT = "1000";
+export const WORKSPACE_RUN_LIMIT = "1000";
+export const WORKSPACE_SCHEDULE_LIMIT = "1000";
+export const ISSUE_COMMENT_LIMIT = "1000";
+
+export function parseResponsePayload(text: string): unknown {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+export function formatRequestError(status: number, payload: unknown): string {
+  if (typeof payload === "object" && payload !== null && "error" in payload) {
+    return String((payload as { error?: unknown }).error ?? "Request failed");
+  }
+  return `Request failed with status ${status}`;
+}
+
+export class RequestError extends Error {
+  readonly status: number;
+  readonly payload: unknown;
+
+  constructor(status: number, payload: unknown) {
+    super(formatRequestError(status, payload));
+    this.name = "RequestError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+export function isUnauthorizedRequestError(error: unknown): boolean {
+  return error instanceof RequestError && error.status === 401;
+}
 
 async function requestJson<T>(path: string, init?: RequestInit, token?: string | null): Promise<T> {
   const response = await fetch(`${getApiBase()}${path}`, {
@@ -30,14 +72,10 @@ async function requestJson<T>(path: string, init?: RequestInit, token?: string |
   });
 
   const text = await response.text().catch(() => "");
-  const payload = text ? (JSON.parse(text) as unknown) : null;
+  const payload = parseResponsePayload(text);
 
   if (!response.ok) {
-    const message =
-      typeof payload === "object" && payload !== null && "error" in payload
-        ? String((payload as { error?: unknown }).error ?? "Request failed")
-        : `Request failed with status ${response.status}`;
-    throw new Error(message);
+    throw new RequestError(response.status, payload);
   }
 
   return payload as T;
@@ -110,9 +148,10 @@ export function createProject(token: string, input: { name: string; description:
   }, token);
 }
 
-export function resetProject(token: string) {
+export function resetProject(token: string, confirmName: string) {
   return requestJson<{ ok: boolean; bootstrap: BootstrapState }>("/api/project", {
     method: "DELETE",
+    body: JSON.stringify({ confirmName }),
   }, token);
 }
 
@@ -132,7 +171,7 @@ export function testEngineConnection(token: string, engineId: string, config: Re
 }
 
 export function fetchAgents(token: string) {
-  return requestJson<{ agents: AgentRecord[] }>("/api/agents", undefined, token);
+  return requestJson<{ agents: AgentRecord[] }>(`/api/agents?limit=${WORKSPACE_AGENT_LIMIT}`, undefined, token);
 }
 
 export function createAgent(token: string, input: Record<string, unknown>) {
@@ -162,7 +201,7 @@ export function testAgentConnection(token: string, agentId: string) {
 }
 
 export function fetchRelationships(token: string) {
-  return requestJson<{ relationships: RelationshipRecord[] }>("/api/relationships", undefined, token);
+  return requestJson<{ relationships: RelationshipRecord[] }>(`/api/relationships?limit=${WORKSPACE_RELATIONSHIP_LIMIT}`, undefined, token);
 }
 
 export function createRelationship(token: string, input: { parent_id: string; child_id: string }) {
@@ -186,7 +225,7 @@ export function savePositions(token: string, positions: Array<{ agent_id: string
 }
 
 export function fetchMissions(token: string) {
-  return requestJson<{ missions: MissionRecord[] }>("/api/missions", undefined, token);
+  return requestJson<{ missions: MissionRecord[] }>(`/api/missions?limit=${WORKSPACE_MISSION_LIMIT}`, undefined, token);
 }
 
 export function createMission(token: string, input: Record<string, unknown>) {
@@ -230,6 +269,7 @@ export function startMission(token: string, missionId: string) {
 
 export function fetchIssues(token: string, params?: Record<string, string | undefined>) {
   const search = new URLSearchParams();
+  search.set("limit", WORKSPACE_ISSUE_LIMIT);
   Object.entries(params ?? {}).forEach(([key, value]) => {
     if (value) {
       search.set(key, value);
@@ -260,7 +300,11 @@ export function deleteIssue(token: string, issueId: string) {
 }
 
 export function fetchIssueComments(token: string, issueId: string) {
-  return requestJson<{ comments: IssueCommentRecord[] }>(`/api/issues/${encodeURIComponent(issueId)}/comments`, undefined, token);
+  return requestJson<{ comments: IssueCommentRecord[] }>(
+    `/api/issues/${encodeURIComponent(issueId)}/comments?limit=${ISSUE_COMMENT_LIMIT}`,
+    undefined,
+    token,
+  );
 }
 
 export function createIssueComment(token: string, issueId: string, input: { body: string; parentId?: string }) {
@@ -282,6 +326,7 @@ export function syncLinearIssues(token: string) {
 
 export function fetchRuns(token: string, params?: Record<string, string | undefined>) {
   const search = new URLSearchParams();
+  search.set("limit", WORKSPACE_RUN_LIMIT);
   Object.entries(params ?? {}).forEach(([key, value]) => {
     if (value) {
       search.set(key, value);
@@ -291,12 +336,17 @@ export function fetchRuns(token: string, params?: Record<string, string | undefi
   return requestJson<{ runs: RunRecord[] }>(`/api/runs${suffix}`, undefined, token);
 }
 
-export function fetchSchedules(token: string) {
-  return requestJson<{ schedules: ScheduleRecord[] }>("/api/schedules", undefined, token);
+export function fetchSchedules(token: string, params?: { mission_id?: string; limit?: string }) {
+  const search = new URLSearchParams({ limit: params?.limit ?? String(WORKSPACE_SCHEDULE_LIMIT) });
+  if (params?.mission_id) {
+    search.set("mission_id", params.mission_id);
+  }
+  return requestJson<{ schedules: ScheduleRecord[] }>(`/api/schedules?${search.toString()}`, undefined, token);
 }
 
 export function createSchedule(token: string, input: {
   name: string;
+  mission_id?: string | null;
   agent_id: string;
   prompt: string;
   cron_expression: string;
@@ -311,6 +361,7 @@ export function createSchedule(token: string, input: {
 
 export function updateSchedule(token: string, scheduleId: string, input: {
   name: string;
+  mission_id?: string | null;
   agent_id: string;
   prompt: string;
   cron_expression: string;
@@ -352,10 +403,30 @@ export function deleteRun(token: string, runId: string) {
   }, token);
 }
 
+export type RunStreamEvent = { type: string; output?: string; chunk?: string; message?: string; status?: string };
+
+export function parseRunStreamChunk(chunk: string): RunStreamEvent | null {
+  const lines = chunk
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith("data:"));
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const data = lines.map((line) => line.replace(/^data:\s?/u, "")).join("\n");
+  try {
+    const event = JSON.parse(data) as Partial<RunStreamEvent>;
+    return typeof event.type === "string" ? (event as RunStreamEvent) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function streamRun(
   token: string,
   runId: string,
-  onEvent: (event: { type: string; output?: string; chunk?: string; message?: string; status?: string }) => void,
+  onEvent: (event: RunStreamEvent) => void,
 ): Promise<void> {
   const response = await fetch(`${getApiBase()}/api/runs/${encodeURIComponent(runId)}/stream`, {
     headers: {
@@ -363,13 +434,24 @@ export async function streamRun(
     },
   });
 
-  if (!response.ok || !response.body) {
-    throw new Error(`Stream failed with status ${response.status}`);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new RequestError(response.status, parseResponsePayload(text));
+  }
+  if (!response.body) {
+    throw new Error("Stream failed without a response body.");
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+
+  const processChunk = (chunk: string) => {
+    const event = parseRunStreamChunk(chunk);
+    if (event) {
+      onEvent(event);
+    }
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -381,12 +463,13 @@ export async function streamRun(
     const chunks = buffer.split("\n\n");
     buffer = chunks.pop() ?? "";
     for (const chunk of chunks) {
-      const line = chunk.split("\n").find((entry) => entry.startsWith("data:"));
-      if (!line) {
-        continue;
-      }
-      onEvent(JSON.parse(line.replace(/^data:\s*/u, "")) as { type: string; output?: string; chunk?: string; message?: string; status?: string });
+      processChunk(chunk);
     }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    processChunk(buffer);
   }
 }
 

@@ -1,10 +1,14 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { getDb } from "./db.js";
-import { loadServerEnv, getPort } from "./env.js";
+import { loadServerEnv, getCorsOrigin, getPort } from "./env.js";
+import { formatHttpError } from "./httpErrors.js";
+import { applySecurityHeaders } from "./securityHeaders.js";
 import { startScheduleLoop } from "./scheduling.js";
+import { sendClientIndex, setStaticAssetHeaders } from "./staticAssets.js";
 import { requireAuth, registerAuthRoutes } from "./routes/auth.js";
 import { registerAgentRoutes } from "./routes/agents.js";
 import { registerMissionRoutes } from "./routes/missions.js";
@@ -17,6 +21,8 @@ import { registerUtilityRoutes } from "./routes/utility.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const docsRoot = path.join(repoRoot, "docs");
+const clientDistRoot = path.join(repoRoot, "dist");
+const clientIndexPath = path.join(clientDistRoot, "index.html");
 
 loadServerEnv();
 getDb();
@@ -38,7 +44,8 @@ getDb()
 
 const app = express();
 
-app.use(cors());
+app.use(applySecurityHeaders);
+app.use(cors({ origin: getCorsOrigin() }));
 app.use(express.json({ limit: "5mb" }));
 app.use(requireAuth);
 
@@ -51,10 +58,19 @@ registerScheduleRoutes(app);
 registerIntegrationRoutes(app);
 registerUtilityRoutes(app, docsRoot);
 
+if (existsSync(clientIndexPath)) {
+  app.use(express.static(clientDistRoot, { setHeaders: setStaticAssetHeaders }));
+  app.get(/^(?!\/api(?:\/|$)).*/u, (_req, res) => {
+    sendClientIndex(res, clientIndexPath);
+  });
+}
+
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  const message = error instanceof Error ? error.message : "Server error";
-  console.error(error);
-  res.status(500).json({ error: message });
+  const response = formatHttpError(error, process.env.NODE_ENV);
+  if (response.status >= 500) {
+    console.error(error);
+  }
+  res.status(response.status).json(response.body);
 });
 
 startScheduleLoop();

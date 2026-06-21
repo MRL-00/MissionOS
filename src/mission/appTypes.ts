@@ -88,6 +88,7 @@ export interface MissionRecord {
   title: string;
   description: string | null;
   status: string;
+  team_name: string;
   color: string | null;
   lead_agent_id: string | null;
   lead_agent_name: string | null;
@@ -175,6 +176,7 @@ export interface RunRecord {
 export interface ScheduleRecord {
   id: string;
   name: string;
+  mission_id: string | null;
   agent_id: string;
   prompt: string;
   cron_expression: string;
@@ -188,6 +190,8 @@ export interface ScheduleRecord {
   updated_at: string;
   agent_name?: string | null;
   agent_emoji?: string | null;
+  mission_title?: string | null;
+  mission_color?: string | null;
 }
 
 export interface AgentMessageRecord {

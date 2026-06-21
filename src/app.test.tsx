@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { App } from "./app";
 
 describe("App", () => {
@@ -26,5 +26,14 @@ describe("App", () => {
   it("renders the landing page when no account exists", async () => {
     render(<App />);
     expect(await screen.findByText("Your AI agents,"));
+  });
+
+  it("routes the landing call to action into first-run account setup", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Get started" }));
+
+    expect(await screen.findByRole("button", { name: "Create account" })).toBeInTheDocument();
+    expect(screen.getByText("Create your local account")).toBeInTheDocument();
   });
 });

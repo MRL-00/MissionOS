@@ -46,19 +46,6 @@ export async function* streamProcess(
   args: string[],
   options?: { env?: NodeJS.ProcessEnv; cwd?: string; stdin?: string },
 ): AsyncGenerator<string> {
-  const child = spawn(command, args, {
-    env: options?.env,
-    cwd: options?.cwd,
-    stdio: [options?.stdin !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
-  });
-
-  if (options?.stdin !== undefined && child.stdin) {
-    child.stdin.write(options.stdin);
-    child.stdin.end();
-  }
-
-  const untrackChild = trackChildProcess(child);
-
   const queue: string[] = [];
   const waiters: Array<() => void> = [];
   let done = false;
@@ -73,6 +60,32 @@ export async function* streamProcess(
     queue.push(chunk);
     release();
   };
+
+  const child = spawn(command, args, {
+    env: options?.env,
+    cwd: options?.cwd,
+    stdio: [options?.stdin !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
+  });
+
+  if (options?.stdin !== undefined && child.stdin) {
+    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") {
+        failure = error;
+        done = true;
+        release();
+      }
+    });
+    child.stdin.write(options.stdin, (error) => {
+      if (error && (error as NodeJS.ErrnoException).code !== "EPIPE") {
+        failure = error;
+        done = true;
+        release();
+      }
+      child.stdin?.end();
+    });
+  }
+
+  const untrackChild = trackChildProcess(child);
 
   child.stdout?.on("data", (data) => push(String(data)));
   child.stderr?.on("data", (data) => push(String(data)));

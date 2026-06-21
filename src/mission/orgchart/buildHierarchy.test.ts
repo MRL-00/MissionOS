@@ -1,4 +1,5 @@
 import type { AgentRuntimeState } from "../../types";
+import type { ProviderAgentRecord } from "../types";
 import { buildHierarchy } from "./buildHierarchy";
 
 function agent(overrides: Partial<AgentRuntimeState> & { id: string; name: string; role: string }): AgentRuntimeState {
@@ -123,5 +124,49 @@ describe("buildHierarchy", () => {
     expect(trees[0]!.agent.name).toBe("Alice");
     expect(trees[0]!.children).toHaveLength(1);
     expect(trees[0]!.children[0]!.agent.name).toBe("Bob");
+  });
+
+  it("keeps agents visible when parentAgentId relationships contain a cycle", () => {
+    const trees = buildHierarchy([
+      agent({ id: "a", name: "Alice", role: "Lead", parentAgentId: "b" }),
+      agent({ id: "b", name: "Bob", role: "Engineer", parentAgentId: "a" }),
+    ]);
+
+    expect(trees.map((tree) => tree.agent.name).sort()).toEqual(["Alice", "Bob"]);
+    expect(trees.every((tree) => tree.children.length === 0)).toBe(true);
+  });
+
+  it("keeps agents visible when provider manager relationships contain a cycle", () => {
+    const agents = [
+      agent({ id: "a", name: "Alice", role: "Lead" }),
+      agent({ id: "b", name: "Bob", role: "Engineer" }),
+    ];
+    const providerAgents: ProviderAgentRecord[] = [
+      {
+        connectorId: "provider",
+        provider: "hermes",
+        externalId: "provider-a",
+        officeAgentId: "a",
+        name: "Alice",
+        managerExternalId: "provider-b",
+        status: "online",
+        imported: true,
+      },
+      {
+        connectorId: "provider",
+        provider: "hermes",
+        externalId: "provider-b",
+        officeAgentId: "b",
+        name: "Bob",
+        managerExternalId: "provider-a",
+        status: "online",
+        imported: true,
+      },
+    ];
+
+    const trees = buildHierarchy(agents, providerAgents);
+
+    expect(trees.map((tree) => tree.agent.name).sort()).toEqual(["Alice", "Bob"]);
+    expect(trees.every((tree) => tree.children.length === 0)).toBe(true);
   });
 });

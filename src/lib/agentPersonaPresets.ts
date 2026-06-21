@@ -28,7 +28,7 @@ export const AGENT_PERSONA_PRESETS: AgentPersonaPreset[] = [
   {
     id: "boss",
     label: "Boss",
-    suggestedName: "Boss",
+    suggestedName: "Bossssss",
     suggestedRole: "Orchestrator",
     skills: ["Planning", "Analysis", "Documentation"],
     tools: {

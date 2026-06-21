@@ -155,3 +155,35 @@ export function getReadySteps(
     return step.dependsOn.every((dep) => completedStepIds.has(dep));
   });
 }
+
+export function getPlanProgressStatus(
+  plan: ExecutionPlan,
+  stepStatuses: Map<string, string>,
+): "running" | "complete" | "failed" {
+  const completedStepIds = new Set<string>();
+  const startedStepIds = new Set<string>();
+  let hasFailedStep = false;
+  let hasActiveStep = false;
+
+  for (const [stepId, status] of stepStatuses) {
+    startedStepIds.add(stepId);
+    if (status === "complete") {
+      completedStepIds.add(stepId);
+    } else if (status === "failed") {
+      hasFailedStep = true;
+    } else {
+      hasActiveStep = true;
+    }
+  }
+
+  const readySteps = getReadySteps(plan, completedStepIds, startedStepIds);
+  if (hasActiveStep || readySteps.length > 0) {
+    return "running";
+  }
+
+  if (startedStepIds.size >= plan.plan.length) {
+    return hasFailedStep ? "failed" : "complete";
+  }
+
+  return hasFailedStep ? "failed" : "running";
+}

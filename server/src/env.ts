@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = path.join(serverRoot, ".env");
+const MIN_PRODUCTION_JWT_SECRET_LENGTH = 32;
 
 let loaded = false;
 
@@ -40,10 +41,52 @@ export function loadServerEnv(): void {
 
 export function getJwtSecret(): string {
   loadServerEnv();
-  return process.env.JWT_SECRET ?? "missionos-dev-secret";
+  return resolveJwtSecret(process.env.JWT_SECRET, process.env.NODE_ENV);
 }
 
 export function getPort(): number {
-  const value = Number(process.env.PORT ?? 3001);
-  return Number.isFinite(value) ? value : 3001;
+  return parsePort(process.env.PORT);
+}
+
+export function getCorsOrigin(): boolean | string[] {
+  return parseCorsOrigins(process.env.CORS_ALLOWED_ORIGINS, process.env.NODE_ENV);
+}
+
+export function resolveJwtSecret(value: string | undefined, nodeEnv: string | undefined): string {
+  const secret = value?.trim();
+  if (secret) {
+    if (nodeEnv === "production" && secret.length < MIN_PRODUCTION_JWT_SECRET_LENGTH) {
+      throw new Error(`JWT_SECRET must be at least ${MIN_PRODUCTION_JWT_SECRET_LENGTH} characters in production.`);
+    }
+    return secret;
+  }
+  if (nodeEnv === "production") {
+    throw new Error("JWT_SECRET must be configured in production.");
+  }
+  return "missionos-dev-secret";
+}
+
+export function parsePort(value: string | undefined): number {
+  const port = Number(value ?? 3001);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return 3001;
+  }
+  return port;
+}
+
+export function parseCorsOrigins(value: string | undefined, nodeEnv: string | undefined): boolean | string[] {
+  const origins = (value ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (origins.length === 0) {
+    return nodeEnv === "production" ? false : true;
+  }
+
+  if (origins.includes("*")) {
+    return nodeEnv === "production" ? false : true;
+  }
+
+  return origins;
 }
