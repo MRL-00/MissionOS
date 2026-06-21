@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractPlan, validatePlan, getReadySteps } from "./executionPlan.js";
+import { extractPlan, validatePlan, getReadySteps, getPlanProgressStatus } from "./executionPlan.js";
 import type { ExecutionPlan } from "./executionPlan.js";
 
 // ── extractPlan ─────────────────────────────────────────────────────────
@@ -213,4 +213,38 @@ test("already-started steps are not returned", () => {
   const ready = getReadySteps(plan, new Set(), new Set(["a"]));
   assert.equal(ready.length, 1);
   assert.equal(ready[0]!.id, "b");
+});
+
+test("plan progress stays running while dependent work is active", () => {
+  const plan: ExecutionPlan = {
+    plan: [
+      { id: "impl", agent: "Claudy", task: "Implement" },
+      { id: "qa", agent: "QA", task: "Test", dependsOn: ["impl"] },
+    ],
+  };
+
+  assert.equal(getPlanProgressStatus(plan, new Map([["impl", "running"]])), "running");
+  assert.equal(getPlanProgressStatus(plan, new Map([["impl", "complete"]])), "running");
+});
+
+test("plan progress fails when failed dependencies block remaining work", () => {
+  const plan: ExecutionPlan = {
+    plan: [
+      { id: "impl", agent: "Claudy", task: "Implement" },
+      { id: "qa", agent: "QA", task: "Test", dependsOn: ["impl"] },
+    ],
+  };
+
+  assert.equal(getPlanProgressStatus(plan, new Map([["impl", "failed"]])), "failed");
+});
+
+test("plan progress completes only when every step completes", () => {
+  const plan: ExecutionPlan = {
+    plan: [
+      { id: "impl", agent: "Claudy", task: "Implement" },
+      { id: "qa", agent: "QA", task: "Test", dependsOn: ["impl"] },
+    ],
+  };
+
+  assert.equal(getPlanProgressStatus(plan, new Map([["impl", "complete"], ["qa", "complete"]])), "complete");
 });

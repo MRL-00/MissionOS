@@ -8,8 +8,8 @@ interface AgentOnboardingProps {
 
 export function AgentOnboarding({ mission }: AgentOnboardingProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="flex w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141415] shadow-2xl shadow-black/50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-6">
+      <div className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141415] shadow-2xl shadow-black/50 sm:max-h-[calc(100vh-3rem)]">
         <AgentWizard
           mission={mission}
           onComplete={() => mission.setActiveView("orgchart")}

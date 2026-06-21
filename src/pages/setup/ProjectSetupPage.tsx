@@ -3,12 +3,15 @@ import type { FormEvent } from "react";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
 
 export function ProjectSetupPage({ mission }: { mission: MissionControlState }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState("MissionOS HQ");
   const [description, setDescription] = useState("");
 
-  async function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const ok = await mission.saveProject({ name, description });
+    const formData = new FormData(event.currentTarget);
+    const nextName = String(formData.get("name") ?? "");
+    const nextDescription = String(formData.get("description") ?? "");
+    const ok = await mission.saveProject({ name: nextName, description: nextDescription });
     if (ok) {
       setName("");
       setDescription("");
@@ -25,10 +28,12 @@ export function ProjectSetupPage({ mission }: { mission: MissionControlState }) 
         </div>
 
         <form className="space-y-4" onSubmit={handleSubmit}>
-          <Field label="Project Name" value={name} onChange={setName} placeholder="MissionOS HQ" />
+          <Field label="Project Name" name="name" value={name} onChange={setName} placeholder="MissionOS HQ" />
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Description</label>
+            <label htmlFor="project-description" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Description</label>
             <textarea
+              id="project-description"
+              name="description"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="Describe what this workspace is for..."
@@ -55,19 +60,24 @@ export function ProjectSetupPage({ mission }: { mission: MissionControlState }) 
 
 function Field({
   label,
+  name,
   value,
   onChange,
   placeholder,
 }: {
   label: string;
+  name: string;
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
 }) {
+  const id = `project-${name}`;
   return (
     <div>
-      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">{label}</label>
+      <label htmlFor={id} className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">{label}</label>
       <input
+        id={id}
+        name={name}
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}

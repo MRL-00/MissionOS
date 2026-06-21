@@ -9,6 +9,7 @@ import {
   IssueEditModal,
   IssueFiltersBar,
   IssueListView,
+  issueAssignableAgents,
   type IssueCreateDraft,
   type IssueEditDraft,
   type RepoOption,
@@ -25,7 +26,7 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
   const [statusFilter, setStatusFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
-  const [missionFilter, setMissionFilter] = useState("");
+  const [missionFilter, setMissionFilter] = useState(mission.selectedMissionId ?? "");
   const [newComment, setNewComment] = useState("");
   const [draftOpen, setDraftOpen] = useState(false);
 
@@ -80,8 +81,10 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
   );
 
   useEffect(() => {
-    setSelectedIssueId((current) => current ?? mission.issues[0]?.id ?? null);
-  }, [mission.issues]);
+    if (missionFilter && !mission.missions.some((entry) => entry.id === missionFilter)) {
+      setMissionFilter("");
+    }
+  }, [mission.missions, missionFilter]);
 
   const filteredIssues = useMemo(
     () =>
@@ -96,7 +99,17 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
     [assigneeFilter, mission.issues, missionFilter, priorityFilter, search, statusFilter],
   );
 
-  const selectedIssue = filteredIssues.find((issue) => issue.id === selectedIssueId) ?? mission.issues.find((issue) => issue.id === selectedIssueId) ?? null;
+  const selectedIssue = filteredIssues.find((issue) => issue.id === selectedIssueId) ?? filteredIssues[0] ?? null;
+
+  useEffect(() => {
+    setSelectedIssueId((current) => current ?? filteredIssues[0]?.id ?? null);
+  }, [filteredIssues]);
+
+  useEffect(() => {
+    if (selectedIssueId && !filteredIssues.some((issue) => issue.id === selectedIssueId)) {
+      setSelectedIssueId(filteredIssues[0]?.id ?? null);
+    }
+  }, [filteredIssues, selectedIssueId]);
 
   const [runningIssueRunId, setRunningIssueRunId] = useState<string | null>(null);
 
@@ -174,6 +187,14 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
       setDraftOpen(false);
     }
   }, [draft, mission]);
+
+  const openCreateModal = useCallback(() => {
+    setDraft((current) => ({
+      ...current,
+      mission_id: current.mission_id || missionFilter || mission.selectedMissionId || "",
+    }));
+    setDraftOpen(true);
+  }, [mission.selectedMissionId, missionFilter]);
 
   const handleDeleteIssue = useCallback(async () => {
     if (!editingIssue) {
@@ -291,7 +312,7 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
             onMissionFilterChange={setMissionFilter}
             boardMode={boardMode}
             onToggleBoardMode={() => setBoardMode((current) => !current)}
-            onOpenCreate={() => setDraftOpen(true)}
+            onOpenCreate={openCreateModal}
           />
         </div>
 
@@ -369,7 +390,7 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
         onReplyComment={handleReplyComment}
         onToggleStatus={handleToggleIssueStatus}
         issuePrefix={mission.settingsMap.issue_prefix}
-        agents={mission.agents}
+        agents={issueAssignableAgents(mission, selectedIssue?.mission_id ?? null)}
         issueRuns={mission.issueRuns}
         isRunning={runningIssueRunId != null}
         onRunIssue={handleRunIssue}
@@ -378,7 +399,7 @@ export function IssuesBoard({ mission }: IssuesBoardProps) {
 
       {!draftOpen && !editingIssue ? (
         <button
-          onClick={() => setDraftOpen(true)}
+          onClick={openCreateModal}
           className="fixed bottom-6 right-6 z-20 flex size-12 items-center justify-center rounded-full bg-[#39147e] shadow-lg shadow-[#2e1065]/25 transition-transform hover:scale-105"
         >
           <PlusIcon className="size-5 text-white" />

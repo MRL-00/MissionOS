@@ -2,3 +2,8 @@ node_modules
 dist
 .git
 .env
+.DS_Store
+server/.DS_Store
+server/src/.DS_Store
+server/data
+tmp

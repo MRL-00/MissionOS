@@ -34,6 +34,11 @@ interface ActiveRunSummary {
   issue_title: string | null | undefined;
 }
 
+export function orgChartRelationshipReadyAgentIds(mission: Pick<MissionControlState, "agents" | "engines">): Set<string> {
+  const supportedEngineIds = new Set((mission.engines ?? []).map((engine) => engine.id));
+  return new Set(mission.agents.filter((agent) => agent.active && supportedEngineIds.has(agent.engine)).map((agent) => agent.id));
+}
+
 const STATUS_COLORS: Record<string, string> = {
   Running: "bg-emerald-400",
   Active: "bg-blue-400",
@@ -62,6 +67,7 @@ const ENGINE_BORDER: Record<string, string> = {
 function FlowNode({ data, selected }: NodeProps<{
   agent: MissionControlState["derivedAgents"][number];
   activeRun: ActiveRunSummary | null;
+  canCreateRelationship: boolean;
 }>) {
   const agent = data.agent;
   const isRunning = agent.statusLabel === "Running";
@@ -80,7 +86,7 @@ function FlowNode({ data, selected }: NodeProps<{
           isActive && !selected && "org-node-active",
         )}
       >
-        <Handle type="target" position={Position.Top} className="!size-2 !border-0 !bg-white/30" />
+        <Handle type="target" position={Position.Top} isConnectable={data.canCreateRelationship} className="!size-2 !border-0 !bg-white/30" />
         <div className="mb-2.5 flex items-center gap-2.5">
           <div className="relative">
             <div
@@ -125,7 +131,7 @@ function FlowNode({ data, selected }: NodeProps<{
             {data.activeRun.mission_title || data.activeRun.issue_title || "Active run"}
           </div>
         ) : null}
-        <Handle type="source" position={Position.Bottom} className="!size-2 !border-0 !bg-white/30" />
+        <Handle type="source" position={Position.Bottom} isConnectable={data.canCreateRelationship} className="!size-2 !border-0 !bg-white/30" />
       </div>
     </div>
   );
@@ -295,6 +301,8 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
     [demoDelegation, mission.derivedAgents],
   );
 
+  const relationshipReadyAgentIds = useMemo(() => orgChartRelationshipReadyAgentIds(mission), [mission.agents, mission.engines]);
+
   const externalNodes: Node[] = useMemo(
     () =>
       effectiveAgents.map((agent) => ({
@@ -307,9 +315,10 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
             demoDelegation && agent.id === demoDelegation.toAgentId
               ? { mission_title: "Demo handoff in progress", issue_title: null }
               : activeRunsByAgent.get(agent.id) ?? null,
+          canCreateRelationship: relationshipReadyAgentIds.has(agent.id),
         },
       })),
-    [effectiveAgents, activeRunsByAgent, demoDelegation],
+    [effectiveAgents, activeRunsByAgent, demoDelegation, relationshipReadyAgentIds],
   );
 
   const [nodes, setNodes] = useState<Node[]>(externalNodes);
@@ -375,9 +384,10 @@ function OrgChartFlow({ mission }: OrgChartPageProps) {
   const handleConnect = useCallback(
     async (connection: Connection) => {
       if (!connection.source || !connection.target) return;
+      if (!relationshipReadyAgentIds.has(connection.source) || !relationshipReadyAgentIds.has(connection.target)) return;
       await mission.addRelationship(connection.source, connection.target);
     },
-    [mission],
+    [mission, relationshipReadyAgentIds],
   );
 
   return (

@@ -3,7 +3,9 @@ dist/
 .vite/
 .env
 tmp/
+backups/
 .DS_Store
 workspaces/
 server/src/workspaces/
 server/workspaces/
+server/data/*

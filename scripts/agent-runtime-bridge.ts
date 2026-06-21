@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-process.loadEnvFile?.();
+try {
+  process.loadEnvFile?.();
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    throw error;
+  }
+}
 
 type RuntimeProvider = "hermes" | "claude" | "codex";
 

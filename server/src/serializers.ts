@@ -1,4 +1,6 @@
 import { asFlag, parseJson } from "./db.js";
+import { engineMap } from "./engines/index.js";
+import { maskEngineConfig } from "./secretConfig.js";
 
 export type UserRow = {
   id: string;
@@ -22,6 +24,12 @@ export function serializeUser(row: UserRow) {
 }
 
 export function serializeAgent(row: Record<string, unknown>) {
+  const engine = String(row.engine ?? "");
+  const connectionConfig = parseJson<Record<string, unknown>>(
+    typeof row.connection_config === "string" ? row.connection_config : null,
+    {},
+  );
+
   return {
     id: row.id,
     name: row.name,
@@ -32,10 +40,7 @@ export function serializeAgent(row: Record<string, unknown>) {
     skills: parseJson<string[]>(typeof row.skills === "string" ? row.skills : null, []),
     tools: parseJson<string[]>(typeof row.tools === "string" ? row.tools : null, []),
     connection_type: row.connection_type,
-    connection_config: parseJson<Record<string, unknown>>(
-      typeof row.connection_config === "string" ? row.connection_config : null,
-      {},
-    ),
+    connection_config: maskEngineConfig(engine, connectionConfig, engineMap),
     soul_md: row.soul_md,
     agents_md: row.agents_md,
     external_config: asFlag(typeof row.external_config === "number" ? row.external_config : 0),
@@ -56,6 +61,7 @@ export function serializeMission(row: Record<string, unknown>, assignedAgents: u
     title: row.title,
     description: row.description,
     status: row.status,
+    team_name: row.team_name ?? "General",
     color: row.color ?? null,
     lead_agent_id: row.lead_agent_id,
     lead_agent_name: row.lead_agent_name,
@@ -137,6 +143,7 @@ export function serializeSchedule(row: Record<string, unknown>) {
   return {
     id: row.id,
     name: row.name,
+    mission_id: row.mission_id ?? null,
     agent_id: row.agent_id,
     prompt: row.prompt,
     cron_expression: row.cron_expression,
@@ -150,5 +157,7 @@ export function serializeSchedule(row: Record<string, unknown>) {
     updated_at: row.updated_at,
     agent_name: row.agent_name ?? null,
     agent_emoji: row.agent_emoji ?? null,
+    mission_title: row.mission_title ?? null,
+    mission_color: row.mission_color ?? null,
   };
 }

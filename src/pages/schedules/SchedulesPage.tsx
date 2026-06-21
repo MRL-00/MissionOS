@@ -60,9 +60,46 @@ function runLimitLabel(schedule: ScheduleRecord) {
   return schedule.max_runs ? `${schedule.run_count}/${schedule.max_runs}` : `${schedule.run_count}/∞`;
 }
 
+function isActiveRunStatus(status: string) {
+  return status === "running" || status === "planning";
+}
+
+function agentLabel(agentId: string, mission: MissionControlState) {
+  return mission.agents.find((agent) => agent.id === agentId)?.name ?? "Select agent";
+}
+
+function scheduleRunnableAgents(mission: MissionControlState, missionId?: string | null) {
+  const supportedEngineIds = new Set((mission.engines ?? []).map((engine) => engine.id));
+  const readyAgents = mission.agents.filter((agent) => agent.active && supportedEngineIds.has(agent.engine));
+  if (!missionId) {
+    return readyAgents;
+  }
+  const missionRecord = mission.missions.find((entry) => entry.id === missionId);
+  if (!missionRecord) {
+    return [];
+  }
+  const assignedAgentIds = new Set(missionRecord.assigned_agents.map((agent) => agent.id));
+  return readyAgents.filter((agent) => assignedAgentIds.has(agent.id));
+}
+
+function missionLabel(missionId: string, mission: MissionControlState) {
+  if (!missionId) {
+    return "No mission";
+  }
+  return mission.missions.find((entry) => entry.id === missionId)?.title ?? "No mission";
+}
+
+function scheduleMissionFilterLabel(filter: string, mission: MissionControlState) {
+  if (filter === "all") {
+    return "All missions";
+  }
+  return mission.missions.find((entry) => entry.id === filter)?.title ?? "All missions";
+}
+
 function emptyDraft() {
   return {
     name: "",
+    mission_id: "",
     agent_id: "",
     cron_expression: "0 9 * * 1-5",
     prompt: "",
@@ -77,24 +114,48 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
   const [formError, setFormError] = useState("");
   const [status, setStatus] = useState("");
   const [deleteScheduleId, setDeleteScheduleId] = useState<string | null>(null);
+  const [scheduleMissionFilter, setScheduleMissionFilter] = useState(() => mission.selectedMissionId ?? "all");
+
+  const visibleSchedules = useMemo(
+    () =>
+      scheduleMissionFilter === "all"
+        ? mission.schedules
+        : mission.schedules.filter((schedule) => schedule.mission_id === scheduleMissionFilter),
+    [mission.schedules, scheduleMissionFilter],
+  );
 
   const scheduleToDelete = deleteScheduleId
     ? mission.schedules.find((s) => s.id === deleteScheduleId)
     : null;
 
-  const activeSchedules = mission.schedules.filter((schedule) => schedule.enabled).length;
-  const pausedSchedules = mission.schedules.length - activeSchedules;
-  const totalExecutions = mission.schedules.reduce((sum, schedule) => sum + schedule.run_count, 0);
+  const activeSchedules = visibleSchedules.filter((schedule) => schedule.enabled).length;
+  const pausedSchedules = visibleSchedules.length - activeSchedules;
+  const totalExecutions = visibleSchedules.reduce((sum, schedule) => sum + schedule.run_count, 0);
   const scheduledRuns = useMemo(
-    () => mission.runs.filter((run) => run.schedule_id),
+    () => {
+      const visibleScheduleIds = new Set(visibleSchedules.map((schedule) => schedule.id));
+      return mission.runs.filter((run) => run.schedule_id && visibleScheduleIds.has(run.schedule_id));
+    },
+    [mission.runs, visibleSchedules],
+  );
+  const activeRunScheduleIds = useMemo(
+    () => new Set(mission.runs.filter((run) => run.schedule_id && isActiveRunStatus(run.status)).map((run) => run.schedule_id as string)),
     [mission.runs],
   );
+  const editingScheduleHasActiveRuns = editingId ? activeRunScheduleIds.has(editingId) : false;
+  const runnableAgents = scheduleRunnableAgents(mission, draft.mission_id || null);
+
+  useEffect(() => {
+    if (scheduleMissionFilter !== "all" && !mission.missions.some((entry) => entry.id === scheduleMissionFilter)) {
+      setScheduleMissionFilter("all");
+    }
+  }, [mission.missions, scheduleMissionFilter]);
 
   useEffect(() => {
     if (!editingId) {
       return;
     }
-    const schedule = mission.schedules.find((entry) => entry.id === editingId);
+    const schedule = visibleSchedules.find((entry) => entry.id === editingId);
     if (!schedule) {
       setEditingId(null);
       setDraft(emptyDraft());
@@ -102,13 +163,14 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
     }
     setDraft({
       name: schedule.name,
+      mission_id: schedule.mission_id ?? "",
       agent_id: schedule.agent_id,
       cron_expression: schedule.cron_expression,
       prompt: schedule.prompt,
       max_runs: schedule.max_runs ? String(schedule.max_runs) : "",
       enabled: schedule.enabled,
     });
-  }, [editingId, mission.schedules]);
+  }, [editingId, visibleSchedules]);
 
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
 
@@ -123,6 +185,7 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
     setEditingId(schedule.id);
     setDraft({
       name: schedule.name,
+      mission_id: schedule.mission_id ?? "",
       agent_id: schedule.agent_id,
       cron_expression: schedule.cron_expression,
       prompt: schedule.prompt,
@@ -142,6 +205,10 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
       setFormError("Select an agent.");
       return;
     }
+    if (!runnableAgents.some((agent) => agent.id === draft.agent_id)) {
+      setFormError(draft.mission_id ? "Select an agent assigned to this mission." : "Select an active supported agent.");
+      return;
+    }
     if (!draft.cron_expression.trim()) {
       setFormError("Cron expression is required.");
       return;
@@ -155,6 +222,7 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
     setStatus("");
     const payload = {
       name: draft.name.trim(),
+      mission_id: draft.mission_id || null,
       agent_id: draft.agent_id,
       cron_expression: draft.cron_expression.trim(),
       prompt: draft.prompt.trim(),
@@ -181,7 +249,7 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
     <div className="flex h-full">
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mb-6 grid grid-cols-4 gap-4">
-          <ScheduleStatCard icon={<CalendarClockIcon className="size-4" />} label="Total Schedules" value={String(mission.schedules.length)} />
+          <ScheduleStatCard icon={<CalendarClockIcon className="size-4" />} label="Total Schedules" value={String(visibleSchedules.length)} />
           <ScheduleStatCard icon={<PlayCircleIcon className="size-4" />} label="Active Jobs" value={String(activeSchedules)} subtitle={`${pausedSchedules} paused`} accent />
           <ScheduleStatCard icon={<AlarmClockCheckIcon className="size-4" />} label="Executions" value={String(totalExecutions)} subtitle="all time" />
           <ScheduleStatCard icon={<Clock3Icon className="size-4" />} label="Server Timezone" value={timezone} compact />
@@ -217,17 +285,53 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
               <Field label="Agent">
                 <Select value={draft.agent_id} onValueChange={(value) => setDraft((current) => ({ ...current, agent_id: value ?? "" }))}>
                   <SelectTrigger className="w-full border-white/[0.08] bg-[#0f0f10] text-[13px] text-white">
-                    <SelectValue placeholder="Select agent" />
+                    <SelectValue placeholder="Select agent">{agentLabel(draft.agent_id, mission)}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Select agent</SelectItem>
-                    {mission.agents.map((agent) => (
+                    {runnableAgents.map((agent) => (
                       <SelectItem key={agent.id} value={agent.id}>
                         {agent.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+              </Field>
+
+              <Field label="Mission">
+                <Select
+                  value={draft.mission_id}
+                  onValueChange={(value) => {
+                    const missionId = value ?? "";
+                    setDraft((current) => {
+                      const nextAgents = scheduleRunnableAgents(mission, missionId || null);
+                      return {
+                        ...current,
+                        mission_id: missionId,
+                        agent_id: nextAgents.some((agent) => agent.id === current.agent_id) ? current.agent_id : "",
+                      };
+                    });
+                    if (formError) {
+                      setFormError("");
+                    }
+                  }}
+                  disabled={editingScheduleHasActiveRuns}
+                >
+                  <SelectTrigger className="w-full border-white/[0.08] bg-[#0f0f10] text-[13px] text-white">
+                    <SelectValue placeholder="No mission">{missionLabel(draft.mission_id, mission)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">No mission</SelectItem>
+                    {mission.missions.map((entry) => (
+                      <SelectItem key={entry.id} value={entry.id}>
+                        {entry.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {editingScheduleHasActiveRuns ? (
+                  <div className="mt-2 text-[11px] text-[#918f90]">Mission changes are locked while this schedule has active runs.</div>
+                ) : null}
               </Field>
 
               <Field label="Cron Expression">
@@ -305,110 +409,156 @@ export function SchedulesPage({ mission }: SchedulesPageProps) {
                 <div className="text-[15px] font-semibold text-white">Scheduled Jobs</div>
                 <div className="text-[12px] text-[#918f90]">Click any job to load it into the editor.</div>
               </div>
-              <button
-                onClick={() => void mission.refreshSchedules()}
-                className="rounded-lg border border-white/[0.08] px-3 py-1.5 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
-              >
-                Refresh
-              </button>
+              <div className="flex items-center gap-2">
+                <Select value={scheduleMissionFilter} onValueChange={(value) => setScheduleMissionFilter(value ?? "all")}>
+                  <SelectTrigger className="w-[180px] border-white/[0.08] bg-[#0f0f10] text-[12px] text-white">
+                    <SelectValue>{scheduleMissionFilterLabel(scheduleMissionFilter, mission)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All missions</SelectItem>
+                    {mission.missions.map((entry) => (
+                      <SelectItem key={entry.id} value={entry.id}>
+                        {entry.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <button
+                  onClick={() => void mission.refreshSchedules()}
+                  className="rounded-lg border border-white/[0.08] px-3 py-1.5 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
+                >
+                  Refresh
+                </button>
+              </div>
             </div>
 
             <div className="divide-y divide-white/[0.05]">
-              {mission.schedules.length === 0 ? (
+              {visibleSchedules.length === 0 ? (
                 <div className="px-5 py-10 text-center">
                   <div className="text-[14px] font-medium text-white">No schedules yet</div>
                   <div className="mt-1 text-[12px] text-[#918f90]">Create a cron job to have an agent run recurring operational work.</div>
                 </div>
               ) : null}
 
-              {mission.schedules.map((schedule) => (
-                <button
-                  key={schedule.id}
-                  onClick={() => loadSchedule(schedule)}
-                  className={cn(
-                    "grid w-full grid-cols-[1.4fr_130px_150px_110px_auto] items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]",
-                    editingId === schedule.id ? "bg-[#39147e]/[0.06]" : "",
-                  )}
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-semibold text-white">{schedule.name}</span>
-                      <span
-                        className={cn(
-                          "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                          schedule.enabled
-                            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
-                            : "border-white/[0.08] bg-white/[0.04] text-[#918f90]",
-                        )}
-                      >
-                        {schedule.enabled ? "enabled" : "paused"}
-                      </span>
+              {visibleSchedules.map((schedule) => (
+                (() => {
+                  const hasActiveRuns = activeRunScheduleIds.has(schedule.id);
+                  return (
+                    <div
+                      key={schedule.id}
+                      onClick={() => loadSchedule(schedule)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          loadSchedule(schedule);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      className={cn(
+                        "grid w-full grid-cols-[1.4fr_130px_150px_110px_auto] items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-white/[0.02]",
+                        editingId === schedule.id ? "bg-[#39147e]/[0.06]" : "",
+                      )}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-semibold text-white">{schedule.name}</span>
+                          <span
+                            className={cn(
+                              "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                              schedule.enabled
+                                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+                                : "border-white/[0.08] bg-white/[0.04] text-[#918f90]",
+                            )}
+                          >
+                            {schedule.enabled ? "enabled" : "paused"}
+                          </span>
+                          {hasActiveRuns ? (
+                            <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+                              running
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-[12px] text-[#918f90]">
+                          {schedule.agent_emoji ?? "🤖"} {schedule.agent_name ?? "Unknown agent"}
+                        </div>
+                        {schedule.mission_title ? (
+                          <div className="mt-1 text-[12px] text-[#918f90]">{schedule.mission_title}</div>
+                        ) : null}
+                        <div className="mt-2 line-clamp-2 text-[12px] text-[#c8c4d7]">{schedule.prompt}</div>
+                        {hasActiveRuns ? (
+                          <div className="mt-2 text-[11px] text-[#918f90]">Active schedule runs must finish before deletion.</div>
+                        ) : null}
+                        {schedule.last_error ? (
+                          <div className="mt-2 text-[11px] text-red-300">{schedule.last_error}</div>
+                        ) : null}
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Cron</div>
+                        <div className="mt-1 font-mono text-[12px] text-white">{schedule.cron_expression}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Next Run</div>
+                        <div className="mt-1 text-[12px] text-white">{formatRelative(schedule.next_run_at)}</div>
+                        <div className="mt-1 text-[11px] text-[#918f90]">{formatTimestamp(schedule.next_run_at, mission.settingsMap.user_timezone)}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Run Count</div>
+                        <div className="mt-1 text-[12px] text-white">{runLimitLabel(schedule)}</div>
+                        <div className="mt-1 text-[11px] text-[#918f90]">Last: {formatRelative(schedule.last_run_at)}</div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void mission.runSchedule(schedule.id);
+                          }}
+                          className="rounded-lg border border-white/[0.08] px-3 py-1.5 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
+                        >
+                          Run now
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void mission.updateSchedule(schedule.id, {
+                              name: schedule.name,
+                              mission_id: schedule.mission_id,
+                              agent_id: schedule.agent_id,
+                              prompt: schedule.prompt,
+                              cron_expression: schedule.cron_expression,
+                              enabled: !schedule.enabled,
+                              max_runs: schedule.max_runs,
+                            });
+                          }}
+                          className="rounded-lg border border-white/[0.08] p-2 text-[#918f90] transition-colors hover:bg-white/[0.04] hover:text-white"
+                          aria-label={schedule.enabled ? "Pause schedule" : "Resume schedule"}
+                        >
+                          {schedule.enabled ? <PauseCircleIcon className="size-4" /> : <PlayCircleIcon className="size-4" />}
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (!hasActiveRuns) {
+                              setDeleteScheduleId(schedule.id);
+                            }
+                          }}
+                          disabled={hasActiveRuns}
+                          className={cn(
+                            "rounded-lg border border-red-500/20 p-2 text-red-300 transition-colors hover:bg-red-500/10",
+                            hasActiveRuns && "cursor-not-allowed opacity-45",
+                          )}
+                          aria-label="Delete schedule"
+                        >
+                          <Trash2Icon className="size-4" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-1 text-[12px] text-[#918f90]">
-                      {schedule.agent_emoji ?? "🤖"} {schedule.agent_name ?? "Unknown agent"}
-                    </div>
-                    <div className="mt-2 line-clamp-2 text-[12px] text-[#c8c4d7]">{schedule.prompt}</div>
-                    {schedule.last_error ? (
-                      <div className="mt-2 text-[11px] text-red-300">{schedule.last_error}</div>
-                    ) : null}
-                  </div>
-
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Cron</div>
-                    <div className="mt-1 font-mono text-[12px] text-white">{schedule.cron_expression}</div>
-                  </div>
-
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Next Run</div>
-                    <div className="mt-1 text-[12px] text-white">{formatRelative(schedule.next_run_at)}</div>
-                    <div className="mt-1 text-[11px] text-[#918f90]">{formatTimestamp(schedule.next_run_at, mission.settingsMap.user_timezone)}</div>
-                  </div>
-
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Run Count</div>
-                    <div className="mt-1 text-[12px] text-white">{runLimitLabel(schedule)}</div>
-                    <div className="mt-1 text-[11px] text-[#918f90]">Last: {formatRelative(schedule.last_run_at)}</div>
-                  </div>
-
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void mission.runSchedule(schedule.id);
-                      }}
-                      className="rounded-lg border border-white/[0.08] px-3 py-1.5 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
-                    >
-                      Run now
-                    </button>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void mission.updateSchedule(schedule.id, {
-                          name: schedule.name,
-                          agent_id: schedule.agent_id,
-                          prompt: schedule.prompt,
-                          cron_expression: schedule.cron_expression,
-                          enabled: !schedule.enabled,
-                          max_runs: schedule.max_runs,
-                        });
-                      }}
-                      className="rounded-lg border border-white/[0.08] p-2 text-[#918f90] transition-colors hover:bg-white/[0.04] hover:text-white"
-                      aria-label={schedule.enabled ? "Pause schedule" : "Resume schedule"}
-                    >
-                      {schedule.enabled ? <PauseCircleIcon className="size-4" /> : <PlayCircleIcon className="size-4" />}
-                    </button>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setDeleteScheduleId(schedule.id);
-                      }}
-                      className="rounded-lg border border-red-500/20 p-2 text-red-300 transition-colors hover:bg-red-500/10"
-                      aria-label="Delete schedule"
-                    >
-                      <Trash2Icon className="size-4" />
-                    </button>
-                  </div>
-                </button>
+                  );
+                })()
               ))}
             </div>
           </div>

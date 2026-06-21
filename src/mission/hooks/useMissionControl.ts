@@ -71,11 +71,14 @@ import {
   testGitHubConnection,
   fetchGitHubRepos,
   syncGitHubIssues,
+  isUnauthorizedRequestError,
   updateAgent,
   updateIssue,
   updateMission,
   updateSchedule,
   updateProfile,
+  WORKSPACE_RUN_LIMIT,
+  type RunStreamEvent,
 } from "../api";
 import { MAIN_VIEWS, PATH_VIEWS, PRE_AUTH_VIEWS, VIEW_PATHS, isMissionView, type MissionView } from "../navigation";
 
@@ -111,6 +114,35 @@ function pushPath(view: MissionView, search?: string) {
   if (currentUrl !== nextUrl) {
     window.history.pushState(null, "", nextUrl);
   }
+}
+
+export function applyRunStreamEvent(current: RunRecord, event: RunStreamEvent): RunRecord {
+  return {
+    ...current,
+    output: event.output ?? current.output,
+    status:
+      event.type === "complete"
+        ? "complete"
+        : event.type === "error"
+          ? "failed"
+          : event.status ?? current.status,
+  };
+}
+
+export function removeDeletedRun(runs: RunRecord[], runId: string): RunRecord[] {
+  return runs.filter((run) => run.id !== runId);
+}
+
+export function clearDeletedIssueComments(comments: IssueCommentRecord[], issueId: string): IssueCommentRecord[] {
+  return comments.some((comment) => comment.issue_id === issueId) ? [] : comments;
+}
+
+export function removeDeletedIssueRuns(runs: RunRecord[], issueId: string): RunRecord[] {
+  return runs.filter((run) => run.issue_id !== issueId);
+}
+
+export function workspaceRunListParams(): Record<string, string> {
+  return { limit: WORKSPACE_RUN_LIMIT };
 }
 
 function normalizeStatus(status: string, active: boolean) {
@@ -281,7 +313,7 @@ export function useMissionControl() {
       fetchRelationships(authToken),
       fetchMissions(authToken),
       fetchIssues(authToken),
-      fetchRuns(authToken),
+      fetchRuns(authToken, workspaceRunListParams()),
       fetchSchedules(authToken),
       fetchDocsTree(authToken).catch(() => ({ files: [] as DocFileRecord[] })),
     ]);
@@ -373,7 +405,11 @@ export function useMissionControl() {
     }
     void fetchDocContent(token, docPath)
       .then((response) => setDocContent(response.content))
-      .catch(() => setDocContent(""));
+      .catch((reason) => {
+        if (!handleUnauthorizedSession(reason)) {
+          setDocContent("");
+        }
+      });
   }, [activeView, docPath, token]);
 
   useEffect(() => {
@@ -382,8 +418,10 @@ export function useMissionControl() {
     }
     void searchAll(token, searchQuery)
       .then(setSearchResults)
-      .catch(() => {
-        setSearchResults({ agents: [], missions: [], issues: [], runs: [], comments: [] });
+      .catch((reason) => {
+        if (!handleUnauthorizedSession(reason)) {
+          setSearchResults({ agents: [], missions: [], issues: [], runs: [], comments: [] });
+        }
       });
   }, [activeView, searchQuery, token]);
 
@@ -396,7 +434,9 @@ export function useMissionControl() {
     const poll = () => {
       void fetchAgentMessages(token, missionId)
         .then((response) => setAgentMessages(response.messages))
-        .catch(() => undefined);
+        .catch((reason) => {
+          handleUnauthorizedSession(reason);
+        });
       void silentRefreshAgents();
       void silentRefreshRelationships();
       void silentRefreshRuns();
@@ -407,12 +447,24 @@ export function useMissionControl() {
     return () => window.clearInterval(interval);
   }, [activeView, missions, selectedMissionId, token]);
 
+  function handleUnauthorizedSession(reason: unknown): boolean {
+    if (token && isUnauthorizedRequestError(reason)) {
+      logout();
+      setError("Your session expired. Please sign in again.");
+      return true;
+    }
+    return false;
+  }
+
   async function runBusyAction<T>(key: string, action: () => Promise<T>): Promise<T | null> {
     setBusyKey(key);
     setError(null);
     try {
       return await action();
     } catch (reason) {
+      if (!key.startsWith("auth:") && handleUnauthorizedSession(reason)) {
+        return null;
+      }
       setError(reason instanceof Error ? reason.message : "MissionOS action failed.");
       return null;
     } finally {
@@ -512,7 +564,7 @@ export function useMissionControl() {
       setError("Project name does not match.");
       return false;
     }
-    const result = await runBusyAction("project:reset", () => resetProject(token));
+    const result = await runBusyAction("project:reset", () => resetProject(token, projectName));
     if (!result) {
       return false;
     }
@@ -655,8 +707,8 @@ export function useMissionControl() {
     try {
       const result = await fetchIssues(token, filters);
       setIssues(result.issues);
-    } catch {
-      /* swallow — background poll failure is fine */
+    } catch (reason) {
+      handleUnauthorizedSession(reason);
     }
   }
 
@@ -692,12 +744,20 @@ export function useMissionControl() {
     try {
       await deleteIssue(token, issueId);
     } catch (reason) {
+      if (handleUnauthorizedSession(reason)) {
+        return { ok: false, error: "Your session expired. Please sign in again." };
+      }
       const message = reason instanceof Error ? reason.message : "Unable to delete issue.";
       setError(message);
       return { ok: false, error: message };
     }
 
     await refreshWorkspace();
+    setIssues((current) => current.filter((issue) => issue.id !== issueId));
+    setRuns((current) => removeDeletedIssueRuns(current, issueId));
+    setIssueRuns((current) => removeDeletedIssueRuns(current, issueId));
+    setSelectedRun((current) => (current?.issue_id === issueId ? null : current));
+    setSelectedIssueComments((current) => clearDeletedIssueComments(current, issueId));
     return { ok: true, error: null };
   }
 
@@ -804,10 +864,10 @@ export function useMissionControl() {
   async function silentRefreshRuns() {
     if (!token) return;
     try {
-      const result = await fetchRuns(token);
+      const result = await fetchRuns(token, workspaceRunListParams());
       setRuns(result.runs);
-    } catch {
-      /* swallow — background poll failure is fine */
+    } catch (reason) {
+      handleUnauthorizedSession(reason);
     }
   }
 
@@ -816,7 +876,9 @@ export function useMissionControl() {
     try {
       const result = await fetchAgents(token);
       setAgents(result.agents);
-    } catch { /* swallow */ }
+    } catch (reason) {
+      handleUnauthorizedSession(reason);
+    }
   }
 
   async function silentRefreshRelationships() {
@@ -824,7 +886,9 @@ export function useMissionControl() {
     try {
       const result = await fetchRelationships(token);
       setRelationships(result.relationships);
-    } catch { /* swallow */ }
+    } catch (reason) {
+      handleUnauthorizedSession(reason);
+    }
   }
 
   async function refreshSchedules() {
@@ -839,6 +903,7 @@ export function useMissionControl() {
 
   async function createScheduleRecord(input: {
     name: string;
+    mission_id?: string | null;
     agent_id: string;
     prompt: string;
     cron_expression: string;
@@ -858,6 +923,7 @@ export function useMissionControl() {
 
   async function saveScheduleRecord(scheduleId: string, input: {
     name: string;
+    mission_id?: string | null;
     agent_id: string;
     prompt: string;
     cron_expression: string;
@@ -921,6 +987,9 @@ export function useMissionControl() {
     if (!result) {
       return false;
     }
+    setRuns((current) => removeDeletedRun(current, runId));
+    setIssueRuns((current) => removeDeletedRun(current, runId));
+    setSelectedRun((current) => (current?.id === runId ? null : current));
     await refreshRuns();
     return true;
   }
@@ -950,29 +1019,28 @@ export function useMissionControl() {
       queueMicrotask(() => onUpdate?.(base));
       return true;
     }
-    await streamRun(token, runId, (event) => {
-      let nextRun: RunRecord | null = null;
-      setSelectedRun((current) => {
-        if (!current || current.id !== runId) {
-          return current;
+    try {
+      await streamRun(token, runId, (event) => {
+        let nextRun: RunRecord | null = null;
+        setSelectedRun((current) => {
+          if (!current || current.id !== runId) {
+            return current;
+          }
+          nextRun = applyRunStreamEvent(current, event);
+          return nextRun;
+        });
+        if (nextRun) {
+          syncRunState(nextRun);
+          queueMicrotask(() => onUpdate?.(nextRun as RunRecord));
         }
-        nextRun = {
-          ...current,
-          output: event.output ?? current.output,
-          status:
-            event.type === "complete"
-              ? "complete"
-              : event.type === "error"
-                ? "failed"
-                : current.status,
-        };
-        return nextRun;
       });
-      if (nextRun) {
-        syncRunState(nextRun);
-        queueMicrotask(() => onUpdate?.(nextRun as RunRecord));
+    } catch (reason) {
+      if (handleUnauthorizedSession(reason)) {
+        return false;
       }
-    });
+      setError(reason instanceof Error ? reason.message : "Run stream failed.");
+      return false;
+    }
     await refreshRuns();
     return true;
   }

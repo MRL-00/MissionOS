@@ -50,7 +50,7 @@ function getQueryOverride(): string | null {
 }
 
 function getDefaultApiBase(): string {
-  return `${getDefaultProtocol()}//${getHost()}:${DEFAULT_API_PORT}`;
+  return window.location.origin || `${getDefaultProtocol()}//${getHost()}`;
 }
 
 export function getApiBase(): string {

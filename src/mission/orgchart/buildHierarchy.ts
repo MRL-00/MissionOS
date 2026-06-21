@@ -31,16 +31,37 @@ export function buildHierarchy(agents: AgentRuntimeState[], providerAgents: Prov
     }
   });
 
+  const parentByAgentId = new Map<string, string>();
+  agents.forEach((agent) => {
+    const providerAgent = providerByOfficeAgentId.get(agent.id);
+    const providerParentExternalId = providerAgent?.reportsToExternalId ?? providerAgent?.managerExternalId;
+    const providerParent = providerParentExternalId ? providerByExternalId.get(providerParentExternalId) : undefined;
+    const parentId = providerParent?.officeAgentId ?? agent.parentAgentId ?? undefined;
+    if (parentId && agentMap.has(parentId)) {
+      parentByAgentId.set(agent.id, parentId);
+    }
+  });
+
+  function parentPathCreatesCycle(agentId: string, parentId: string): boolean {
+    const visited = new Set<string>([agentId]);
+    let current: string | undefined = parentId;
+    while (current) {
+      if (visited.has(current)) {
+        return true;
+      }
+      visited.add(current);
+      current = parentByAgentId.get(current);
+    }
+    return false;
+  }
+
   // Group children by parent id
   const childrenOf = new Map<string, AgentRuntimeState[]>();
   const roots: AgentRuntimeState[] = [];
 
   agents.forEach((agent) => {
-    const providerAgent = providerByOfficeAgentId.get(agent.id);
-    const providerParentExternalId = providerAgent?.reportsToExternalId ?? providerAgent?.managerExternalId;
-    const providerParent = providerParentExternalId ? providerByExternalId.get(providerParentExternalId) : undefined;
-    const parentId = providerParent?.officeAgentId ?? agent.parentAgentId;
-    if (!parentId || !agentMap.has(parentId)) {
+    const parentId = parentByAgentId.get(agent.id);
+    if (!parentId || parentPathCreatesCycle(agent.id, parentId)) {
       roots.push(agent);
     } else {
       const siblings = childrenOf.get(parentId) ?? [];
@@ -49,10 +70,13 @@ export function buildHierarchy(agents: AgentRuntimeState[], providerAgents: Prov
     }
   });
 
-  function buildNode(agent: AgentRuntimeState, depth: number): OrgTreeNode {
+  function buildNode(agent: AgentRuntimeState, depth: number, path = new Set<string>()): OrgTreeNode {
+    const nextPath = new Set(path);
+    nextPath.add(agent.id);
     const children = (childrenOf.get(agent.id) ?? [])
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((child) => buildNode(child, depth + 1));
+      .filter((child) => !nextPath.has(child.id))
+      .map((child) => buildNode(child, depth + 1, nextPath));
     return { agent, children, depth };
   }
 

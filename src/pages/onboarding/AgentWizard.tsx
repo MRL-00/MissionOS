@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, RocketIcon, XIcon } from "lucide-react";
 import type { EngineConnectionResult } from "@/mission/appTypes";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
@@ -73,6 +73,11 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
   const [soulMd, setSoulMd] = useState(initialAgent?.soul_md ?? "# Purpose\nBe an effective operator.");
   const [agentsMd, setAgentsMd] = useState(initialAgent?.agents_md ?? "# Rules\nCollaborate clearly with other agents.");
   const [testResultsByEngine, setTestResultsByEngine] = useState<Record<string, EngineConnectionResult>>({});
+  const connectionConfigId = useId();
+  const modelSelectId = useId();
+  const customSkillId = useId();
+  const soulMdId = useId();
+  const agentsMdId = useId();
 
   const selectedEngineDefinition = useMemo(
     () => mission.engines.find((engine) => engine.id === selectedEngine) ?? mission.engines[0] ?? null,
@@ -211,13 +216,14 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
           latency_ms: 0,
         },
       }));
+      setCurrentStep(1);
     }
   }
 
   return (
     <>
       {/* Step indicator */}
-      <div className="border-b border-white/[0.06] px-6 pt-6 pb-5">
+      <div className="border-b border-white/[0.06] px-4 pt-5 pb-4 sm:px-6 sm:pt-6 sm:pb-5">
         <div className="mb-4 flex items-center justify-center gap-1.5">
           {STEPS.map((step, index) => (
             <div key={step} className="flex items-center gap-1.5">
@@ -235,13 +241,13 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
               </div>
               <span
                 className={cn(
-                  "text-[11px] font-medium transition-colors",
+                  "hidden text-[11px] font-medium transition-colors sm:inline",
                   index === currentStep ? "text-white" : index < currentStep ? "text-[#918f90]" : "text-[#585658]",
                 )}
               >
                 {step}
               </span>
-              {index < STEPS.length - 1 ? <div className="mx-1 h-px w-6 bg-white/[0.06]" /> : null}
+              {index < STEPS.length - 1 ? <div className="mx-0.5 h-px w-5 bg-white/[0.06] sm:mx-1 sm:w-6" /> : null}
             </div>
           ))}
         </div>
@@ -254,11 +260,11 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
         {currentStep === 0 ? (
           <div className="space-y-5">
             <SectionTitle title="Agent Identification" subtitle="Set up the basic identity for your new agent" />
-            <div className="flex items-start gap-5">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
               <div className="flex flex-col items-center gap-1.5">
                 <button
                   type="button"
@@ -278,14 +284,14 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
                   />
                 ) : null}
               </div>
-              <div className="flex-1 space-y-3">
+              <div className="w-full flex-1 space-y-3">
                 <FormField label="Agent Name" placeholder="e.g. Pickle, Scout-01" value={name} onChange={setName} />
                 <FormField label="Role / Title" placeholder="e.g. Orchestrator, QA Engineer" value={role} onChange={setRole} />
               </div>
             </div>
             <div>
               <label className="mb-2 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Agent Color</label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {AGENT_COLORS.map((color) => (
                   <button
                     key={color}
@@ -305,7 +311,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
         {currentStep === 1 ? (
           <div className="space-y-5">
             <SectionTitle title="Core Engine" subtitle="Select the primary execution engine for this agent" />
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               {engineCards.map((engine) => (
                 <button
                   key={engine.id}
@@ -345,8 +351,9 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
 
             {(selectedEngine === "claude-code" || selectedEngine === "pi") ? (
               <div>
-                <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Model</label>
+                <label htmlFor={modelSelectId} className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Model</label>
                 <select
+                  id={modelSelectId}
                   value={(() => {
                     try {
                       const cfg = JSON.parse(selectedConnectionConfigText) as Record<string, unknown>;
@@ -383,7 +390,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
             ) : null}
 
             <div>
-              <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Connection Config (JSON)</label>
+              <label htmlFor={connectionConfigId} className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Connection Config (JSON)</label>
               {selectedGuide ? (
                 <div className="mb-2 rounded-xl border border-white/[0.06] bg-[#0f0f10] px-3.5 py-2.5">
                   <div className="text-[11px] font-medium text-white">{selectedGuide.title}</div>
@@ -391,6 +398,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
                 </div>
               ) : null}
               <textarea
+                id={connectionConfigId}
                 value={selectedConnectionConfigText}
                 onChange={(event) => {
                   if (!selectedEngineDefinition) {
@@ -474,8 +482,9 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
                   </button>
                 ))}
               </div>
-              <div className="mt-3 flex gap-2">
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <input
+                  id={customSkillId}
                   value={customSkillInput}
                   onChange={(event) => setCustomSkillInput(event.target.value)}
                   onKeyDown={(event) => {
@@ -484,8 +493,9 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
                       addCustomSkill();
                     }
                   }}
+                  aria-label="Custom Skill"
                   placeholder="Add custom skill, e.g. React Native"
-                  className="flex-1 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
+                  className="w-full flex-1 rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[12px] text-white outline-none placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
                 />
                 <button
                   onClick={addCustomSkill}
@@ -528,7 +538,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
             <SectionTitle title="Agent Persona" subtitle="Define the agent's personality and behavior guidelines" />
             <div>
               <label className="mb-2 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">Quick Presets</label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 {AGENT_PERSONA_PRESETS.map((preset) => (
                   <button
                     key={preset.id}
@@ -555,16 +565,18 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
                   Selected skills, <code className="text-[#c8c4d7]">SOUL.md</code>, and <code className="text-[#c8c4d7]">AGENTS.md</code> are prepended to each run prompt when this agent is managed here.
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">SOUL.md</label>
+                  <label htmlFor={soulMdId} className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">SOUL.md</label>
                   <textarea
+                    id={soulMdId}
                     value={soulMd}
                     onChange={(event) => setSoulMd(event.target.value)}
                     className="h-28 w-full rounded-xl border border-white/[0.08] bg-[#0f0f10] px-3.5 py-2.5 font-mono text-[12px] text-white outline-none transition-colors placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">AGENTS.md</label>
+                  <label htmlFor={agentsMdId} className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">AGENTS.md</label>
                   <textarea
+                    id={agentsMdId}
                     value={agentsMd}
                     onChange={(event) => setAgentsMd(event.target.value)}
                     className="h-28 w-full rounded-xl border border-white/[0.08] bg-[#0f0f10] px-3.5 py-2.5 font-mono text-[12px] text-white outline-none transition-colors placeholder:text-[#585658] focus:border-[#5e4ae3]/50"
@@ -577,7 +589,7 @@ export function AgentWizard({ mission, onComplete, onCancel, cancelLabel = "Canc
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3.5">
+      <div className="flex items-center justify-between border-t border-white/[0.06] px-4 py-3.5 sm:px-5">
         <button
           onClick={onCancel}
           className="text-[12px] font-medium text-[#585658] transition-colors hover:text-[#918f90]"
@@ -627,10 +639,12 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
 }
 
 function FormField({ label, placeholder, value, onChange, type = "text" }: { label: string; placeholder: string; value: string; onChange: (value: string) => void; type?: string }) {
+  const id = useId();
   return (
     <div>
-      <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">{label}</label>
+      <label htmlFor={id} className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-[#585658]">{label}</label>
       <input
+        id={id}
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}

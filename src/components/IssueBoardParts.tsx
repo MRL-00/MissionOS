@@ -96,6 +96,27 @@ function formatStatusLabel(status: string) {
   return STATUS_LABELS[status] ?? status.replaceAll("_", " ");
 }
 
+export function issueAssignableAgents(mission: MissionControlState, missionId?: string | null) {
+  const supportedEngineIds = new Set((mission.engines ?? []).map((engine) => engine.id));
+  const readyAgents = mission.agents.filter((agent) => agent.active && supportedEngineIds.has(agent.engine));
+  if (!missionId) {
+    return readyAgents;
+  }
+  const missionRecord = mission.missions.find((entry) => entry.id === missionId);
+  if (!missionRecord) {
+    return [];
+  }
+  const assignedAgentIds = new Set(missionRecord.assigned_agents.map((agent) => agent.id));
+  return readyAgents.filter((agent) => assignedAgentIds.has(agent.id));
+}
+
+export function issueAssigneeForMission(mission: MissionControlState, missionId: string | null, assigneeAgentId: string) {
+  if (!assigneeAgentId) {
+    return "";
+  }
+  return issueAssignableAgents(mission, missionId).some((agent) => agent.id === assigneeAgentId) ? assigneeAgentId : "";
+}
+
 const ESTIMATION_OPTIONS = ["1", "2", "3", "5", "8", "13", "21"];
 
 const PRIORITY_OPTIONS = [
@@ -355,6 +376,9 @@ export function IssueCreateModal({
     return null;
   }
 
+  const assignableAgents = issueAssignableAgents(mission, draft.mission_id || null);
+  const agentNameLookup = Object.fromEntries(mission.agents.map((entry) => [entry.id, entry.name]));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-white/[0.08] bg-[#141415] shadow-2xl shadow-black/50">
@@ -381,13 +405,21 @@ export function IssueCreateModal({
               label="Assignee"
               value={draft.assignee_agent_id}
               onChange={(value) => setDraft({ ...draft, assignee_agent_id: value })}
-              options={["", ...mission.agents.map((entry) => entry.id)]}
-              lookup={Object.fromEntries(mission.agents.map((entry) => [entry.id, entry.name]))}
+              options={["", ...assignableAgents.map((entry) => entry.id)]}
+              lookup={agentNameLookup}
             />
             <FormSelect
               label="Mission"
               value={draft.mission_id}
-              onChange={(value) => setDraft({ ...draft, mission_id: value })}
+              onChange={(value) =>
+                setDraft((current) => {
+                  return {
+                    ...current,
+                    mission_id: value,
+                    assignee_agent_id: issueAssigneeForMission(mission, value || null, current.assignee_agent_id),
+                  };
+                })
+              }
               options={["", ...mission.missions.map((entry) => entry.id)]}
               lookup={Object.fromEntries(mission.missions.map((entry) => [entry.id, entry.title]))}
             />
@@ -511,8 +543,13 @@ export function IssueEditModal({
     return null;
   }
 
-  const linkedRunCount = mission.runs.filter((run) => run.issue_id === editingIssue.id).length;
+  const linkedRuns = mission.runs.filter((run) => run.issue_id === editingIssue.id);
+  const linkedRunCount = linkedRuns.length;
+  const activeRunCount = linkedRuns.filter((run) => run.status === "running" || run.status === "planning").length;
+  const canDeleteIssue = activeRunCount === 0;
   const linkedCommentCount = comments.length;
+  const assignableAgents = issueAssignableAgents(mission, editDraft.mission_id || null);
+  const agentNameLookup = Object.fromEntries(mission.agents.map((entry) => [entry.id, entry.name]));
   const cascadeParts = [
     linkedRunCount > 0 ? `${linkedRunCount} linked run${linkedRunCount === 1 ? "" : "s"}` : null,
     linkedCommentCount > 0 ? `${linkedCommentCount} comment${linkedCommentCount === 1 ? "" : "s"}` : null,
@@ -581,13 +618,21 @@ export function IssueEditModal({
                 label="Assignee"
                 value={editDraft.assignee_agent_id}
                 onChange={(value) => setEditDraft({ ...editDraft, assignee_agent_id: value })}
-                options={["", ...mission.agents.map((entry) => entry.id)]}
-                lookup={Object.fromEntries(mission.agents.map((entry) => [entry.id, entry.name]))}
+                options={["", ...assignableAgents.map((entry) => entry.id)]}
+                lookup={agentNameLookup}
               />
               <FormSelect
                 label="Mission"
                 value={editDraft.mission_id}
-                onChange={(value) => setEditDraft({ ...editDraft, mission_id: value })}
+                onChange={(value) =>
+                  setEditDraft((current) => {
+                    return {
+                      ...current,
+                      mission_id: value,
+                      assignee_agent_id: issueAssigneeForMission(mission, value || null, current.assignee_agent_id),
+                    };
+                  })
+                }
                 options={["", ...mission.missions.map((entry) => entry.id)]}
                 lookup={Object.fromEntries(mission.missions.map((entry) => [entry.id, entry.title]))}
               />
@@ -710,7 +755,11 @@ export function IssueEditModal({
                   <span className="text-[12px] text-red-400">Delete this issue?</span>
                   <button
                     onClick={() => void onDelete()}
-                    className="rounded-lg bg-red-500/20 px-3 py-1 text-[12px] font-medium text-red-400 transition-colors hover:bg-red-500/30"
+                    disabled={!canDeleteIssue}
+                    className={cn(
+                      "rounded-lg bg-red-500/20 px-3 py-1 text-[12px] font-medium text-red-400 transition-colors hover:bg-red-500/30",
+                      !canDeleteIssue && "cursor-not-allowed opacity-45",
+                    )}
                   >
                     Confirm
                   </button>
@@ -723,16 +772,28 @@ export function IssueEditModal({
                     This will also delete {cascadeParts.join(" and ")} attached to this issue.
                   </div>
                 ) : null}
+                {!canDeleteIssue ? (
+                  <div className="text-[12px] text-red-300">
+                    Wait for {activeRunCount} active run{activeRunCount === 1 ? "" : "s"} to finish before deleting this issue.
+                  </div>
+                ) : null}
                 {deleteError ? <div className="text-[12px] text-red-300">{deleteError}</div> : null}
               </div>
             ) : (
-              <button
-                onClick={() => setConfirmDelete(true)}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] text-[#918f90] transition-colors hover:bg-red-500/10 hover:text-red-400"
-              >
-                <Trash2Icon className="size-3" />
-                Delete
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  disabled={!canDeleteIssue}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] text-[#918f90] transition-colors hover:bg-red-500/10 hover:text-red-400",
+                    !canDeleteIssue && "cursor-not-allowed opacity-45",
+                  )}
+                >
+                  <Trash2Icon className="size-3" />
+                  Delete
+                </button>
+                {!canDeleteIssue ? <span className="text-[12px] text-[#918f90]">Active runs must finish first.</span> : null}
+              </div>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -860,7 +921,7 @@ export function IssueBoardView({
                     ) : <span />}
                     <InlineAssigneePopover
                       issue={issue}
-                      agents={mission.agents}
+                      agents={issueAssignableAgents(mission, issue.mission_id)}
                       onUpdate={(agentId) => void mission.updateIssue(issue.id, { ...issue, assignee_agent_id: agentId, labels: issue.labels })}
                     />
                   </div>
@@ -1350,7 +1411,7 @@ function Filter({
   return (
     <UISelect value={value} onValueChange={(nextValue) => onChange(normalizeSelectValue(nextValue))}>
       <SelectTrigger size="sm" className="h-9 border-white/[0.06] bg-white/[0.03] text-[12px] text-[#c8c4d7]">
-        <SelectValue placeholder={label} />
+        <SelectValue placeholder={label}>{value ? lookup?.[value] ?? value : label}</SelectValue>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="">{label}</SelectItem>

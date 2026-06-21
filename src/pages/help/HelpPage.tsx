@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { FormEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -23,6 +23,8 @@ export function HelpPage({ mission }: { mission: MissionControlState }) {
   const [type, setType] = useState("bug");
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState("");
+  const typeId = useId();
+  const messageId = useId();
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -68,6 +70,14 @@ export function HelpPage({ mission }: { mission: MissionControlState }) {
           >
             Handoff Test
           </MissionLink>
+          <MissionLink
+            view="docs"
+            search="path=go-live-checklist.md"
+            navigate={mission.setActiveView}
+            className="rounded-lg border border-white/[0.08] px-4 py-2 text-[12px] font-medium text-[#c8c4d7] transition-colors hover:bg-white/[0.04]"
+          >
+            Go-live Checklist
+          </MissionLink>
         </div>
       </div>
 
@@ -79,9 +89,9 @@ export function HelpPage({ mission }: { mission: MissionControlState }) {
 
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Type</label>
+            <label htmlFor={typeId} className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Type</label>
             <Select value={type} onValueChange={(v) => setType(v ?? "bug")}>
-              <SelectTrigger className="w-full border-white/[0.08] bg-[#0f0f10] text-[13px] text-white">
+              <SelectTrigger id={typeId} className="w-full border-white/[0.08] bg-[#0f0f10] text-[13px] text-white">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -92,8 +102,9 @@ export function HelpPage({ mission }: { mission: MissionControlState }) {
             </Select>
           </div>
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Message</label>
+            <label htmlFor={messageId} className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Message</label>
             <textarea
+              id={messageId}
               value={message}
               onChange={(event) => setMessage(event.target.value)}
               className="h-40 w-full rounded-lg border border-white/[0.08] bg-[#0f0f10] px-3 py-2 text-[13px] text-white outline-none"

@@ -24,7 +24,7 @@ MissionOS is a local-first multi-agent orchestration platform with a React + Vit
 - `server/src/` - Express backend
 - `docs/` - product and architecture docs
 - `public/assets/` - static assets
-- `server/data/missionos.db` - local SQLite database
+- `server/data/missionos.db` - generated local SQLite database
 
 ## Local Development
 
@@ -58,11 +58,22 @@ MissionOS boots into a first-run flow:
 - `pnpm dev:client` - run the Vite frontend
 - `pnpm dev:server` - run the Express backend in watch mode
 - `pnpm build` - build the frontend and backend
+- `pnpm start` - run the built production server after `pnpm build`
 - `pnpm preview` - preview the production frontend build
 - `pnpm typecheck` - type-check client and server code
 - `pnpm test:client` - run client tests
-- `pnpm test` - alias for `pnpm test:client`
-- `pnpm db:reset` - reset the local SQLite database
+- `pnpm test:server` - run server tests
+- `pnpm test` - run client and server tests
+- `pnpm clean:test-data` - remove isolated SQLite databases created by test and smoke runs
+- `pnpm smoke:production` - start the built production server and verify app shell plus health endpoint
+- `pnpm smoke:docker` - run a built Docker image and verify app shell plus health endpoint
+- `pnpm smoke:compose` - run Docker Compose and verify SQLite data persists after service restart
+- `pnpm smoke:target` - verify a deployed target URL with existing team credentials
+- `pnpm release:check` - run typecheck, tests, production build, production smoke, and dependency audit
+- `pnpm release:docker` - validate Compose config, build/smoke test the image, and verify Compose volume persistence
+- `pnpm db:backup` - create a consistent SQLite backup under `backups/`
+- `pnpm db:restore <backup-file> --force` - restore a SQLite backup after MissionOS has been stopped
+- `pnpm db:reset` - reset the local SQLite database and SQLite sidecar files
 
 ## Configuration
 
@@ -70,6 +81,8 @@ MissionOS works locally without external providers, but mission-control and inte
 
 Common integration variables:
 
+- `JWT_SECRET` - required when `NODE_ENV=production`; use a random value at least 32 characters long
+- `CORS_ALLOWED_ORIGINS` - comma-separated browser origins allowed to call the API; production defaults to same-origin only
 - `OPENCLAW_URL`
 - `OPENCLAW_TOKEN`
 - `HERMES_URL`
@@ -82,9 +95,51 @@ Common integration variables:
 
 The server listens on `PORT`, which defaults to `3001`.
 
+## Production Run
+
+```bash
+pnpm build
+JWT_SECRET=replace-with-a-long-random-secret pnpm start
+```
+
+The production server serves both the Express API and the built React app from the same port.
+
+Docker deployments run the same built server on port `3001` by default:
+
+```bash
+JWT_SECRET=replace-with-a-long-random-secret docker compose up -d --build
+```
+
+The compose volume is mounted at `/app/server/data`, where the SQLite database is created.
+Set `MISSIONOS_HOST` and `MISSIONOS_PORT` to change the host bind without changing the container port.
+For the existing polling deploy script, set `JWT_SECRET` in the shell or compose `.env`, then run `scripts/deploy.sh`. The script validates compose config, rebuilds the service, and waits for `/api/health` before recording the deploy as successful.
+Local SQLite files under `server/data/` are excluded from Docker build contexts and should never be baked into images.
+
+Before a release, run:
+
+```bash
+pnpm release:check
+pnpm release:docker
+```
+
+The same release gates run in GitHub Actions on pull requests and pushes to `main` or `master`. The Docker gate uses an isolated Compose project and random localhost port for the persistence smoke.
+
+Then complete the team acceptance checklist in [Go-live checklist](./docs/go-live-checklist.md) against the target environment.
+Use the [Team rollout runbook](./docs/team-rollout-runbook.md) to coordinate the first team session, monitoring, and rollback decision.
+For the deployed production smoke, run:
+
+```bash
+MISSIONOS_TARGET_URL=https://missionos.example \
+MISSIONOS_TARGET_USERNAME=your-user \
+MISSIONOS_TARGET_PASSWORD=your-password \
+pnpm smoke:target
+```
+
 ## Data Model
 
 MissionOS stores application state in SQLite at `server/data/missionos.db`. Resetting the project from Settings or running `pnpm db:reset` returns the app to first-run state.
+Run `pnpm db:backup` before production upgrades or destructive maintenance.
+To roll back data, stop MissionOS, run `pnpm db:restore <backup-file> --force`, then start MissionOS again.
 
 ## Documentation
 
@@ -95,3 +150,5 @@ MissionOS stores application state in SQLite at `server/data/missionos.db`. Rese
 - [Settings](./docs/settings.md)
 - [Runtime bridge](./docs/runtime-bridge.md)
 - [Workflow architecture](./docs/workflow-architecture.md)
+- [Go-live checklist](./docs/go-live-checklist.md)
+- [Team rollout runbook](./docs/team-rollout-runbook.md)

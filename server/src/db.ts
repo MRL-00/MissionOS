@@ -5,7 +5,8 @@ import Database from "better-sqlite3";
 
 const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const dataDir = path.join(serverRoot, "data");
-export const dbPath = path.join(dataDir, "missionos.db");
+const databaseFileName = process.env.NODE_TEST_CONTEXT ? `missionos-test-${process.pid}.db` : "missionos.db";
+export const dbPath = path.join(dataDir, databaseFileName);
 
 let db: Database.Database | null = null;
 
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS missions (
   title TEXT NOT NULL,
   description TEXT,
   status TEXT DEFAULT 'planning',
+  team_name TEXT DEFAULT 'General',
   color TEXT,
   lead_agent_id TEXT REFERENCES agents(id),
   linear_project_id TEXT,
@@ -142,6 +144,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  mission_id TEXT REFERENCES missions(id),
   agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   prompt TEXT NOT NULL,
   cron_expression TEXT NOT NULL,
@@ -157,8 +160,9 @@ CREATE TABLE IF NOT EXISTS schedules (
 `;
 
 function ensureSchema(database: Database.Database): void {
-  database.pragma("journal_mode = WAL");
-  database.pragma("foreign_keys = ON");
+  for (const sql of getDatabasePragmaStatements()) {
+    database.pragma(sql);
+  }
   database.exec(schema);
 }
 
@@ -166,6 +170,7 @@ function runMigrations(database: Database.Database): void {
   const migrations = [
     "ALTER TABLE missions ADD COLUMN github_repo TEXT",
     "ALTER TABLE missions ADD COLUMN github_default_branch TEXT DEFAULT 'main'",
+    "ALTER TABLE missions ADD COLUMN team_name TEXT DEFAULT 'General'",
     "ALTER TABLE issues ADD COLUMN github_id INTEGER",
     "ALTER TABLE issues ADD COLUMN github_number INTEGER",
     "ALTER TABLE issues ADD COLUMN github_repo TEXT",
@@ -182,6 +187,7 @@ function runMigrations(database: Database.Database): void {
     "ALTER TABLE runs ADD COLUMN plan_step_id TEXT",
     "ALTER TABLE runs ADD COLUMN execution_plan TEXT",
     "ALTER TABLE issues ADD COLUMN estimation TEXT",
+    "ALTER TABLE schedules ADD COLUMN mission_id TEXT REFERENCES missions(id)",
   ];
 
   for (const sql of migrations) {
@@ -190,6 +196,10 @@ function runMigrations(database: Database.Database): void {
     } catch {
       // Column already exists — safe to ignore
     }
+  }
+
+  for (const sql of getDatabaseIndexStatements()) {
+    database.exec(sql);
   }
 
   // Backfill issue_number for any issues missing one
@@ -212,6 +222,47 @@ function runMigrations(database: Database.Database): void {
   }
 }
 
+export function getDatabaseIndexStatements(): string[] {
+  return [
+    "CREATE INDEX IF NOT EXISTS idx_agents_active_created ON agents(active, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agents_engine ON agents(engine)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_relationships_child ON agent_relationships(child_id)",
+    "CREATE INDEX IF NOT EXISTS idx_missions_status_updated ON missions(status, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_missions_team_updated ON missions(team_name, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_missions_lead_agent ON missions(lead_agent_id)",
+    "CREATE INDEX IF NOT EXISTS idx_mission_agents_agent ON mission_agents(agent_id)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_mission_updated ON issues(mission_id, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_assignee_updated ON issues(assignee_agent_id, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_status_priority ON issues(status, priority)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_source_linear ON issues(source, linear_id)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_github_repo_number ON issues(github_repo, github_number)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_agent_started ON runs(agent_id, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_mission_started ON runs(mission_id, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_issue_started ON runs(issue_id, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_status_started ON runs(status, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_schedule_started ON runs(schedule_id, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_parent_started ON runs(parent_run_id, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_messages_mission_created ON agent_messages(mission_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_messages_run ON agent_messages(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_messages_sender ON agent_messages(from_agent_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_messages_recipient ON agent_messages(to_agent_id)",
+    "CREATE INDEX IF NOT EXISTS idx_issue_comments_issue_created ON issue_comments(issue_id, created_at ASC)",
+    "CREATE INDEX IF NOT EXISTS idx_issue_comments_parent ON issue_comments(parent_id)",
+    "CREATE INDEX IF NOT EXISTS idx_schedules_agent ON schedules(agent_id)",
+    "CREATE INDEX IF NOT EXISTS idx_schedules_mission ON schedules(mission_id)",
+    "CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at)",
+  ];
+}
+
+export function getDatabasePragmaStatements(): string[] {
+  return [
+    "journal_mode = WAL",
+    "synchronous = NORMAL",
+    "foreign_keys = ON",
+    "busy_timeout = 5000",
+  ];
+}
+
 export function getDb(): Database.Database {
   if (db) {
     return db;
@@ -224,13 +275,19 @@ export function getDb(): Database.Database {
   return db;
 }
 
+export function getDatabaseResetPaths(databasePath: string): string[] {
+  return [databasePath, `${databasePath}-shm`, `${databasePath}-wal`];
+}
+
 export function resetDatabase(): Database.Database {
   if (db) {
     db.close();
     db = null;
   }
 
-  rmSync(dbPath, { force: true });
+  for (const filePath of getDatabaseResetPaths(dbPath)) {
+    rmSync(filePath, { force: true });
+  }
   return getDb();
 }
 

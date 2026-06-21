@@ -26,7 +26,27 @@ function formatDuration(run: MissionControlState["runs"][number]) {
   return "—";
 }
 
+function isActiveRunStatus(status: string) {
+  return status === "running" || status === "planning";
+}
+
+function runReadyAgents(mission: MissionControlState, missionId?: string | null) {
+  const supportedEngineIds = new Set((mission.engines ?? []).map((engine) => engine.id));
+  const readyAgents = mission.agents.filter((agent) => agent.active && supportedEngineIds.has(agent.engine));
+  if (!missionId) {
+    return readyAgents;
+  }
+  const missionRecord = mission.missions.find((entry) => entry.id === missionId);
+  if (!missionRecord) {
+    return [];
+  }
+  const assignedAgentIds = new Set(missionRecord.assigned_agents.map((agent) => agent.id));
+  return readyAgents.filter((agent) => assignedAgentIds.has(agent.id));
+}
+
 export function RunLog({ mission }: RunLogProps) {
+  const [missionFilter, setMissionFilter] = useState(mission.selectedMissionId ?? "all");
+  const [runMissionId, setRunMissionId] = useState(mission.selectedMissionId ?? "");
   const [agentFilter, setAgentFilter] = useState("");
   const [engineFilter, setEngineFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -45,21 +65,39 @@ export function RunLog({ mission }: RunLogProps) {
 
   const trimmedPrompt = prompt.trim();
   const canTriggerRun = Boolean(agentId && trimmedPrompt) && mission.busyKey !== "run:create";
+  const readyAgents = runReadyAgents(mission, runMissionId || null);
+
+  useEffect(() => {
+    if (missionFilter !== "all" && !mission.missions.some((entry) => entry.id === missionFilter)) {
+      setMissionFilter("all");
+    }
+  }, [mission.missions, missionFilter]);
+
+  useEffect(() => {
+    if (runMissionId && !mission.missions.some((entry) => entry.id === runMissionId)) {
+      setRunMissionId("");
+    }
+  }, [mission.missions, runMissionId]);
+
+  const visibleRuns = useMemo(
+    () => mission.runs.filter((run) => missionFilter === "all" || run.mission_id === missionFilter),
+    [mission.runs, missionFilter],
+  );
 
   const runs = useMemo(
     () =>
-      mission.runs.filter((run) => {
+      visibleRuns.filter((run) => {
         if (agentFilter && run.agent_id !== agentFilter) return false;
         if (engineFilter && run.engine !== engineFilter) return false;
         if (statusFilter && run.status !== statusFilter) return false;
         return true;
       }),
-    [agentFilter, engineFilter, mission.runs, statusFilter],
+    [agentFilter, engineFilter, statusFilter, visibleRuns],
   );
 
-  const totalRuns = mission.runs.length;
-  const successfulRuns = mission.runs.filter((run) => run.status === "complete").length;
-  const runningRuns = mission.runs.filter((run) => run.status === "running").length;
+  const totalRuns = visibleRuns.length;
+  const successfulRuns = visibleRuns.filter((run) => run.status === "complete").length;
+  const runningRuns = visibleRuns.filter((run) => run.status === "running").length;
   const successRate = totalRuns > 0 ? `${Math.round((successfulRuns / totalRuns) * 100)}%` : "0%";
   const usageSummary = useMemo(() => {
     const agentsById = new Map(mission.agents.map((agent) => [agent.id, agent]));
@@ -93,7 +131,7 @@ export function RunLog({ mission }: RunLogProps) {
       unpricedEngines: Array.from(unpricedEngines.values()),
     };
   }, [mission.agents, runs]);
-  const hasActiveRuns = mission.runs.some((run) => run.status === "running" || run.status === "planning");
+  const hasActiveRuns = visibleRuns.some((run) => isActiveRunStatus(run.status));
 
   // Fast poll (3s) while runs are active, slow poll (8s) otherwise so new runs still appear
   useEffect(() => {
@@ -116,14 +154,40 @@ export function RunLog({ mission }: RunLogProps) {
 
         <div className="mb-4 rounded-xl border border-white/[0.06] bg-[#1c1b1c] p-4">
           <div className="mb-3 text-[12px] font-semibold uppercase tracking-wider text-[#918f90]">Trigger Run</div>
-          <div className="grid grid-cols-[220px_1fr_auto] gap-3">
+          <div className="grid grid-cols-[180px_220px_1fr_auto] gap-3">
+            <Select
+              value={runMissionId}
+              onValueChange={(value) => {
+                const missionId = value ?? "";
+                setRunMissionId(missionId);
+                setAgentId((current) => {
+                  const nextAgents = runReadyAgents(mission, missionId || null);
+                  return nextAgents.some((agent) => agent.id === current) ? current : "";
+                });
+                if (runFormError) setRunFormError("");
+              }}
+            >
+              <SelectTrigger className="border-white/[0.06] bg-[#0f0f10] text-[12px] text-white">
+                <SelectValue placeholder="Mission">
+                  {runMissionId ? mission.missions.find((entry) => entry.id === runMissionId)?.title ?? "Mission" : "Ad hoc"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Ad hoc</SelectItem>
+                {mission.missions.map((entry) => (
+                  <SelectItem key={entry.id} value={entry.id}>
+                    {entry.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={agentId} onValueChange={(value) => { setAgentId(value ?? ""); if (runFormError) setRunFormError(""); }}>
               <SelectTrigger className="border-white/[0.06] bg-[#0f0f10] text-[12px] text-white">
                 <SelectValue placeholder="Select agent" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="">Select agent</SelectItem>
-                {mission.agents.map((agent) => (
+                {readyAgents.map((agent) => (
                   <SelectItem key={agent.id} value={agent.id}>
                     {agent.name}
                   </SelectItem>
@@ -147,12 +211,20 @@ export function RunLog({ mission }: RunLogProps) {
                   setRunFormError("Select an agent before starting a run.");
                   return;
                 }
+                if (!readyAgents.some((agent) => agent.id === agentId)) {
+                  setRunFormError(runMissionId ? "Select an agent assigned to this mission." : "Select an active supported agent.");
+                  return;
+                }
                 if (!trimmedPrompt) {
                   setRunFormError("Enter a prompt before starting a run.");
                   return;
                 }
                 setRunFormError("");
-                const run = await mission.createRun({ agent_id: agentId, prompt: trimmedPrompt });
+                const input: { agent_id: string; prompt: string; mission_id?: string } = { agent_id: agentId, prompt: trimmedPrompt };
+                if (runMissionId) {
+                  input.mission_id = runMissionId;
+                }
+                const run = await mission.createRun(input);
                 if (run) {
                   setExpandedId(run.id);
                   setPrompt("");
@@ -175,8 +247,15 @@ export function RunLog({ mission }: RunLogProps) {
         </div>
 
         <div className="mb-4 flex items-center gap-3">
+          <FilterSelect
+            label="Mission"
+            value={missionFilter}
+            onChange={setMissionFilter}
+            options={["all", ...mission.missions.map((entry) => entry.id)]}
+            lookup={Object.fromEntries([["all", "All missions"], ...mission.missions.map((entry) => [entry.id, entry.title])])}
+          />
           <FilterSelect label="Agent" value={agentFilter} onChange={setAgentFilter} options={["", ...mission.agents.map((agent) => agent.id)]} lookup={Object.fromEntries(mission.agents.map((agent) => [agent.id, agent.name]))} />
-          <FilterSelect label="Engine" value={engineFilter} onChange={setEngineFilter} options={["", ...Array.from(new Set(mission.runs.map((run) => run.engine)))]} />
+          <FilterSelect label="Engine" value={engineFilter} onChange={setEngineFilter} options={["", ...Array.from(new Set(visibleRuns.map((run) => run.engine)))]} />
           <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter} options={["", "complete", "failed", "running", "planning"]} />
           {streamStatus ? <span className="text-[12px] text-[#918f90]">{streamStatus}</span> : null}
         </div>
@@ -310,10 +389,17 @@ export function RunLog({ mission }: RunLogProps) {
                         </div>
                       </div>
                     </div>
-                    <div className="flex justify-end border-t border-white/[0.04] px-6 py-2">
+                    <div className="flex justify-end gap-3 border-t border-white/[0.04] px-6 py-2">
+                      {isActiveRunStatus(run.status) ? (
+                        <span className="self-center text-[12px] text-[#918f90]">Active runs can be deleted after they finish.</span>
+                      ) : null}
                       <button
                         onClick={() => setDeleteRunId(run.id)}
-                        className="flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[12px] font-medium text-red-400 transition-colors hover:border-red-500/40 hover:bg-red-500/20"
+                        disabled={isActiveRunStatus(run.status)}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[12px] font-medium text-red-400 transition-colors hover:border-red-500/40 hover:bg-red-500/20",
+                          isActiveRunStatus(run.status) && "cursor-not-allowed opacity-45",
+                        )}
                       >
                         <Trash2Icon className="size-3.5" />
                         Delete Run
@@ -334,7 +420,7 @@ export function RunLog({ mission }: RunLogProps) {
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Real-time Throughput</div>
           <div className="text-2xl font-semibold text-white">{runningRuns} <span className="text-[13px] text-[#918f90]">live runs</span></div>
           <div className="mt-3 flex h-10 items-end gap-0.5">
-            {mission.runs.slice(0, 20).map((run) => (
+            {visibleRuns.slice(0, 20).map((run) => (
               <div key={run.id} className="flex-1 rounded-sm bg-[#5e4ae3]/60" style={{ height: `${Math.min(100, ((run.duration_ms ?? 1000) / 1000) * 10)}%` }} />
             ))}
           </div>
@@ -343,8 +429,8 @@ export function RunLog({ mission }: RunLogProps) {
         <div className="mb-5">
           <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Engine Load</div>
           <div className="space-y-3">
-            {Array.from(new Set(mission.runs.map((run) => run.engine))).map((engine) => {
-              const count = mission.runs.filter((run) => run.engine === engine).length;
+            {Array.from(new Set(visibleRuns.map((run) => run.engine))).map((engine) => {
+              const count = visibleRuns.filter((run) => run.engine === engine).length;
               const percent = totalRuns > 0 ? Math.round((count / totalRuns) * 100) : 0;
               return (
                 <div key={engine}>
@@ -427,7 +513,7 @@ function FilterSelect({
       <FilterIcon className="size-3 text-[#918f90]" />
       <Select value={value} onValueChange={(v) => onChange(v ?? "")}>
         <SelectTrigger size="sm" className="border-white/[0.06] bg-[#1c1b1c] text-[12px] text-[#c8c4d7]">
-          <SelectValue placeholder={label} />
+          <SelectValue placeholder={label}>{value ? lookup?.[value] ?? value : label}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="">{label}</SelectItem>

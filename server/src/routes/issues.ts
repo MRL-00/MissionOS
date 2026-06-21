@@ -1,28 +1,262 @@
 import { randomUUID } from "node:crypto";
 import type { Express } from "express";
 import { getDb } from "../db.js";
+import { engineMap } from "../engines/index.js";
+import { parseGitHubRepoFullName } from "../git-workspace.js";
 import { syncGitHubIssuesToLocal } from "../github-service.js";
-import { linearRequest, syncLinearIssueToLocal, patchLinearIssue } from "../linear.js";
-import { listIssues } from "../queries.js";
+import { linearRequest, normalizeLinearIssuePriority, normalizeLinearIssueStatus, syncLinearIssueToLocal, patchLinearIssue } from "../linear.js";
+import { getIssueById, listIssues, parseListLimit } from "../queries.js";
 import type { AuthenticatedRequest } from "../serializers.js";
+
+const ISSUE_STATUSES = new Set(["backlog", "todo", "in_progress", "in_review", "done"]);
+const ISSUE_PRIORITIES = new Set(["urgent", "high", "medium", "low"]);
+const ISSUE_SOURCES = new Set(["native", "linear", "github"]);
+const MAX_ISSUE_TITLE_LENGTH = 180;
+const MAX_ISSUE_DESCRIPTION_LENGTH = 10_000;
+const MAX_LABEL_LENGTH = 60;
+const MAX_LABEL_COUNT = 20;
+const MAX_ESTIMATION_LENGTH = 40;
+const MAX_COMMENT_BODY_LENGTH = 10_000;
+const MAX_ISSUE_FILTER_LENGTH = 120;
+
+type IssuePayload = {
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  assigneeAgentId: string | null;
+  missionId: string | null;
+  githubRepo: string | null;
+  labels: string[];
+  source: string;
+  linearId: string | null;
+  estimation: string | null;
+};
+
+type IssuePayloadResult = { ok: true; payload: IssuePayload } | { ok: false; error: string };
+type IssueReferenceValidationInput = {
+  assigneeAgentId: string | null;
+  missionId: string | null;
+  assigneeExists: boolean;
+  assigneeActive?: boolean | undefined;
+  assigneeEngineSupported?: boolean | undefined;
+  assigneeAssignedToMission?: boolean | undefined;
+  missionExists: boolean;
+};
+type IssueReferenceValidationResult = { ok: true } | { ok: false; status: number; error: string };
+type CommentPayload = {
+  body: string;
+  parentId: string | null;
+};
+type CommentPayloadResult = { ok: true; payload: CommentPayload } | { ok: false; error: string };
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function optionalFilterString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.slice(0, MAX_ISSUE_FILTER_LENGTH);
+}
+
+function optionalIssueStatus(value: unknown): string | undefined {
+  const status = optionalFilterString(value);
+  return status && ISSUE_STATUSES.has(status) ? status : undefined;
+}
+
+function optionalIssuePriority(value: unknown): string | undefined {
+  const priority = optionalFilterString(value);
+  return priority && ISSUE_PRIORITIES.has(priority) ? priority : undefined;
+}
+
+export function parseIssueListQuery(query: Record<string, unknown>) {
+  return {
+    status: optionalIssueStatus(query.status),
+    assignee: optionalFilterString(query.assignee),
+    missionId: optionalFilterString(query.mission_id),
+    q: typeof query.q === "string" ? query.q : undefined,
+    priority: optionalIssuePriority(query.priority),
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function validateTextLength(label: string, value: string | null, maxLength: number): string | null {
+  if (value && value.length > maxLength) {
+    return `${label} must be ${maxLength} characters or fewer.`;
+  }
+  return null;
+}
+
+export function parseIssuePayload(body: Record<string, unknown>): IssuePayloadResult {
+  const title = optionalString(body.title);
+  if (!title) {
+    return { ok: false, error: "Issue title is required." };
+  }
+  const titleLengthError = validateTextLength("Issue title", title, MAX_ISSUE_TITLE_LENGTH);
+  if (titleLengthError) {
+    return { ok: false, error: titleLengthError };
+  }
+
+  const status = optionalString(body.status) ?? "backlog";
+  if (!ISSUE_STATUSES.has(status)) {
+    return { ok: false, error: "Issue status must be backlog, todo, in_progress, in_review, or done." };
+  }
+
+  const priority = optionalString(body.priority) ?? "medium";
+  if (!ISSUE_PRIORITIES.has(priority)) {
+    return { ok: false, error: "Issue priority must be urgent, high, medium, or low." };
+  }
+
+  const source = optionalString(body.source) ?? "native";
+  if (!ISSUE_SOURCES.has(source)) {
+    return { ok: false, error: "Issue source must be native, linear, or github." };
+  }
+  const description = optionalString(body.description);
+  const estimation = optionalString(body.estimation);
+  const githubRepo = optionalString(body.github_repo);
+  const labels = stringArray(body.labels);
+  const descriptionLengthError = validateTextLength("Issue description", description, MAX_ISSUE_DESCRIPTION_LENGTH);
+  if (descriptionLengthError) {
+    return { ok: false, error: descriptionLengthError };
+  }
+  const estimationLengthError = validateTextLength("Issue estimation", estimation, MAX_ESTIMATION_LENGTH);
+  if (estimationLengthError) {
+    return { ok: false, error: estimationLengthError };
+  }
+  if (labels.length > MAX_LABEL_COUNT) {
+    return { ok: false, error: `Issue labels must include ${MAX_LABEL_COUNT} or fewer entries.` };
+  }
+  if (labels.some((label) => label.length > MAX_LABEL_LENGTH)) {
+    return { ok: false, error: `Issue labels must be ${MAX_LABEL_LENGTH} characters or fewer.` };
+  }
+  if (githubRepo && !parseGitHubRepoFullName(githubRepo)) {
+    return { ok: false, error: "GitHub repository must use owner/repo format with supported characters." };
+  }
+
+  return {
+    ok: true,
+    payload: {
+      title,
+      description,
+      status,
+      priority,
+      assigneeAgentId: optionalString(body.assignee_agent_id),
+      missionId: optionalString(body.mission_id),
+      githubRepo,
+      labels,
+      source,
+      linearId: optionalString(body.linear_id),
+      estimation,
+    },
+  };
+}
+
+export function validateIssueReferences(input: IssueReferenceValidationInput): IssueReferenceValidationResult {
+  if (input.assigneeAgentId && !input.assigneeExists) {
+    return { ok: false, status: 404, error: "Assignee agent not found." };
+  }
+  if (input.assigneeAgentId && input.assigneeActive === false) {
+    return { ok: false, status: 409, error: "Assignee agent is inactive." };
+  }
+  if (input.assigneeAgentId && input.assigneeEngineSupported === false) {
+    return { ok: false, status: 409, error: "Assignee agent engine is not supported." };
+  }
+  if (input.missionId && !input.missionExists) {
+    return { ok: false, status: 404, error: "Mission not found." };
+  }
+  if (input.assigneeAgentId && input.missionId && input.assigneeAssignedToMission === false) {
+    return { ok: false, status: 409, error: "Assignee agent is not assigned to this mission." };
+  }
+  return { ok: true };
+}
+
+export function parseCommentPayload(body: Record<string, unknown>): CommentPayloadResult {
+  const commentBody = optionalString(body.body);
+  if (!commentBody) {
+    return { ok: false, error: "Comment body is required." };
+  }
+  const commentLengthError = validateTextLength("Comment body", commentBody, MAX_COMMENT_BODY_LENGTH);
+  if (commentLengthError) {
+    return { ok: false, error: commentLengthError };
+  }
+  return {
+    ok: true,
+    payload: {
+      body: commentBody,
+      parentId: optionalString(body.parentId),
+    },
+  };
+}
+
+export function formatIssueSyncError(error: unknown, fallback = "Sync failed."): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+export function deleteIssueCommentForIssue(issueId: string, commentId: string): number {
+  const db = getDb();
+  return db.transaction(() => {
+    db.prepare("UPDATE issue_comments SET parent_id = NULL WHERE parent_id = ?").run(commentId);
+    return db.prepare("DELETE FROM issue_comments WHERE id = ? AND issue_id = ?").run(commentId, issueId).changes;
+  })();
+}
+
+function checkIssueReferences(payload: IssuePayload): IssueReferenceValidationResult {
+  const db = getDb();
+  const assignee = payload.assigneeAgentId
+    ? (db.prepare("SELECT active, engine FROM agents WHERE id = ?").get(payload.assigneeAgentId) as
+        | { active: number | null; engine: string | null }
+        | undefined)
+    : undefined;
+  const missionExists = payload.missionId ? Boolean(db.prepare("SELECT 1 FROM missions WHERE id = ?").get(payload.missionId)) : false;
+  const assigneeAssignedToMission = payload.assigneeAgentId && payload.missionId && missionExists
+    ? Boolean(
+        db.prepare("SELECT 1 FROM mission_agents WHERE mission_id = ? AND agent_id = ?").get(payload.missionId, payload.assigneeAgentId),
+      )
+    : undefined;
+  return validateIssueReferences({
+    assigneeAgentId: payload.assigneeAgentId,
+    missionId: payload.missionId,
+    assigneeExists: Boolean(assignee),
+    assigneeActive: assignee ? assignee.active === 1 : undefined,
+    assigneeEngineSupported: assignee ? engineMap.has(String(assignee.engine)) : undefined,
+    assigneeAssignedToMission,
+    missionExists,
+  });
+}
 
 export function registerIssueRoutes(app: Express) {
   app.get("/api/issues", (req, res) => {
+    const filters = parseIssueListQuery(req.query);
     res.json({
       issues: listIssues({
-        status: typeof req.query.status === "string" ? req.query.status : undefined,
-        assignee: typeof req.query.assignee === "string" ? req.query.assignee : undefined,
-        missionId: typeof req.query.mission_id === "string" ? req.query.mission_id : undefined,
-        q: typeof req.query.q === "string" ? req.query.q : undefined,
-        priority: typeof req.query.priority === "string" ? req.query.priority : undefined,
+        ...filters,
+        limit: parseListLimit(typeof req.query.limit === "string" ? req.query.limit : undefined, {
+          defaultLimit: 500,
+          maxLimit: 1_000,
+        }),
       }),
     });
   });
 
   app.post("/api/issues", async (req, res) => {
-    const body = req.body as Record<string, unknown>;
-    if (typeof body.title !== "string" || !body.title) {
-      res.status(400).json({ error: "Issue title is required." });
+    const result = parseIssuePayload(req.body as Record<string, unknown>);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    const payload = result.payload;
+    const references = checkIssueReferences(payload);
+    if (!references.ok) {
+      res.status(references.status).json({ error: references.error });
       return;
     }
 
@@ -33,76 +267,108 @@ export function registerIssueRoutes(app: Express) {
     db.prepare(
       `
       INSERT INTO issues (
-        id, issue_number, title, description, status, priority, assignee_agent_id, mission_id, labels, source, linear_id, estimation, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        id, issue_number, title, description, status, priority, assignee_agent_id, mission_id, github_repo, labels, source, linear_id, estimation, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `,
     ).run(
       id,
       nextNumber,
-      body.title,
-      typeof body.description === "string" ? body.description : null,
-      typeof body.status === "string" ? body.status : "backlog",
-      typeof body.priority === "string" ? body.priority : "medium",
-      typeof body.assignee_agent_id === "string" ? body.assignee_agent_id : null,
-      typeof body.mission_id === "string" ? body.mission_id : null,
-      JSON.stringify(Array.isArray(body.labels) ? body.labels : []),
-      typeof body.source === "string" ? body.source : "native",
-      typeof body.linear_id === "string" ? body.linear_id : null,
-      typeof body.estimation === "string" ? body.estimation : null,
+      payload.title,
+      payload.description,
+      payload.status,
+      payload.priority,
+      payload.assigneeAgentId,
+      payload.missionId,
+      payload.githubRepo,
+      JSON.stringify(payload.labels),
+      payload.source,
+      payload.linearId,
+      payload.estimation,
     );
 
-    if (typeof body.linear_id === "string" && body.linear_id) {
-      await patchLinearIssue(body.linear_id, {
-        title: String(body.title),
-        description: typeof body.description === "string" ? body.description : undefined,
+    if (payload.linearId) {
+      await patchLinearIssue(payload.linearId, {
+        title: payload.title,
+        description: payload.description ?? undefined,
       });
     }
 
-    const issue = listIssues({}).find((item) => item.id === id);
+    const issue = getIssueById(id);
     res.status(201).json({ issue });
   });
 
   app.put("/api/issues/:id", async (req, res) => {
-    const body = req.body as Record<string, unknown>;
-    getDb().prepare(
-      `
-      UPDATE issues
-      SET
-        title = ?,
-        description = ?,
-        status = ?,
-        priority = ?,
-        assignee_agent_id = ?,
-        mission_id = ?,
-        labels = ?,
-        source = ?,
-        linear_id = ?,
-        estimation = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-      `,
-    ).run(
-      body.title,
-      typeof body.description === "string" ? body.description : null,
-      typeof body.status === "string" ? body.status : "backlog",
-      typeof body.priority === "string" ? body.priority : "medium",
-      typeof body.assignee_agent_id === "string" ? body.assignee_agent_id : null,
-      typeof body.mission_id === "string" ? body.mission_id : null,
-      JSON.stringify(Array.isArray(body.labels) ? body.labels : []),
-      typeof body.source === "string" ? body.source : "native",
-      typeof body.linear_id === "string" ? body.linear_id : null,
-      typeof body.estimation === "string" ? body.estimation : null,
-      req.params.id,
-    );
+    const result = parseIssuePayload(req.body as Record<string, unknown>);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    const payload = result.payload;
+    const references = checkIssueReferences(payload);
+    if (!references.ok) {
+      res.status(references.status).json({ error: references.error });
+      return;
+    }
 
-    if (typeof body.linear_id === "string" && body.linear_id) {
-      await patchLinearIssue(body.linear_id, {
-        title: typeof body.title === "string" ? body.title : undefined,
-        description: typeof body.description === "string" ? body.description : undefined,
+    const db = getDb();
+    const update = db.transaction(() => {
+      const result = db.prepare(
+        `
+        UPDATE issues
+        SET
+          title = ?,
+          description = ?,
+          status = ?,
+          priority = ?,
+          assignee_agent_id = ?,
+          mission_id = ?,
+          github_repo = ?,
+          labels = ?,
+          source = ?,
+          linear_id = ?,
+          estimation = ?,
+          updated_at = datetime('now')
+        WHERE id = ?
+        `,
+      ).run(
+        payload.title,
+        payload.description,
+        payload.status,
+        payload.priority,
+        payload.assigneeAgentId,
+        payload.missionId,
+        payload.githubRepo,
+        JSON.stringify(payload.labels),
+        payload.source,
+        payload.linearId,
+        payload.estimation,
+        req.params.id,
+      );
+      if (result.changes > 0) {
+        db.prepare("UPDATE runs SET mission_id = ? WHERE issue_id = ?").run(payload.missionId, req.params.id);
+        db.prepare(
+          `
+          UPDATE agent_messages
+          SET mission_id = ?
+          WHERE run_id IN (SELECT id FROM runs WHERE issue_id = ?)
+          `,
+        ).run(payload.missionId, req.params.id);
+      }
+      return result;
+    })();
+    if (update.changes === 0) {
+      res.status(404).json({ error: "Issue not found." });
+      return;
+    }
+
+    if (payload.linearId) {
+      await patchLinearIssue(payload.linearId, {
+        title: payload.title,
+        description: payload.description ?? undefined,
       });
     }
 
-    const issue = listIssues({}).find((item) => item.id === req.params.id);
+    const issue = getIssueById(req.params.id);
     res.json({ issue });
   });
 
@@ -147,7 +413,15 @@ export function registerIssueRoutes(app: Express) {
         // Comments can reference each other via parent_id with NO ACTION.
         // Clear reply links before deleting issue comments to avoid leaking a
         // raw SQLite foreign-key error to the user.
-        db.prepare("UPDATE issue_comments SET parent_id = NULL WHERE issue_id = ?").run(issueId);
+        db.prepare(
+          `
+          UPDATE issue_comments
+          SET parent_id = NULL
+          WHERE parent_id IN (
+            SELECT id FROM issue_comments WHERE issue_id = ?
+          )
+          `,
+        ).run(issueId);
         db.prepare("DELETE FROM issue_comments WHERE issue_id = ?").run(issueId);
 
         db.prepare("DELETE FROM runs WHERE issue_id = ?").run(issueId);
@@ -172,7 +446,17 @@ export function registerIssueRoutes(app: Express) {
     }
   });
 
-  app.get("/api/issues/:id/comments", (_req, res) => {
+  app.get("/api/issues/:id/comments", (req, res) => {
+    const issueExists = Boolean(getDb().prepare("SELECT 1 FROM issues WHERE id = ?").get(req.params.id));
+    if (!issueExists) {
+      res.status(404).json({ error: "Issue not found." });
+      return;
+    }
+
+    const limit = parseListLimit(typeof req.query.limit === "string" ? req.query.limit : undefined, {
+      defaultLimit: 500,
+      maxLimit: 1_000,
+    });
     const comments = getDb()
       .prepare(
         `
@@ -187,9 +471,10 @@ export function registerIssueRoutes(app: Express) {
         LEFT JOIN agents ON agents.id = issue_comments.author_id AND issue_comments.author_type = 'agent'
         WHERE issue_comments.issue_id = ?
         ORDER BY issue_comments.created_at ASC
+        LIMIT ?
         `,
       )
-      .all(_req.params.id)
+      .all(req.params.id, limit)
       .map((row) => ({
         ...(row as Record<string, unknown>),
         author_name:
@@ -205,16 +490,35 @@ export function registerIssueRoutes(app: Express) {
   });
 
   app.post("/api/issues/:id/comments", (req: AuthenticatedRequest, res) => {
-    const { body, parentId } = req.body as { body?: string; parentId?: string };
-    if (!body || !req.user) {
-      res.status(400).json({ error: "Comment body is required." });
+    const result = parseCommentPayload(req.body as Record<string, unknown>);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
       return;
+    }
+    if (!req.user) {
+      res.status(401).json({ error: "Authentication is required." });
+      return;
+    }
+
+    const issueExists = Boolean(getDb().prepare("SELECT 1 FROM issues WHERE id = ?").get(req.params.id));
+    if (!issueExists) {
+      res.status(404).json({ error: "Issue not found." });
+      return;
+    }
+
+    const { body, parentId } = result.payload;
+    if (parentId) {
+      const parentExists = Boolean(getDb().prepare("SELECT 1 FROM issue_comments WHERE id = ? AND issue_id = ?").get(parentId, req.params.id));
+      if (!parentExists) {
+        res.status(404).json({ error: "Parent comment not found." });
+        return;
+      }
     }
 
     const comment = {
       id: randomUUID(),
       issue_id: req.params.id,
-      parent_id: parentId ?? null,
+      parent_id: parentId,
       author_type: "user",
       author_id: req.user.id,
       body,
@@ -231,50 +535,58 @@ export function registerIssueRoutes(app: Express) {
   });
 
   app.delete("/api/issues/:id/comments/:commentId", (req, res) => {
-    getDb().prepare("DELETE FROM issue_comments WHERE id = ?").run(req.params.commentId);
+    const deleted = deleteIssueCommentForIssue(req.params.id, req.params.commentId);
+    if (deleted === 0) {
+      res.status(404).json({ error: "Comment not found." });
+      return;
+    }
     res.json({ ok: true });
   });
 
   // ── Linear sync ──
 
   app.post("/api/issues/sync-linear", async (_req, res) => {
-    const data = await linearRequest<{
-      issues: {
-        nodes: Array<Record<string, unknown>>;
-      };
-    }>(`
-      query MissionOSIssues {
-        issues(first: 100) {
-          nodes {
-            id
-            title
-            description
-            priorityLabel
-            state {
-              name
-            }
-            labels {
-              nodes {
+    try {
+      const data = await linearRequest<{
+        issues: {
+          nodes: Array<Record<string, unknown>>;
+        };
+      }>(`
+        query MissionOSIssues {
+          issues(first: 100) {
+            nodes {
+              id
+              title
+              description
+              priorityLabel
+              state {
                 name
+              }
+              labels {
+                nodes {
+                  name
+                }
               }
             }
           }
         }
+      `);
+
+      for (const issue of data.issues.nodes) {
+        await syncLinearIssueToLocal({
+          id: issue.id,
+          title: issue.title,
+          description: issue.description,
+          status: normalizeLinearIssueStatus((issue.state as { name?: string } | null)?.name),
+          priority: normalizeLinearIssuePriority(issue.priorityLabel),
+          labels: (issue.labels as { nodes?: Array<{ name: string }> } | null)?.nodes ?? [],
+        });
       }
-    `);
 
-    for (const issue of data.issues.nodes) {
-      await syncLinearIssueToLocal({
-        id: issue.id,
-        title: issue.title,
-        description: issue.description,
-        status: (issue.state as { name?: string } | null)?.name ?? "backlog",
-        priority: issue.priorityLabel ?? "medium",
-        labels: (issue.labels as { nodes?: Array<{ name: string }> } | null)?.nodes ?? [],
-      });
+      res.json({ ok: true, issues: listIssues({ limit: 1_000 }) });
+    } catch (error) {
+      res.status(400).json({ error: formatIssueSyncError(error) });
     }
-
-    res.json({ ok: true, issues: listIssues({}) });
   });
 
   // ── GitHub sync ──
@@ -292,18 +604,18 @@ export function registerIssueRoutes(app: Express) {
       return;
     }
 
-    const [owner, repo] = mission.github_repo.split("/");
-    if (!owner || !repo) {
+    const githubRepo = parseGitHubRepoFullName(mission.github_repo);
+    if (!githubRepo) {
       res.status(400).json({ error: "Invalid github_repo format. Expected owner/repo." });
       return;
     }
 
     try {
-      const synced = await syncGitHubIssuesToLocal(owner, repo, missionId);
-      const issues = listIssues({ missionId });
+      const synced = await syncGitHubIssuesToLocal(githubRepo.owner, githubRepo.repo, missionId);
+      const issues = listIssues({ missionId, limit: 1_000 });
       res.json({ ok: true, synced, issues });
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Sync failed." });
+      res.status(400).json({ error: formatIssueSyncError(error) });
     }
   });
 }

@@ -1,7 +1,8 @@
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { CheckIcon, ChevronRightIcon, GitBranchIcon, PencilIcon, PlusIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, GitBranchIcon, PencilIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
 import type { MissionRecord } from "@/mission/appTypes";
 import type { MissionControlState } from "@/mission/hooks/useMissionControl";
+import { missionHasActiveRuns } from "@/mission/missionStatus";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -37,6 +38,21 @@ const MISSION_COLORS = [
 
 function normalizeSelectValue(value: string | null) {
   return value ?? "";
+}
+
+function agentSelectLabel(agentId: string, mission: MissionControlState) {
+  return mission.agents.find((agent) => agent.id === agentId)?.name ?? "Select lead agent";
+}
+
+function missionReadyAgents(mission: MissionControlState) {
+  const supportedEngineIds = new Set(mission.engines.map((engine) => engine.id));
+  return mission.agents.filter((agent) => agent.active && supportedEngineIds.has(agent.engine));
+}
+
+function missionAgentHasActiveRuns(mission: MissionControlState, missionId: string, agentId: string) {
+  return mission.runs.some(
+    (run) => run.mission_id === missionId && run.agent_id === agentId && (run.status === "running" || run.status === "planning"),
+  );
 }
 
 function formatRelative(value: string) {
@@ -82,20 +98,23 @@ export function StatCard({
 
 export function MissionGrid({
   mission,
+  missions,
   selectedMissionId,
   onSelectMission,
   onOpenCreate,
 }: {
   mission: MissionControlState;
+  missions?: MissionRecord[];
   selectedMissionId: string | null;
   onSelectMission: (missionId: string) => void;
   onOpenCreate: () => void;
 }) {
-  const selectedMission = mission.missions.find((entry) => entry.id === selectedMissionId) ?? mission.missions[0] ?? null;
+  const entries = missions ?? mission.missions;
+  const selectedMission = entries.find((entry) => entry.id === selectedMissionId) ?? entries[0] ?? null;
 
   return (
     <div className="grid grid-cols-3 gap-4">
-      {mission.missions.map((entry) => (
+      {entries.map((entry) => (
         <button
           key={entry.id}
           onClick={() => onSelectMission(entry.id)}
@@ -114,6 +133,10 @@ export function MissionGrid({
             <span className="text-[12px] text-[#918f90]">{formatRelative(entry.last_active_at)}</span>
           </div>
           <h3 className="text-[14px] font-semibold text-white">{entry.title}</h3>
+          <div className="mt-1 flex items-center gap-1 text-[11px] text-[#c8c4d7]">
+            <UsersIcon className="size-3" />
+            <span>{entry.team_name}</span>
+          </div>
           <p className="mt-1 text-[12px] text-[#918f90]">{entry.description || "No description yet."}</p>
           {entry.github_repo ? (
             <div className="mt-1.5 flex items-center gap-1 text-[11px] text-[#918f90]">
@@ -173,6 +196,8 @@ export function MissionDetailPanel({
   setEditDescription,
   editStatus,
   setEditStatus,
+  editTeamName,
+  setEditTeamName,
   editColor,
   setEditColor,
   editGithubRepo,
@@ -197,6 +222,8 @@ export function MissionDetailPanel({
   setEditDescription: (value: string) => void;
   editStatus: string;
   setEditStatus: (value: string) => void;
+  editTeamName: string;
+  setEditTeamName: (value: string) => void;
   editColor: string;
   setEditColor: (value: string) => void;
   editGithubRepo: string;
@@ -213,6 +240,12 @@ export function MissionDetailPanel({
     return null;
   }
 
+  const canStartMission = selected.status !== "active" && selected.status !== "complete";
+  const hasActiveRuns = missionHasActiveRuns(selected.id, mission.runs);
+  const completionBlocked = editStatus === "complete" && hasActiveRuns;
+  const assignedAgentIds = new Set(selected.assigned_agents.map((agent) => agent.id));
+  const availableAgents = missionReadyAgents(mission).filter((agent) => !assignedAgentIds.has(agent.id));
+
   return (
     <div className="w-[340px] shrink-0 overflow-y-auto border-l border-white/[0.06] bg-[#131314] p-5">
       {editing ? (
@@ -220,7 +253,15 @@ export function MissionDetailPanel({
           <div className="mb-4 flex items-center justify-between">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-[#585658]">Editing Mission</span>
             <div className="flex items-center gap-1">
-              <button onClick={() => void saveEditing()} className="rounded-lg p-1.5 text-emerald-400 hover:bg-emerald-500/10" title="Save">
+              <button
+                onClick={() => void saveEditing()}
+                disabled={completionBlocked}
+                className={cn(
+                  "rounded-lg p-1.5 text-emerald-400 hover:bg-emerald-500/10",
+                  completionBlocked && "cursor-not-allowed opacity-45",
+                )}
+                title="Save"
+              >
                 <CheckIcon className="size-3.5" />
               </button>
               <button onClick={cancelEditing} className="rounded-lg p-1.5 text-[#918f90] hover:bg-white/[0.06] hover:text-white" title="Cancel">
@@ -235,6 +276,9 @@ export function MissionDetailPanel({
             placeholder="Mission title..."
           />
           <div className="mb-4">
+            <Field label="Team" value={editTeamName} onChange={setEditTeamName} placeholder="Engineering, Marketing, Sales..." />
+          </div>
+          <div className="mb-4">
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Status</label>
             <Select value={editStatus} onValueChange={(value) => setEditStatus(normalizeSelectValue(value))}>
               <SelectTrigger className="w-full border-white/[0.08] bg-[#0f0f10] text-[13px] text-white">
@@ -242,10 +286,15 @@ export function MissionDetailPanel({
               </SelectTrigger>
               <SelectContent>
                 {["planning", "active", "paused", "complete"].map((status) => (
-                  <SelectItem key={status} value={status}>{status}</SelectItem>
+                  <SelectItem key={status} value={status} disabled={status === "complete" && hasActiveRuns}>{status}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {hasActiveRuns ? (
+              <p className="mt-2 text-[11px] leading-relaxed text-amber-300">
+                Finish active runs before marking this mission complete.
+              </p>
+            ) : null}
           </div>
           <div className="mb-4">
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Color</label>
@@ -264,6 +313,59 @@ export function MissionDetailPanel({
                 />
               ))}
             </div>
+          </div>
+          <div className="mb-4">
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Agents</div>
+            <div className="space-y-2">
+              {selected.assigned_agents.map((agent) => {
+                const hasAgentActiveRuns = missionAgentHasActiveRuns(mission, selected.id, agent.id);
+                return (
+                  <div key={agent.id} className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+                    <div className="flex size-7 items-center justify-center rounded-full text-[12px]" style={{ backgroundColor: `${agent.color}44` }}>
+                      {agent.emoji}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-white">{agent.name}</div>
+                      <div className="truncate text-[11px] text-[#918f90]">{agent.role || "Unassigned role"}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!hasAgentActiveRuns) {
+                          void mission.removeMissionAgent(selected.id, agent.id);
+                        }
+                      }}
+                      disabled={hasAgentActiveRuns}
+                      className={cn(
+                        "rounded-lg border border-white/[0.08] px-2 py-1 text-[11px] text-[#c8c4d7] transition-colors hover:bg-white/[0.04]",
+                        hasAgentActiveRuns && "cursor-not-allowed opacity-45",
+                      )}
+                      aria-label={`Remove ${agent.name} from mission`}
+                      title={hasAgentActiveRuns ? "Finish active runs before removing this agent." : "Remove agent"}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+              {selected.assigned_agents.length === 0 ? (
+                <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-3 text-[12px] text-[#918f90]">No agents assigned.</div>
+              ) : null}
+            </div>
+            {availableAgents.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {availableAgents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    onClick={() => void mission.assignMissionAgent(selected.id, agent.id)}
+                    className="rounded-md border border-white/[0.08] px-2 py-1 text-[11px] text-[#c8c4d7] transition-colors hover:bg-white/[0.04] hover:text-white"
+                  >
+                    Add {agent.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="mb-4">
             <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Description</label>
@@ -378,7 +480,11 @@ export function MissionDetailPanel({
           </div>
           <button
             onClick={() => void saveEditing()}
-            className="w-full rounded-lg bg-[#39147e] px-4 py-2 text-[13px] font-medium text-white transition-all hover:bg-[#7c3aed]"
+            disabled={completionBlocked}
+            className={cn(
+              "w-full rounded-lg bg-[#39147e] px-4 py-2 text-[13px] font-medium text-white transition-all hover:bg-[#7c3aed]",
+              completionBlocked && "cursor-not-allowed opacity-45 hover:bg-[#39147e]",
+            )}
           >
             Save Changes
           </button>
@@ -397,6 +503,13 @@ export function MissionDetailPanel({
             </div>
           </div>
           <p className="mb-5 text-[13px] leading-relaxed text-[#918f90]">{selected.description || "No mission description yet."}</p>
+          <div className="mb-5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Team</div>
+            <div className="flex items-center gap-1.5 text-[13px] text-white">
+              <UsersIcon className="size-3.5 text-[#918f90]" />
+              {selected.team_name}
+            </div>
+          </div>
           {selected.github_repo ? (
             <div className="mb-5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">GitHub Repository</div>
@@ -456,7 +569,11 @@ export function MissionDetailPanel({
           <div className="flex gap-2">
             <button
               onClick={() => void mission.startMission(selected.id)}
-              className="flex-1 rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-4 py-2 text-[13px] font-medium text-white"
+              disabled={!canStartMission}
+              className={cn(
+                "flex-1 rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-4 py-2 text-[13px] font-medium text-white",
+                !canStartMission && "cursor-not-allowed opacity-45",
+              )}
             >
               Start Mission
             </button>
@@ -480,6 +597,8 @@ export function CreateMissionModal({
   setTitle,
   description,
   setDescription,
+  teamName,
+  setTeamName,
   leadAgentId,
   setLeadAgentId,
   selectedAgentIds,
@@ -493,6 +612,7 @@ export function CreateMissionModal({
   setRepoDropdownOpen,
   filteredRepos,
   reposLoaded,
+  suggestedTeamNames,
   onClose,
   onCreate,
 }: {
@@ -502,6 +622,8 @@ export function CreateMissionModal({
   setTitle: (value: string) => void;
   description: string;
   setDescription: (value: string) => void;
+  teamName: string;
+  setTeamName: (value: string) => void;
   leadAgentId: string;
   setLeadAgentId: (value: string) => void;
   selectedAgentIds: Set<string>;
@@ -515,12 +637,15 @@ export function CreateMissionModal({
   setRepoDropdownOpen: Dispatch<SetStateAction<boolean>>;
   filteredRepos: MissionRepoOption[];
   reposLoaded: boolean;
+  suggestedTeamNames: string[];
   onClose: () => void;
   onCreate: () => Promise<void>;
 }) {
   if (!open) {
     return null;
   }
+  const readyAgents = missionReadyAgents(mission);
+  const readyAgentIds = new Set(readyAgents.map((agent) => agent.id));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -536,30 +661,50 @@ export function CreateMissionModal({
             <div className="grid grid-cols-2 gap-4">
               <Field label="Title" value={title} onChange={setTitle} placeholder="Ship MissionOS backend" />
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Lead Agent</label>
-                <Select
-                  value={leadAgentId}
-                  onValueChange={(rawValue) => {
-                    const value = normalizeSelectValue(rawValue);
-                    setLeadAgentId(value);
-                    if (value) {
-                      setSelectedAgentIds((previous) => new Set(previous).add(value));
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-full border-white/[0.08] bg-[#0f0f10] text-[13px] text-white">
-                    <SelectValue placeholder="Select lead agent" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">Select lead agent</SelectItem>
-                    {mission.agents.map((agent) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Field label="Team" value={teamName} onChange={setTeamName} placeholder="Engineering" />
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {suggestedTeamNames.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setTeamName(name)}
+                      className={cn(
+                        "rounded-md border px-2 py-1 text-[11px] transition-colors",
+                        teamName === name
+                          ? "border-[#5e4ae3]/60 bg-[#39147e]/20 text-white"
+                          : "border-white/[0.08] text-[#918f90] hover:bg-white/[0.04] hover:text-white",
+                      )}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
               </div>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Lead Agent</label>
+              <Select
+                value={leadAgentId}
+                onValueChange={(rawValue) => {
+                  const value = normalizeSelectValue(rawValue);
+                  setLeadAgentId(value);
+                  if (value) {
+                    setSelectedAgentIds((previous) => new Set(previous).add(value));
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full border-white/[0.08] bg-[#0f0f10] text-[13px] text-white">
+                  <SelectValue placeholder="Select lead agent">{agentSelectLabel(leadAgentId, mission)}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Select lead agent</SelectItem>
+                  {readyAgents.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Description</label>
@@ -676,14 +821,14 @@ export function CreateMissionModal({
               ) : null}
             </div>
 
-            {mission.agents.length > 0 ? (
+            {readyAgents.length > 0 ? (
               <div>
                 <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">
                   Assign Agents
                   {selectedAgentIds.size > 0 ? <span className="ml-1.5 normal-case tracking-normal text-[#585658]">({selectedAgentIds.size} selected)</span> : null}
                 </label>
                 <div className="max-h-36 overflow-y-auto rounded-lg border border-white/[0.08] bg-[#0f0f10]">
-                  {mission.derivedAgents.map((agent) => {
+                  {mission.derivedAgents.filter((agent) => readyAgentIds.has(agent.id)).map((agent) => {
                     const isSelected = selectedAgentIds.has(agent.id);
                     return (
                       <button

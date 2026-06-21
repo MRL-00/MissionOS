@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import { RequestError } from "@octokit/request-error";
 import { getDb } from "./db.js";
+import { normalizeImportedIssueDescription, normalizeImportedIssueLabels, normalizeImportedIssueTitle } from "./issueImport.js";
 
 export interface GitHubRepo {
   id: number;
@@ -62,48 +63,47 @@ export async function testGitHubConnection(): Promise<{
   };
 }
 
-export async function listGitHubRepos(query?: string): Promise<GitHubRepo[]> {
+export async function listGitHubRepos(query?: string, options: { limit?: number } = {}): Promise<GitHubRepo[]> {
   const octokit = createOctokit();
+  const perPage = options.limit ?? 30;
 
   if (query) {
     const { data } = await octokit.search.repos({
       q: `${query} in:name fork:true`,
-      per_page: 30,
+      per_page: perPage,
       sort: "updated",
     });
     return data.items.map(toGitHubRepo);
   }
 
   const { data } = await octokit.repos.listForAuthenticatedUser({
-    per_page: 30,
+    per_page: perPage,
     sort: "updated",
     affiliation: "owner,collaborator,organization_member",
   });
   return data.map(toGitHubRepo);
 }
 
-export async function listGitHubIssues(owner: string, repo: string): Promise<GitHubIssue[]> {
+export async function listGitHubIssues(owner: string, repo: string, options: { limit?: number } = {}): Promise<GitHubIssue[]> {
   const octokit = createOctokit();
   const { data } = await octokit.issues.listForRepo({
     owner,
     repo,
     state: "open",
-    per_page: 100,
+    per_page: options.limit ?? 100,
   });
   return data
     .filter((issue) => !issue.pull_request)
     .map((issue) => ({
       id: issue.id,
       number: issue.number,
-      title: issue.title,
-      body: issue.body ?? null,
+      title: normalizeImportedIssueTitle(issue.title),
+      body: normalizeImportedIssueDescription(issue.body),
       state: issue.state ?? "open",
       html_url: issue.html_url,
       created_at: issue.created_at,
       updated_at: issue.updated_at,
-      labels: issue.labels
-        .map((label) => (typeof label === "string" ? label : label.name ?? ""))
-        .filter(Boolean),
+      labels: normalizeImportedIssueLabels(issue.labels),
     }));
 }
 

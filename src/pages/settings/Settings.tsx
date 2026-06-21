@@ -85,8 +85,9 @@ export function Settings({ mission }: SettingsProps) {
                 <button
                   onClick={async () => {
                     const ok = await mission.saveProfile({ displayName: profileName, avatarEmoji: profileEmoji });
+                    if (!ok) return;
                     await mission.updateSettingsMap({ ...settingsDraft, project_logo: projectLogo });
-                    if (ok) setStatus("Profile saved.");
+                    setStatus("Profile saved.");
                   }}
                   className="rounded-lg bg-gradient-to-r from-[#39147e] to-[#2e1065] px-4 py-2.5 text-[13px] font-medium text-white"
                 >

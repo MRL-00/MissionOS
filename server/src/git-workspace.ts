@@ -7,6 +7,7 @@ import { getDb } from "./db.js";
 const serverSrcRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 const serverRoot = path.resolve(serverSrcRoot, "..");
 const repoRoot = path.resolve(serverRoot, "..");
+const GITHUB_PATH_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
 
 export function getWorkspaceRoot(): string {
   const rows = getDb().prepare("SELECT value FROM settings WHERE key = 'github_workspace_dir'").get() as
@@ -28,11 +29,41 @@ function getGitHubPat(): string {
   return rows?.value?.trim() ?? "";
 }
 
+export function isSafeGitHubPathSegment(value: string): boolean {
+  return GITHUB_PATH_SEGMENT.test(value) && value !== "." && value !== "..";
+}
+
+export function parseGitHubRepoFullName(value: string | null | undefined): { owner: string; repo: string } | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parts = trimmed.split("/");
+  if (parts.length !== 2) {
+    return null;
+  }
+  const [owner, repo] = parts;
+  if (!owner || !repo || !isSafeGitHubPathSegment(owner) || !isSafeGitHubPathSegment(repo)) {
+    return null;
+  }
+  return { owner, repo };
+}
+
+function assertSafeWorkspaceSegments(owner: string, repo: string, issueId: string): void {
+  if (!isSafeGitHubPathSegment(owner) || !isSafeGitHubPathSegment(repo) || !isSafeGitHubPathSegment(issueId)) {
+    throw new Error("GitHub workspace path contains unsupported characters.");
+  }
+}
+
 export function repoLocalPath(owner: string, repo: string, issueId: string): string {
+  assertSafeWorkspaceSegments(owner, repo, issueId);
   return path.join(getWorkspaceRoot(), owner, repo, issueId);
 }
 
 function sharedRepoPath(owner: string, repo: string): string {
+  if (!isSafeGitHubPathSegment(owner) || !isSafeGitHubPathSegment(repo)) {
+    throw new Error("GitHub workspace path contains unsupported characters.");
+  }
   return path.join(getWorkspaceRoot(), owner, repo, ".repo");
 }
 

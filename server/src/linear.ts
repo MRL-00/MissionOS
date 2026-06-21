@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "./db.js";
+import { normalizeImportedIssueDescription, normalizeImportedIssueLabels, normalizeImportedIssueTitle } from "./issueImport.js";
 
 function readSettingsMap(): Record<string, string> {
   const rows = getDb().prepare("SELECT key, value FROM settings").all() as Array<{ key: string; value: string }>;
@@ -7,6 +8,28 @@ function readSettingsMap(): Record<string, string> {
 }
 
 export { readSettingsMap };
+
+export function normalizeLinearIssueStatus(value: unknown): string {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/gu, "_") : "";
+  if (normalized === "todo" || normalized === "to_do") {
+    return "todo";
+  }
+  if (normalized === "in_progress" || normalized === "started") {
+    return "in_progress";
+  }
+  if (normalized === "in_review" || normalized === "review") {
+    return "in_review";
+  }
+  if (normalized === "done" || normalized === "completed") {
+    return "done";
+  }
+  return "backlog";
+}
+
+export function normalizeLinearIssuePriority(value: unknown): string {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ["urgent", "high", "medium", "low"].includes(normalized) ? normalized : "medium";
+}
 
 export async function linearRequest<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const settings = readSettingsMap();
@@ -41,8 +64,7 @@ export async function syncLinearIssueToLocal(linearIssue: Record<string, unknown
   const db = getDb();
   const id = randomUUID();
   const linearId = String(linearIssue.id);
-  const labels =
-    Array.isArray(linearIssue.labels) ? linearIssue.labels.map((label) => String((label as { name: string }).name)) : [];
+  const labels = normalizeImportedIssueLabels(linearIssue.labels);
   const existing = db.prepare("SELECT id FROM issues WHERE linear_id = ?").get(linearId) as { id: string } | undefined;
   const issueId = existing?.id ?? id;
 
@@ -71,10 +93,10 @@ export async function syncLinearIssueToLocal(linearIssue: Record<string, unknown
   ).run(
     issueId,
     nextNumber,
-    String(linearIssue.title ?? "Untitled"),
-    typeof linearIssue.description === "string" ? linearIssue.description : null,
-    String(linearIssue.status ?? "backlog"),
-    String(linearIssue.priority ?? "medium"),
+    normalizeImportedIssueTitle(linearIssue.title),
+    normalizeImportedIssueDescription(linearIssue.description),
+    normalizeLinearIssueStatus(linearIssue.status),
+    normalizeLinearIssuePriority(linearIssue.priority),
     JSON.stringify(labels),
     linearId,
   );
