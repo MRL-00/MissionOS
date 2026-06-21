@@ -5,7 +5,7 @@ import {
   listGitHubIssues,
 } from "../github-service.js";
 import { normalizeImportedIssueDescription, normalizeImportedIssueLabels, normalizeImportedIssueTitle } from "../issueImport.js";
-import { linearRequest, normalizeLinearIssuePriority, normalizeLinearIssueStatus } from "../linear.js";
+import { linearRequest, localStatusFromLinearState, normalizeLinearIssuePriority } from "../linear.js";
 import { parseListLimit } from "../queries.js";
 
 type ParsedGitHubRepoParams = { owner: string; repo: string };
@@ -93,11 +93,15 @@ export function registerIntegrationRoutes(app: Express) {
           issues(first: ${filters.limit}) {
             nodes {
               id
+              identifier
+              url
               title
               description
               priorityLabel
               state {
+                id
                 name
+                type
               }
               labels {
                 nodes {
@@ -112,9 +116,14 @@ export function registerIntegrationRoutes(app: Express) {
       res.json({
         issues: data.issues.nodes.map((issue) => ({
           id: issue.id,
+          identifier: issue.identifier,
+          url: issue.url,
           title: normalizeImportedIssueTitle(issue.title),
           description: normalizeImportedIssueDescription(issue.description),
-          status: normalizeLinearIssueStatus((issue.state as { name?: string } | null)?.name),
+          status: localStatusFromLinearState(
+            (issue.state as { name?: string; type?: string } | null)?.name,
+            (issue.state as { name?: string; type?: string } | null)?.type,
+          ),
           priority: normalizeLinearIssuePriority(issue.priorityLabel),
           labels: normalizeImportedIssueLabels((issue.labels as { nodes?: Array<{ name: string }> } | null)?.nodes),
           source: "linear",

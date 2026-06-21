@@ -14,7 +14,20 @@ import {
   makeBranchName,
   parseGitHubRepoFullName,
 } from "./git-workspace.js";
+import { createLinearComment } from "./linear.js";
 import { buildRunPrompt } from "./runPrompt.js";
+import {
+  buildWorkflowPrompt,
+  ensureWorkflowAgents,
+  getIssueForWorkflow,
+  hasActiveWorkflowRun,
+  isWorkflowRole,
+  qaPassed,
+  reviewerApproved,
+  setIssueWorkflowStatus,
+  workflowRoleForStatus,
+  type WorkflowRole,
+} from "./workflow.js";
 
 // ── SSE subscribers ─────────────────────────────────────────────────────
 
@@ -58,6 +71,13 @@ export function insertAgentComment(issueId: string, agentId: string, body: strin
        VALUES (?, ?, NULL, 'agent', ?, ?)`,
     )
     .run(randomUUID(), issueId, agentId, body);
+
+  const issue = getDb().prepare("SELECT linear_id FROM issues WHERE id = ?").get(issueId) as { linear_id: string | null } | undefined;
+  if (issue?.linear_id) {
+    void createLinearComment(issue.linear_id, body).catch((error) => {
+      console.error("Failed to sync agent comment to Linear:", error);
+    });
+  }
 }
 
 export function formatRunFailureOutput(output: string, message: string): string {
@@ -458,6 +478,7 @@ export async function createRunRecord(input: {
   scheduleId?: string | null | undefined;
   parentRunId?: string | null | undefined;
   planStepId?: string | null | undefined;
+  workflowRole?: WorkflowRole | null | undefined;
 }) {
   const db = getDb();
   const agentRow = db.prepare("SELECT * FROM agents WHERE id = ?").get(input.agentId) as Record<string, unknown> | undefined;
@@ -481,6 +502,7 @@ export async function createRunRecord(input: {
   const scheduleId = input.scheduleId ?? null;
   const parentRunId = input.parentRunId ?? null;
   const planStepId = input.planStepId ?? null;
+  const workflowRole = input.workflowRole ?? null;
 
   if (issueId && isImplementationAgent(agentRow)) {
     const githubRepo = resolveGitHubRunContext(issueId, missionId);
@@ -506,12 +528,12 @@ export async function createRunRecord(input: {
   const runId = randomUUID();
   db.prepare(
     `
-    INSERT INTO runs (id, agent_id, mission_id, issue_id, schedule_id, engine, status, prompt, output, tool_calls, started_at, working_directory, github_branch, parent_run_id, plan_step_id)
-    VALUES (?, ?, ?, ?, ?, ?, 'running', ?, '', '[]', datetime('now'), ?, ?, ?, ?)
+    INSERT INTO runs (id, agent_id, mission_id, issue_id, schedule_id, engine, status, prompt, output, tool_calls, workflow_role, started_at, working_directory, github_branch, parent_run_id, plan_step_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'running', ?, '', '[]', ?, datetime('now'), ?, ?, ?, ?)
     `,
-  ).run(runId, input.agentId, missionId, issueId, scheduleId, String(agentRow.engine), input.prompt, workingDirectory, githubBranch, parentRunId, planStepId);
+  ).run(runId, input.agentId, missionId, issueId, scheduleId, String(agentRow.engine), input.prompt, workflowRole, workingDirectory, githubBranch, parentRunId, planStepId);
 
-  if (issueId) {
+  if (issueId && !workflowRole) {
     db.prepare("UPDATE issues SET status = 'in_progress' WHERE id = ? AND status NOT IN ('done', 'in_review', 'merged_ready')")
       .run(issueId);
   }
@@ -521,6 +543,38 @@ export async function createRunRecord(input: {
     recordRunFailure(runId, message, Date.now());
   });
   return runId;
+}
+
+export async function startIssueWorkflowForStatus(issueId: string, status: string): Promise<string | null> {
+  const role = workflowRoleForStatus(status);
+  if (!role || hasActiveWorkflowRun(issueId, role)) {
+    return null;
+  }
+
+  const issue = getIssueForWorkflow(issueId);
+  if (!issue) {
+    return null;
+  }
+
+  const agents = ensureWorkflowAgents();
+  const agentId = agents[role];
+  if (!agentId) {
+    throw new Error(`Workflow agent for ${role} is not configured.`);
+  }
+
+  const prompt = buildWorkflowPrompt(role, issue);
+  return createRunRecord({
+    agentId,
+    prompt,
+    missionId: issue.mission_id,
+    issueId,
+    workflowRole: role,
+  });
+}
+
+export async function advanceIssueWorkflow(issueId: string, status: string): Promise<void> {
+  await setIssueWorkflowStatus(issueId, status);
+  await startIssueWorkflowForStatus(issueId, status);
 }
 
 // ── Plan-based delegation ───────���───────────────────────────────────────
@@ -681,6 +735,7 @@ async function executeRun(runId: string) {
   if (!row) {
     return;
   }
+  const workflowRole = isWorkflowRole(row.workflow_role) ? row.workflow_role : null;
 
   const startedAt = Date.now();
   const agentRow = db.prepare("SELECT * FROM agents WHERE id = ?").get(String(row.agent_id)) as Record<string, unknown> | undefined;
@@ -749,7 +804,7 @@ async function executeRun(runId: string) {
 
     // Plan-based delegation for orchestrator agents
     const parsedOutput = stripPromptEcho(output, [fullPrompt, rawPrompt]);
-    if (isDelegationOnlyAgent(agentRow)) {
+    if (!workflowRole && isDelegationOnlyAgent(agentRow)) {
       const plan = extractPlan(parsedOutput);
       if (plan) {
         const agentNames = listActiveAgentNamesForMission(db, (row.mission_id as string | null) ?? null);
@@ -770,7 +825,7 @@ async function executeRun(runId: string) {
     }
 
     // Fallback: legacy @agent: directive parsing (for non-plan agents or when plan extraction fails)
-    if (delegatedCount === 0) {
+    if (!workflowRole && delegatedCount === 0) {
       delegatedCount = await processAgentDirectives(
         runId,
         String(agentRow.id),
@@ -810,8 +865,13 @@ async function executeRun(runId: string) {
             db.prepare("UPDATE runs SET github_pr_url = ? WHERE id = ?").run(pr.html_url, runId);
 
             if (row.issue_id) {
-              db.prepare("UPDATE issues SET github_pr_number = ?, github_pr_url = ?, github_branch = ?, status = 'in_review' WHERE id = ?")
-                .run(pr.number, pr.html_url, ghBranch, String(row.issue_id));
+              if (workflowRole) {
+                db.prepare("UPDATE issues SET github_pr_number = ?, github_pr_url = ?, github_branch = ?, updated_at = datetime('now') WHERE id = ?")
+                  .run(pr.number, pr.html_url, ghBranch, String(row.issue_id));
+              } else {
+                db.prepare("UPDATE issues SET github_pr_number = ?, github_pr_url = ?, github_branch = ?, status = 'in_review', updated_at = datetime('now') WHERE id = ?")
+                  .run(pr.number, pr.html_url, ghBranch, String(row.issue_id));
+              }
             }
 
             publishRunEvent(runId, { type: "pr_created", pr_url: pr.html_url, pr_number: pr.number });
@@ -837,6 +897,18 @@ async function executeRun(runId: string) {
         String(row.agent_id),
         `Completed this issue in ${durationSec}s.${prLine}${delegationLine}\n\n${truncatedOutput}`,
       );
+    }
+
+    if (workflowRole && row.issue_id) {
+      if (workflowRole === "planner") {
+        await advanceIssueWorkflow(String(row.issue_id), "in_progress");
+      } else if (workflowRole === "coder") {
+        await advanceIssueWorkflow(String(row.issue_id), "in_review");
+      } else if (workflowRole === "reviewer") {
+        await advanceIssueWorkflow(String(row.issue_id), reviewerApproved(output) ? "qa" : "in_progress");
+      } else if (workflowRole === "tester") {
+        await advanceIssueWorkflow(String(row.issue_id), qaPassed(output) ? "done" : "in_progress");
+      }
     }
 
     if (!planDelegated) {
