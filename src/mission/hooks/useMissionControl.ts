@@ -733,6 +733,7 @@ export function useMissionControl() {
       return false;
     }
     setIssues((current) => current.map((issue) => (issue.id === issueId ? result.issue : issue)));
+    await Promise.all([refreshRuns(), silentRefreshAgents()]);
     return true;
   }
 
@@ -847,6 +848,7 @@ export function useMissionControl() {
       return false;
     }
     setIssues(result.issues);
+    await refreshWorkspace();
     return true;
   }
 

@@ -156,7 +156,7 @@ test("parseIssuePayload rejects blank titles", () => {
 test("parseIssuePayload rejects invalid statuses", () => {
   assert.deepEqual(parseIssuePayload({ title: "Task", status: "blocked" }), {
     ok: false,
-    error: "Issue status must be backlog, todo, in_progress, in_review, or done.",
+    error: "Issue status must be backlog, todo, in_progress, in_review, qa, done, or canceled.",
   });
 });
 

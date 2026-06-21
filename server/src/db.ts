@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS issues (
   labels TEXT DEFAULT '[]',
   source TEXT DEFAULT 'native',
   linear_id TEXT,
+  linear_identifier TEXT,
+  linear_url TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -114,6 +116,7 @@ CREATE TABLE IF NOT EXISTS runs (
   prompt TEXT,
   output TEXT,
   tool_calls TEXT DEFAULT '[]',
+  workflow_role TEXT,
   started_at TEXT DEFAULT (datetime('now')),
   finished_at TEXT,
   duration_ms INTEGER
@@ -188,6 +191,9 @@ function runMigrations(database: Database.Database): void {
     "ALTER TABLE runs ADD COLUMN execution_plan TEXT",
     "ALTER TABLE issues ADD COLUMN estimation TEXT",
     "ALTER TABLE schedules ADD COLUMN mission_id TEXT REFERENCES missions(id)",
+    "ALTER TABLE issues ADD COLUMN linear_identifier TEXT",
+    "ALTER TABLE issues ADD COLUMN linear_url TEXT",
+    "ALTER TABLE runs ADD COLUMN workflow_role TEXT",
   ];
 
   for (const sql of migrations) {

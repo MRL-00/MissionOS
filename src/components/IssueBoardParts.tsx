@@ -55,9 +55,10 @@ export interface RepoOption {
 
 export const ISSUE_COLUMNS = [
   { id: "backlog", label: "Backlog" },
-  { id: "todo", label: "Todo" },
+  { id: "todo", label: "Planned" },
   { id: "in_progress", label: "In Progress" },
-  { id: "in_review", label: "In Review" },
+  { id: "in_review", label: "Dev Review" },
+  { id: "qa", label: "QA" },
   { id: "done", label: "Done" },
 ];
 
@@ -85,6 +86,7 @@ const STATUS_BADGE: Record<string, string> = {
   todo: "bg-white/[0.08] text-[#c8c4d7] border-white/[0.1]",
   in_progress: "bg-blue-500/15 text-blue-400 border-blue-500/20",
   in_review: "bg-amber-500/15 text-amber-400 border-amber-500/20",
+  qa: "bg-cyan-500/15 text-cyan-300 border-cyan-500/20",
   done: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
 };
 
@@ -892,6 +894,21 @@ export function IssueBoardView({
                     {issue.source === "github" || issue.github_number ? (
                       <span className="rounded bg-[#1c1b1c] px-1 py-0.5 text-[9px] font-medium text-[#918f90]">GH#{issue.github_number}</span>
                     ) : null}
+                    {issue.linear_identifier ? (
+                      issue.linear_url ? (
+                        <a
+                          href={issue.linear_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(event) => event.stopPropagation()}
+                          className="rounded bg-[#1c1b1c] px-1 py-0.5 text-[9px] font-medium text-[#8b5cf6] hover:text-[#c6bfff]"
+                        >
+                          {issue.linear_identifier}
+                        </a>
+                      ) : (
+                        <span className="rounded bg-[#1c1b1c] px-1 py-0.5 text-[9px] font-medium text-[#8b5cf6]">{issue.linear_identifier}</span>
+                      )
+                    ) : null}
                     {issue.github_pr_url ? (
                       <a href={issue.github_pr_url} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="text-[#5e4ae3] hover:text-[#c6bfff]">
                         <GitPullRequestIcon className="size-3" />
@@ -1065,6 +1082,20 @@ export function IssueDetailsPanel({
         <PropertyRow label="Labels" value={selectedIssue.labels.join(", ") || "None"} />
         <PropertyRow label="Estimate" value={selectedIssue.estimation ? `${selectedIssue.estimation} pts` : "None"} />
       </div>
+
+      {selectedIssue.linear_id ? (
+        <div className="mb-5 space-y-2">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-[#918f90]">Linear</div>
+          {selectedIssue.linear_url ? (
+            <a href={selectedIssue.linear_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[12px] text-[#8b5cf6] hover:text-[#c6bfff]">
+              <ExternalLinkIcon className="size-3" />
+              {selectedIssue.linear_identifier ?? selectedIssue.linear_id}
+            </a>
+          ) : (
+            <div className="text-[12px] text-[#c8c4d7]">{selectedIssue.linear_identifier ?? selectedIssue.linear_id}</div>
+          )}
+        </div>
+      ) : null}
 
       {onRunIssue && agents && agents.length > 0 ? (
         <IssueRunButton
@@ -1251,6 +1282,11 @@ function IssueRunsSection({ runs }: { runs: RunRecord[] }) {
                 <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", RUN_STATUS_COLORS[run.status] ?? "bg-white/10 text-white/60")}>
                   {run.status}
                 </span>
+                {run.workflow_role ? (
+                  <span className="rounded bg-[#5e4ae3]/15 px-1.5 py-0.5 text-[10px] font-medium capitalize text-[#c6bfff]">
+                    {run.workflow_role}
+                  </span>
+                ) : null}
                 <span className="text-[11px] text-[#c8c4d7]">{run.agent_emoji} {run.agent_name}</span>
               </div>
               <span className="text-[10px] text-[#918f90]">{durationStr}</span>

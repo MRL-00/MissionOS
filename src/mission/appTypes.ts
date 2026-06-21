@@ -119,6 +119,8 @@ export interface IssueRecord {
   labels: string[];
   source: string;
   linear_id: string | null;
+  linear_identifier: string | null;
+  linear_url: string | null;
   github_id: number | null;
   github_number: number | null;
   github_repo: string | null;
@@ -157,6 +159,7 @@ export interface RunRecord {
   prompt: string;
   output: string;
   tool_calls: string[];
+  workflow_role: "planner" | "coder" | "reviewer" | "tester" | null;
   started_at: string;
   finished_at: string | null;
   duration_ms: number | null;

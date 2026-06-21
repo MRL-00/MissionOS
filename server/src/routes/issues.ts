@@ -4,11 +4,20 @@ import { getDb } from "../db.js";
 import { engineMap } from "../engines/index.js";
 import { parseGitHubRepoFullName } from "../git-workspace.js";
 import { syncGitHubIssuesToLocal } from "../github-service.js";
-import { linearRequest, normalizeLinearIssuePriority, normalizeLinearIssueStatus, syncLinearIssueToLocal, patchLinearIssue } from "../linear.js";
+import {
+  createLinearComment,
+  createLinearIssue,
+  linearRequest,
+  patchLinearIssue,
+  readSettingsMap,
+  syncLinearIssueToLocal,
+} from "../linear.js";
+import { setIssueWorkflowStatus } from "../workflow.js";
+import { startIssueWorkflowForStatus } from "../execution.js";
 import { getIssueById, listIssues, parseListLimit } from "../queries.js";
 import type { AuthenticatedRequest } from "../serializers.js";
 
-const ISSUE_STATUSES = new Set(["backlog", "todo", "in_progress", "in_review", "done"]);
+const ISSUE_STATUSES = new Set(["backlog", "todo", "in_progress", "in_review", "qa", "done", "canceled"]);
 const ISSUE_PRIORITIES = new Set(["urgent", "high", "medium", "low"]);
 const ISSUE_SOURCES = new Set(["native", "linear", "github"]);
 const MAX_ISSUE_TITLE_LENGTH = 180;
@@ -108,7 +117,7 @@ export function parseIssuePayload(body: Record<string, unknown>): IssuePayloadRe
 
   const status = optionalString(body.status) ?? "backlog";
   if (!ISSUE_STATUSES.has(status)) {
-    return { ok: false, error: "Issue status must be backlog, todo, in_progress, in_review, or done." };
+    return { ok: false, error: "Issue status must be backlog, todo, in_progress, in_review, qa, done, or canceled." };
   }
 
   const priority = optionalString(body.priority) ?? "medium";
@@ -264,11 +273,31 @@ export function registerIssueRoutes(app: Express) {
     const db = getDb();
     const maxRow = db.prepare("SELECT COALESCE(MAX(issue_number), 0) AS m FROM issues").get() as { m: number };
     const nextNumber = maxRow.m + 1;
+    const settings = readSettingsMap();
+    let linearId = payload.linearId;
+    let linearIdentifier: string | null = null;
+    let linearUrl: string | null = null;
+    let source = payload.source;
+
+    if (!linearId && settings.linear_use_for_issues === "true") {
+      const linearIssue = await createLinearIssue({
+        title: payload.title,
+        description: payload.description,
+        status: payload.status,
+      });
+      linearId = linearIssue?.id ?? null;
+      linearIdentifier = linearIssue?.identifier ?? null;
+      linearUrl = linearIssue?.url ?? null;
+      if (linearId) {
+        source = "linear";
+      }
+    }
+
     db.prepare(
       `
       INSERT INTO issues (
-        id, issue_number, title, description, status, priority, assignee_agent_id, mission_id, github_repo, labels, source, linear_id, estimation, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        id, issue_number, title, description, status, priority, assignee_agent_id, mission_id, github_repo, labels, source, linear_id, linear_identifier, linear_url, estimation, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `,
     ).run(
       id,
@@ -281,24 +310,29 @@ export function registerIssueRoutes(app: Express) {
       payload.missionId,
       payload.githubRepo,
       JSON.stringify(payload.labels),
-      payload.source,
-      payload.linearId,
+      source,
+      linearId,
+      linearIdentifier,
+      linearUrl,
       payload.estimation,
     );
 
-    if (payload.linearId) {
-      await patchLinearIssue(payload.linearId, {
+    if (linearId) {
+      await patchLinearIssue(linearId, {
         title: payload.title,
         description: payload.description ?? undefined,
       });
     }
+
+    await startIssueWorkflowForStatus(id, payload.status);
 
     const issue = getIssueById(id);
     res.status(201).json({ issue });
   });
 
   app.put("/api/issues/:id", async (req, res) => {
-    const result = parseIssuePayload(req.body as Record<string, unknown>);
+    const body = req.body as Record<string, unknown>;
+    const result = parseIssuePayload(body);
     if (!result.ok) {
       res.status(400).json({ error: result.error });
       return;
@@ -311,6 +345,19 @@ export function registerIssueRoutes(app: Express) {
     }
 
     const db = getDb();
+    const existing = db.prepare("SELECT status, source, linear_id, github_repo FROM issues WHERE id = ?").get(req.params.id) as
+      | { status: string; source: string; linear_id: string | null; github_repo: string | null }
+      | undefined;
+    if (!existing) {
+      res.status(404).json({ error: "Issue not found." });
+      return;
+    }
+    const hasSource = Object.prototype.hasOwnProperty.call(body, "source");
+    const hasGithubRepo = Object.prototype.hasOwnProperty.call(body, "github_repo");
+    const linearId = payload.linearId ?? existing.linear_id;
+    const source = hasSource ? payload.source : existing.source ?? (linearId ? "linear" : "native");
+    const githubRepo = hasGithubRepo ? payload.githubRepo : existing.github_repo;
+
     const update = db.transaction(() => {
       const result = db.prepare(
         `
@@ -337,10 +384,10 @@ export function registerIssueRoutes(app: Express) {
         payload.priority,
         payload.assigneeAgentId,
         payload.missionId,
-        payload.githubRepo,
+        githubRepo,
         JSON.stringify(payload.labels),
-        payload.source,
-        payload.linearId,
+        source,
+        linearId,
         payload.estimation,
         req.params.id,
       );
@@ -356,16 +403,17 @@ export function registerIssueRoutes(app: Express) {
       }
       return result;
     })();
-    if (update.changes === 0) {
-      res.status(404).json({ error: "Issue not found." });
-      return;
-    }
 
-    if (payload.linearId) {
-      await patchLinearIssue(payload.linearId, {
+    if (linearId) {
+      await patchLinearIssue(linearId, {
         title: payload.title,
         description: payload.description ?? undefined,
       });
+    }
+
+    if (existing.status !== payload.status) {
+      await setIssueWorkflowStatus(req.params.id, payload.status);
+      await startIssueWorkflowForStatus(req.params.id, payload.status);
     }
 
     const issue = getIssueById(req.params.id);
@@ -531,6 +579,12 @@ export function registerIssueRoutes(app: Express) {
         `,
       )
       .run(comment.id, comment.issue_id, comment.parent_id, comment.author_type, comment.author_id, comment.body);
+    const issue = getDb().prepare("SELECT linear_id FROM issues WHERE id = ?").get(req.params.id) as { linear_id: string | null } | undefined;
+    if (issue?.linear_id) {
+      void createLinearComment(issue.linear_id, body).catch((error) => {
+        console.error("Failed to sync user comment to Linear:", error);
+      });
+    }
     res.status(201).json({ comment });
   });
 
@@ -556,11 +610,15 @@ export function registerIssueRoutes(app: Express) {
           issues(first: 100) {
             nodes {
               id
+              identifier
+              url
               title
               description
               priorityLabel
               state {
+                id
                 name
+                type
               }
               labels {
                 nodes {
@@ -573,14 +631,26 @@ export function registerIssueRoutes(app: Express) {
       `);
 
       for (const issue of data.issues.nodes) {
-        await syncLinearIssueToLocal({
+        const previous = getDb().prepare("SELECT id, status FROM issues WHERE linear_id = ?").get(String(issue.id)) as
+          | { id: string; status: string }
+          | undefined;
+        const issueId = await syncLinearIssueToLocal({
           id: issue.id,
+          identifier: issue.identifier,
+          url: issue.url,
           title: issue.title,
           description: issue.description,
-          status: normalizeLinearIssueStatus((issue.state as { name?: string } | null)?.name),
-          priority: normalizeLinearIssuePriority(issue.priorityLabel),
+          state: issue.state,
+          priority: issue.priorityLabel,
           labels: (issue.labels as { nodes?: Array<{ name: string }> } | null)?.nodes ?? [],
         });
+        const synced = getDb().prepare("SELECT status FROM issues WHERE id = ?").get(issueId) as { status: string } | undefined;
+        // Only trigger workflow on a genuine status *transition* for an
+        // already-existing issue. Never auto-start on initial import —
+        // Linear issues may already be mature and shouldn't kick off runs.
+        if (previous && previous.status !== synced?.status) {
+          await startIssueWorkflowForStatus(issueId, synced?.status ?? "backlog");
+        }
       }
 
       res.json({ ok: true, issues: listIssues({ limit: 1_000 }) });

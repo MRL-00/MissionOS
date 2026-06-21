@@ -134,6 +134,14 @@ export function Settings({ mission }: SettingsProps) {
                   </Select>
                 </div>
               </div>
+              <div className="mt-3">
+                <FormField
+                  label="Default Team ID"
+                  value={settingsDraft.linear_team_id ?? ""}
+                  onChange={(value) => setSettingsDraft({ ...settingsDraft, linear_team_id: value })}
+                  placeholder="Leave blank to use the first accessible Linear team"
+                />
+              </div>
               <div className="mt-3 flex items-center gap-2">
                 <button
                   onClick={async () => {
