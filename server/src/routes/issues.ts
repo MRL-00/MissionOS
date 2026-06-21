@@ -645,7 +645,10 @@ export function registerIssueRoutes(app: Express) {
           labels: (issue.labels as { nodes?: Array<{ name: string }> } | null)?.nodes ?? [],
         });
         const synced = getDb().prepare("SELECT status FROM issues WHERE id = ?").get(issueId) as { status: string } | undefined;
-        if (!previous || previous.status !== synced?.status) {
+        // Only trigger workflow on a genuine status *transition* for an
+        // already-existing issue. Never auto-start on initial import —
+        // Linear issues may already be mature and shouldn't kick off runs.
+        if (previous && previous.status !== synced?.status) {
           await startIssueWorkflowForStatus(issueId, synced?.status ?? "backlog");
         }
       }

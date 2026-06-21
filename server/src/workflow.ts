@@ -277,7 +277,7 @@ export function buildWorkflowPrompt(role: WorkflowRole, issue: IssueRow): string
     return [
       ...base,
       "",
-      "Implement the issue. Use the existing codebase conventions, keep scope tight, and run the strongest relevant checks available.",
+      "Implement the issue. Use the existing codebase conventions, keep scope tight, and run the strongest relevant checks available. End with `CODING_STATUS: complete` when finished, or `CODING_STATUS: blocked` if you cannot complete the implementation.",
     ].join("\n");
   }
   if (role === "reviewer") {
@@ -294,6 +294,14 @@ export function buildWorkflowPrompt(role: WorkflowRole, issue: IssueRow): string
   ].join("\n");
 }
 
+export function planningComplete(output: string): boolean {
+  return /PLANNING_STATUS:\s*complete/i.test(output);
+}
+
+export function codingComplete(output: string): boolean {
+  return /CODING_STATUS:\s*complete/i.test(output);
+}
+
 export function reviewerApproved(output: string): boolean {
   if (/REVIEW_DECISION:\s*approved/i.test(output)) {
     return true;
@@ -301,7 +309,8 @@ export function reviewerApproved(output: string): boolean {
   if (/REVIEW_DECISION:\s*changes_requested/i.test(output)) {
     return false;
   }
-  return !/\b(changes requested|must fix|blocking|regression|not approved)\b/i.test(output);
+  // No explicit decision marker — do not implicitly approve.
+  return false;
 }
 
 export function qaPassed(output: string): boolean {
@@ -311,5 +320,6 @@ export function qaPassed(output: string): boolean {
   if (/QA_DECISION:\s*failed/i.test(output)) {
     return false;
   }
-  return !/\b(failed|failure|blocked|regression|not pass|does not pass)\b/i.test(output);
+  // No explicit decision marker — do not implicitly pass.
+  return false;
 }

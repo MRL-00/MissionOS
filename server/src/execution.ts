@@ -18,10 +18,12 @@ import { createLinearComment } from "./linear.js";
 import { buildRunPrompt } from "./runPrompt.js";
 import {
   buildWorkflowPrompt,
+  codingComplete,
   ensureWorkflowAgents,
   getIssueForWorkflow,
   hasActiveWorkflowRun,
   isWorkflowRole,
+  planningComplete,
   qaPassed,
   reviewerApproved,
   setIssueWorkflowStatus,
@@ -504,7 +506,8 @@ export async function createRunRecord(input: {
   const planStepId = input.planStepId ?? null;
   const workflowRole = input.workflowRole ?? null;
 
-  if (issueId && isImplementationAgent(agentRow)) {
+  const isWorkflowReviewOrQa = workflowRole === "reviewer" || workflowRole === "tester";
+  if (issueId && isImplementationAgent(agentRow) && !isWorkflowReviewOrQa) {
     const githubRepo = resolveGitHubRunContext(issueId, missionId);
     if (githubRepo) {
         try {
@@ -901,9 +904,13 @@ async function executeRun(runId: string) {
 
     if (workflowRole && row.issue_id) {
       if (workflowRole === "planner") {
-        await advanceIssueWorkflow(String(row.issue_id), "in_progress");
+        if (planningComplete(output)) {
+          await advanceIssueWorkflow(String(row.issue_id), "in_progress");
+        }
       } else if (workflowRole === "coder") {
-        await advanceIssueWorkflow(String(row.issue_id), "in_review");
+        if (codingComplete(output)) {
+          await advanceIssueWorkflow(String(row.issue_id), "in_review");
+        }
       } else if (workflowRole === "reviewer") {
         await advanceIssueWorkflow(String(row.issue_id), reviewerApproved(output) ? "qa" : "in_progress");
       } else if (workflowRole === "tester") {

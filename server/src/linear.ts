@@ -35,8 +35,10 @@ const LINEAR_TYPE_FALLBACKS: Record<LocalIssueStatus, string[]> = {
   backlog: ["backlog", "unstarted"],
   todo: ["unstarted", "backlog"],
   in_progress: ["started"],
-  in_review: ["started"],
-  qa: ["started"],
+  // Do not fall back to generic "started" for review/QA — these are
+  // distinct workflow stages and must match by name only.
+  in_review: [],
+  qa: [],
   done: ["completed"],
   canceled: ["canceled"],
 };
